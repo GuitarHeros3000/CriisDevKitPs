@@ -1,0 +1,629 @@
+# Dev Environment (Sin Permisos de Administrador)
+
+Configura entornos de desarrollo en laptops corporativas sin permisos de administrador.
+
+## Estructura del kit
+
+```
+AssassinSkipAdmPy/
+├── *.bat                    Puntos de entrada (doble clic o linea de comandos)
+├── lib/
+│   └── Common.ps1           Descargas, proxy, checksums, semver, PATH, log
+└── scripts/
+    ├── Setup-AngularEnv.ps1
+    ├── Setup-PythonEnv.ps1
+    ├── Setup-JavaEnv.ps1
+    ├── Start-AngularEnv.ps1
+    ├── Start-PythonEnv.ps1
+    ├── Start-JavaEnv.ps1
+    ├── Install-NoAdmin.ps1
+    ├── Doctor-Env.ps1
+    ├── Uninstall-Env.ps1
+    └── Use-Env.ps1
+```
+
+Los `.bat` de la raiz son la interfaz publica: siempre se ejecutan desde ahi.
+La logica vive en `scripts\`, y lo compartido en `lib\Common.ps1`.
+
+## Donde se instala todo
+
+El kit nunca instala dentro de si mismo. Crea carpetas **hermanas**:
+
+```
+Proyectos Individuales/
+├── AssassinSkipAdmPy/       (este kit)
+├── Angular/
+│   ├── node-v20.19.0-win-x64/
+│   ├── angular-v18/
+│   ├── angular-v19/
+│   └── angular-v20/
+├── Python/
+│   ├── python-3.11/
+│   └── python-3.12/
+├── Java/
+│   ├── jdk-17/
+│   └── jdk-21/
+└── Apps/                    (software instalado en modo portable)
+    └── <nombre-app>/
+```
+
+## Por donde empezar
+
+El flujo depende de si en esa maquina ya hay algo instalado con permisos de
+administrador. `Doctor` te lo dice, asi que el orden es siempre el mismo:
+
+```
+1. .\Doctor-Env.bat                          Ver como esta la maquina
+2. .\Setup-PythonEnv.bat -PythonVersion 3.12 Instalar lo que necesites
+3. .\Doctor-Env.bat                          Comprobar quien responde
+```
+
+En el paso 3, mira la seccion **Que version responde**:
+
+| Lo que ves | Que hacer |
+|---|---|
+| `[ok]` con la ruta del kit | Nada. Ya responde la del kit en cualquier terminal. |
+| `[X] ... NO es la del kit` | Hay algo instalado con admin que la tapa. Usa `Start-*Env.bat`, o `Use-Env.bat` si la quieres global. |
+| `[!] ... no es la del kit` | El kit la trae pero solo dentro de su shell (caso de `ng`). Usa `Start-AngularEnv.bat`. |
+
+### Laptop bloqueada, sin nada instalado con admin
+
+Es el caso para el que existe el kit. `Setup-*Env` **basta**: el PATH de usuario gana
+porque no hay nada por delante. No hace falta `Use-Env` y no se crea ningun perfil.
+
+### Maquina con runtimes ya instalados por IT
+
+Ahi el PATH de maquina va por delante y tapa al del kit. Dos salidas:
+
+- **`Start-*Env.bat`** — abre un shell con la version del kit. No deja rastro fuera
+  de las carpetas que ya crea el setup. Es la opcion recomendada.
+- **`Use-Env.bat`** — hace que gane tambien en terminales normales. Ver mas abajo.
+
+### Desinstalar
+
+```
+1. .\Use-Env.bat -Off                        Si lo habias activado
+2. .\Uninstall-Env.bat -Runtime Python -All  Retira carpetas y limpia el PATH
+```
+
+## Llevarlo a una maquina sin internet
+
+El kit depende de seis dominios: `nodejs.org`, `registry.npmjs.org`, `python.org`,
+`pypi.org`, `api.adoptium.net` y `github.com`. En una laptop corporativa basta con
+que bloqueen **uno** para que ese runtime sea inalcanzable.
+
+```powershell
+.\Export-Env.bat -Output D:\usb\entorno.zip     En la maquina CON internet
+.\Import-Env.bat -Path D:\usb\entorno.zip       En la maquina SIN internet
+```
+
+### Que lleva el bundle
+
+| | |
+|---|---|
+| `env.json` | manifiesto: versiones exactas de cada runtime y paquete |
+| `runtimes/` | los zip originales de Node, Python y el JDK, con su SHA-256 |
+| `npm-global/` | el Angular CLI ya instalado, para no depender del registro de npm |
+| `wheels/` | los paquetes pip como `.whl`, mas `get-pip.py` y el wheel de `pip` |
+
+`Import-Env` verifica el SHA-256 de cada archivo antes de extraerlo (un USB puede
+corromperlo) y **regenera los shells y el PATH con las rutas de la maquina destino**:
+dentro del bundle van rutas absolutas del origen, que alli no valdrian.
+
+### Detalles que costaron encontrar
+
+- Instalar pip sin red necesita **dos** piezas: `get-pip.py` *y* el `pip-*.whl`.
+  `get-pip.py --no-index` no instala el pip que lleva embebido, solo lo usa para
+  ejecutarse; el paquete lo busca en `--find-links`.
+- Instalar el wheel de pip con el propio pip falla con *"To modify pip, please run
+  the following command"*: pip se protege de modificarse a si mismo.
+- `pip freeze` nunca se lista a si mismo, asi que pip hay que pedirlo aparte.
+
+### Opciones
+
+```powershell
+-Runtime Python     Exporta o importa solo un runtime
+-SkipBinaries       Solo el manifiesto (unos KB); el destino necesitara internet
+-WhatIf             Import-Env: muestra el plan sin instalar
+```
+
+## Diagnostico
+
+```powershell
+.\Doctor-Env.bat              Diagnostico completo (solo lee, no toca nada)
+.\Doctor-Env.bat -SkipNetwork Sin pruebas de conectividad
+.\Doctor-Env.bat -Fix         Repara lo que se pueda arreglar en local
+```
+
+### -Fix
+
+Sin `-Fix`, `Doctor` **no modifica nada**. Con `-Fix` repara solo lo que se puede
+arreglar sin descargar, y pide confirmacion antes:
+
+| Se repara | |
+|---|---|
+| Shells que faltan | `shell-vN.bat`, `pyXYZ-shell.bat`, `javaN-shell.bat` |
+| `._pth` sin parchear | Python embeddable donde pip no importaria |
+| `JAVA_HOME` roto | Apuntando a una carpeta que ya no existe |
+| PATH duplicado | Entradas repetidas |
+| PATH con rutas muertas | **Solo las que cuelgan de las carpetas del kit** |
+
+Lo que necesita reinstalar (un `node.exe` corrupto, un `ng.cmd` que falta) no se
+toca: se te dice que reejecutes el setup correspondiente.
+
+**Las rutas muertas ajenas nunca se borran.** Una ruta que hoy no existe puede ser
+una unidad de red o un USB desconectado en este momento; borrarla seria destruir
+algo que si quieres. `Doctor` las lista marcadas como *(ajena: no se toca)*.
+
+Es lo primero que conviene ejecutar cuando algo falla, o al llegar a un equipo nuevo.
+No modifica nada: solo lee. Comprueba integridad del kit, sistema y espacio libre,
+proxy y conectividad real a los cuatro dominios de los que depende todo, versiones de
+Angular/Node/Python instaladas (incluido si el `._pth` esta parcheado y si pip responde),
+herramientas de `Install-NoAdmin`, y salud del PATH (duplicados, rutas muertas, longitud).
+
+Sale con codigo 1 si encuentra algun problema grave, para poder encadenarlo en scripts.
+
+Todos los `.bat` propagan el codigo de salida de su `.ps1`. Como ademas terminan en
+un `pause` (para que la ventana no se cierre al hacer doble clic), define
+`ASSASSINSKIPADM_NOPAUSE` cuando los invoques desde otro script y no esperaran tecla:
+
+```powershell
+$env:ASSASSINSKIPADM_NOPAUSE = "1"
+.\Doctor-Env.bat -SkipNetwork
+if ($LASTEXITCODE -ne 0) { "revisa el entorno antes de seguir" }
+```
+
+## Desinstalacion
+
+```powershell
+.\Uninstall-Env.bat -Runtime Python                            Lista lo instalado
+.\Uninstall-Env.bat -Runtime Python -Version 3.12 -WhatIf      Muestra el plan
+.\Uninstall-Env.bat -Runtime Python -Version 3.12              Retira esa version
+.\Uninstall-Env.bat -Runtime Angular -Version 20 -Node 22.23.2 Angular y su Node
+.\Uninstall-Env.bat -Runtime Angular -All                      Todo el runtime
+```
+
+Retira la carpeta **y** limpia las entradas del PATH que apuntaban ahi. Sin esto,
+borrar la carpeta a mano dejaba rutas muertas en el PATH del usuario para siempre.
+
+- Pide confirmacion salvo con `-Force`, y `-WhatIf` no toca nada.
+- Solo reconoce lo que el propio kit creo (`angular-vN`, `node-vX-win-x64`,
+  `python-X.Y`, `npm-cache`). Cualquier otra carpeta que hubiera ahi se ignora.
+- Nunca toca el PATH de maquina ni instalaciones ajenas al kit.
+- Limpia el PATH **antes** de borrar carpetas: si algo falla, es preferible un PATH
+  correcto con una carpeta de sobra que al reves.
+- Guarda copia del PATH previo en `%LOCALAPPDATA%\AssassinSkipAdm\path-backups\`.
+
+## Que version responde cuando hay varias
+
+**Usa siempre los shells generados.** Es la unica forma fiable, y aqui esta el porque.
+
+### Limitacion: el kit no puede ganarle al PATH de maquina
+
+Windows construye el PATH de un proceso nuevo asi:
+
+```
+PATH del proceso  =  PATH de MAQUINA  +  PATH de USUARIO
+                     (HKLM, necesita admin)  (HKCU, es donde escribe el kit)
+```
+
+El bloque de maquina va **antes**. Si ya tienes algo instalado ahi (por ejemplo
+`C:\Program Files\nodejs`), ese gana siempre, por mucho que el kit ponga su version
+la primera dentro del bloque de usuario. Y el kit **no puede** tocar el PATH de
+maquina: haria falta admin, que es justo lo que este proyecto evita.
+
+Ejemplo real con Node 24 instalado por el kit y Node 22 en Program Files:
+
+| | `node` | `ng` |
+|---|---|---|
+| Dentro de `shell-v22.bat` | **24.19.0** | **22.1.2** |
+| Terminal normal | 22.18.0 | 20.2.0 |
+
+Los shells generados hacen `set PATH=<kit>;%PATH%`, que antepone al PATH **ya
+compuesto**, y por eso si ganan. `.\Doctor-Env.bat` diagnostica esto en su seccion
+*Que version responde* y dice cual arranca de verdad.
+
+### Use-Env: ganar tambien en terminales normales
+
+```powershell
+.\Use-Env.bat                                  Ver estado
+.\Use-Env.bat -Runtime Angular -Version 22     Activar
+.\Use-Env.bat -Off -Runtime Angular            Desactivar una
+.\Use-Env.bat -Off                             Desactivar todo
+```
+
+No se puede reordenar el PATH de maquina, pero **si se puede ejecutar codigo al abrir
+cada terminal**, y eso ocurre despues de que Windows lo componga. Ahi la version del
+kit si gana. Los dos enganches son de usuario y no necesitan admin:
+
+| Shell | Donde |
+|---|---|
+| PowerShell | bloque marcado en `$PROFILE.CurrentUserAllHosts` |
+| cmd.exe | `HKCU\Software\Microsoft\Command Processor` valor `AutoRun` |
+
+#### Que hace falta para poder usarlo
+
+Nada especial salvo una cosa: la **ExecutionPolicy** de PowerShell. Si esta en
+`Restricted` o `AllSigned`, el perfil no se ejecuta y el enganche de PowerShell no
+funciona (el de `cmd.exe` si, porque no es PowerShell).
+
+`.\Doctor-Env.bat` lo comprueba y lo reporta en la seccion *Sistema*:
+
+- Si viene de `CurrentUser`, se arregla sin admin:
+  `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
+- Si viene de `MachinePolicy` o `UserPolicy`, es politica de grupo y hay que pedirlo a IT.
+
+No confundir con el `-ExecutionPolicy Bypass` que usan los `.bat` del kit: eso solo
+afecta a ese proceso concreto, no a las terminales que abras tu.
+
+#### Donde vive el perfil
+
+En tu carpeta de usuario, pero Windows redirige `Documentos` si tienes OneDrive:
+
+```
+sin redireccion :  C:\Users\<usuario>\Documents\WindowsPowerShell\profile.ps1
+con OneDrive    :  C:\Users\<usuario>\OneDrive\Documents\WindowsPowerShell\profile.ps1
+```
+
+El kit usa `$PROFILE.CurrentUserAllHosts`, o sea lo que diga Windows en cada maquina.
+
+**Si esta en OneDrive, el perfil se sincroniza a tus otros equipos.** No rompe nada:
+el bloque va envuelto en `Test-Path` y los archivos generados viven en
+`%LOCALAPPDATA%`, que no se sincroniza, asi que en la otra maquina el bloque
+simplemente no hace nada. Pero tendras ahi un `profile.ps1` que no pediste.
+
+Resultado medido, con Node 22 de sistema instalado con admin:
+
+| | antes | con Use-Env |
+|---|---|---|
+| `node` en cmd/PowerShell nuevos | 22.18.0 | **24.19.0** |
+| `ng` | 20.2.0 | **22.1.2** |
+
+Detalles de seguridad, porque `AutoRun` corre en **cada** `cmd`, incluidos los
+`cmd /c` que lanzan npm y otras herramientas:
+
+- El script generado es **completamente silencioso**: cualquier salida corromperia
+  lo que esos procesos leen. Verificado: `cmd /c echo HOLA` devuelve una sola linea.
+- Una **guarda heredada** (`ASSASSINSKIPADM_ACTIVE`) evita que el PATH crezca en
+  shells anidados. Verificado: 25 entradas con 1 nivel y 25 con 4 niveles.
+- El bloque del perfil va envuelto en `Test-Path`, asi que si se borran los archivos
+  generados el perfil sigue funcionando.
+- Si ya tenias un `AutoRun` de otra herramienta, se conserva y se respalda.
+- `-Off` deja perfil y registro exactamente como estaban.
+
+Los enganches solo afectan a **terminales nuevas**.
+
+### Entre versiones del propio kit
+
+Dentro del bloque de usuario, las rutas se anaden **al principio**, asi que responde
+la ultima instalada. Antes se anadian al final y ganaba la primera instalada:
+poner Python 3.12 despues del 3.11 no cambiaba a que apuntaba `python`.
+
+Al instalar sobre otras versiones ya presentes, el script las lista y avisa.
+
+### Angular CLI nunca se publica en el PATH global
+
+Cada version vive en su propio `npm-global`, y ponerlas todas en el PATH haria que
+`ng` fuera impredecible. Solo esta disponible dentro de su shell. `Doctor` lo indica
+como *"el kit trae: ... (solo dentro de su shell)"*.
+
+## Angular
+
+### Instalacion
+
+```powershell
+.\Setup-AngularEnv.bat -AngularVersion 20
+.\Setup-AngularEnv.bat -AngularVersion 22 -NodeVersion 24.19.0
+```
+
+Descarga Node.js portable (verificando su SHA-256 oficial), instala Angular CLI
+en un `npm-global` propio de esa version y genera un `shell-vN.bat`.
+
+### Que version de Node se instala
+
+No es fija. El script pregunta al registro de npm que declara esa version del CLI
+en `engines.node`, consulta las LTS disponibles en nodejs.org y elige.
+
+**Regla:** la linea LTS mas alta que el rango nombra *explicitamente* con `^`. Los
+terminos `^X.Y.Z` son las majors contra las que Angular probo de verdad; el `>=X` final
+es una puerta abierta a majors que aun no existian. Se descartan las lineas por debajo
+de Node 16.
+
+Resultado actual (verificado contra registry.npmjs.org el 2026-08-04):
+
+| Angular | `engines.node` del CLI | Node instalado |
+|---|---|---|
+| 14 | `^14.15.0 \|\| >=16.10.0` | 16.20.2 |
+| 15 | `^14.20.0 \|\| ^16.13.0 \|\| >=18.10.0` | 16.20.2 |
+| 16 | `^16.14.0 \|\| >=18.10.0` | 16.20.2 |
+| 17 | `^18.13.0 \|\| >=20.9.0` | 18.20.8 |
+| 18 | `^18.19.1 \|\| ^20.11.1 \|\| >=22.0.0` | 20.20.2 |
+| 19 | `^18.19.1 \|\| ^20.11.1 \|\| >=22.0.0` | 20.20.2 |
+| 20 | `^20.19.0 \|\| ^22.12.0 \|\| >=24.0.0` | 22.23.2 |
+| 21 | `^20.19.0 \|\| ^22.12.0 \|\| >=24.0.0` | 22.23.2 |
+| 22 | `^22.22.3 \|\| ^24.15.0 \|\| >=26.0.0` | 24.19.0 |
+
+Como la resolucion es dinamica, una version futura de Angular funcionara sin tocar el
+codigo. La tabla equivalente esta ademas cableada en el script como respaldo para cuando
+no hay red. Con `-NodeVersion` se fuerza una version concreta; si no cumple lo que pide
+el CLI, se avisa antes de descargar nada.
+
+Varias versiones de Node conviven en `Angular\`, asi que Angular 16 y Angular 22 pueden
+estar instalados a la vez sin pisarse.
+
+### Uso
+
+```powershell
+.\Start-AngularEnv.bat              Abre la version mas reciente
+.\Start-AngularEnv.bat -Version 18  Abre una version concreta
+```
+
+### Comandos
+
+```powershell
+ng version           Ver version
+ng new <nombre>      Crear proyecto
+ng serve             Servidor desarrollo
+ng generate <tipo>   Generar componentes
+ng build             Compilar produccion
+```
+
+## Python
+
+### Instalacion
+
+```powershell
+.\Setup-PythonEnv.bat -PythonVersion 3.12
+.\Setup-PythonEnv.bat -PythonVersion 3.12 -InstallPackages django,flask
+```
+
+Descarga el Python *embeddable*, lo parchea para que pip funcione
+(`import site` + `Lib\site-packages`) y genera un `pyXYZ-shell.bat`.
+
+### Que patch se instala
+
+Si indicas `3.12`, el script busca la **ultima 3.12.x que tenga binario para Windows**.
+No basta con coger el numero mas alto: cuando una serie pasa a modo *solo seguridad*,
+python.org publica esas versiones unicamente como codigo fuente. Hoy, por ejemplo,
+3.12.13 existe pero no tiene zip embeddable, asi que se instala 3.12.10 y el script
+dice por que.
+
+Con `-PythonVersion 3.12.9` se instala exactamente esa.
+
+### Actualizar el patch
+
+La carpeta se llama solo `python-3.12`, asi que una version ya instalada tapa a
+cualquier patch posterior. El script compara el patch **real** del `python.exe`
+instalado con el disponible y avisa:
+
+```
+[WARN] Ya hay Python 3.12.9 instalado en python-3.12
+[WARN]   Disponible: 3.12.10
+[WARN]   Para actualizarlo:  .\Setup-PythonEnv.bat -PythonVersion 3.12 -Force
+```
+
+`-Force` borra la carpeta y reinstala, asi que **se pierden los paquetes pip** que
+tuvieras ahi. Anotalos antes (`pip freeze > requirements.txt`).
+
+### Uso
+
+```powershell
+.\Start-PythonEnv.bat                Abre la version mas reciente
+.\Start-PythonEnv.bat -Version 3.11  Abre una version concreta
+```
+
+### Comandos
+
+```powershell
+python --version      Ver version
+pip install <paquete> Instalar paquete
+django-admin          Comandos Django
+flask                 Comandos Flask
+```
+
+## Java (JDK)
+
+### Instalacion
+
+```powershell
+.\Setup-JavaEnv.bat                          Ultima LTS
+.\Setup-JavaEnv.bat -JavaVersion 17          Version concreta
+.\Setup-JavaEnv.bat -JavaVersion 21 -Force   Actualizar el patch
+```
+
+Descarga el JDK de **Eclipse Temurin (Adoptium)** en zip, verificando el SHA-256
+que publica su propia API. Genera un `javaN-shell.bat` que fija PATH y JAVA_HOME.
+
+### Uso
+
+```powershell
+.\Start-JavaEnv.bat              Abre el JDK mas reciente
+.\Start-JavaEnv.bat -Version 17  Abre una version concreta
+```
+
+### JAVA_HOME: por defecto no se toca
+
+Maven, Gradle y los IDE leen `JAVA_HOME`, no el PATH. Cambiarla altera con que JDK
+compilan **todos** tus proyectos, asi que el kit no la toca salvo que lo pidas:
+
+```powershell
+.\Setup-JavaEnv.bat -JavaVersion 21 -SetJavaHome
+```
+
+`Uninstall-Env` la retira sola si apuntaba a lo que borra, para no dejarte Maven
+apuntando a una carpeta inexistente.
+
+`Doctor` muestra cual manda y de donde sale (usuario o maquina).
+
+### Nota sobre la red
+
+La API vive en `api.adoptium.net` pero los binarios se sirven desde `github.com`.
+Son dos permisos distintos en un cortafuegos corporativo, asi que `Doctor` los
+comprueba por separado.
+
+## Install-NoAdmin
+
+Instala software en tu perfil de usuario **sin permisos de administrador**, usando el
+modo per-user que el propio instalador ya soporta. No modifica el instalador ni el
+sistema, y no eleva privilegios: si un software necesita admin de verdad, lo dice y para.
+
+### Uso
+
+```powershell
+.\Install-NoAdmin.bat -Path "C:\Descargas\app.msi"
+```
+
+### Que hace
+
+1. Detecta el tipo de instalador (MSI / WiX Burn / Inno Setup / NSIS / desconocido).
+2. Intenta la instalacion per-user nativa (sin admin).
+3. Verifica el resultado comparando el registro de usuario (HKCU) antes y despues.
+4. Si no hay modo per-user, extrae los archivos a una carpeta portable en `..\Apps`.
+5. Si necesita admin real (drivers, servicios, MSI per-machine), lo informa con honestidad.
+
+### Tipos reconocidos
+
+| Tipo | Como se detecta | Modo per-user | Extraccion |
+|---|---|---|---|
+| MSI | extension `.msi` | `MSIINSTALLPERUSER=1 ALLUSERS=2` | `msiexec /a` |
+| WiX Burn | seccion PE `.wixburn` | no existe uno estandar | `/layout` |
+| Inno Setup | cadena `Inno Setup` en el binario | `/CURRENTUSER` | `innounp` |
+| NSIS | cadena `Nullsoft` en el binario | no fiable | `7z x` |
+
+Burn se detecta por su seccion PE, no por buscar la palabra "Burn" en el binario:
+esa aparece por casualidad en casi cualquier ejecutable grande.
+
+Un `/layout` de Burn deja los MSI sueltos, no una app portable lista para usar. Si
+alguno de esos MSI instala drivers o servicios, seguira necesitando admin.
+
+### Opciones
+
+```powershell
+-Path <ruta>       Ruta al instalador .msi o .exe (obligatorio)
+-ExtractOnly       Omite la instalacion y extrae directamente a portable
+-DestRoot <ruta>   Carpeta destino para el modo portable (por defecto ..\Apps)
+```
+
+### Notas
+
+- La extraccion de **NSIS** requiere `7z.exe` (7-Zip) en el PATH: `scoop install 7zip`.
+- La extraccion de **Inno Setup** requiere `innounp.exe` en el PATH.
+- Las instalaciones per-user aparecen en el menu Inicio y en `%LOCALAPPDATA%`.
+
+## Redes corporativas (proxy y certificados)
+
+Todas las descargas pasan por `Invoke-Download` en `lib\Common.ps1`, que:
+
+- Fuerza **TLS 1.2** (PowerShell 5.1 negocia TLS 1.0, que python.org y nodejs.org rechazan).
+- Detecta el **proxy** automaticamente: primero `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`,
+  y si no, el proxy del sistema (WPAD/PAC u Opciones de Internet).
+- Reintenta solo los fallos transitorios; un 404 o un 407 no se reintentan.
+- Descarga a un archivo `.part` y solo lo publica si termino bien, para no dejar
+  nunca un zip a medias que parezca valido.
+- Traduce el error a la causa real (proxy, certificado, DNS, version inexistente).
+
+Si el proxy pide credenciales:
+
+```powershell
+$env:HTTPS_PROXY = "http://usuario:clave@proxy.empresa:8080"
+```
+
+**La clave nunca se imprime.** Todo lo que muestra un proxy pasa por
+`Format-ProxyForDisplay`, que la sustituye por `***` y conserva el usuario (que si
+hace falta para diagnosticar). Importa sobre todo en `Doctor`, cuya salida es justo
+la que se acaba pegando en un ticket para IT.
+
+La unica excepcion es `pip`, que la recibe en su linea de comandos porque no lee
+`$env:HTTPS_PROXY` de forma fiable en Windows; queda anotado en `Setup-PythonEnv.ps1`.
+
+Si el proxy inspecciona HTTPS y falla el certificado, pide a IT el certificado raiz e
+importalo en *Certificados - Usuario actual* > *Entidades de certificacion raiz de
+confianza* (no necesita admin).
+
+### Verificacion de descargas
+
+| Descarga | Verificacion |
+|---|---|
+| Node.js | SHA-256 contra el `SHASUMS256.txt` oficial de nodejs.org |
+| Python  | HTTPS + comprobacion de integridad del zip |
+| get-pip.py | HTTPS |
+
+python.org no publica un archivo de checksums junto al zip embeddable (solo firmas
+GPG/sigstore, que necesitan herramientas extra), asi que ahi la autenticidad se apoya
+en HTTPS y solo se comprueba que el zip no llego truncado.
+
+## Solucion de problemas
+
+**Empieza siempre por aqui:**
+```powershell
+.\Doctor-Env.bat
+```
+
+**Error de ejecucion de scripts:**
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+Los `.bat` ya usan `-ExecutionPolicy Bypass`, asi que normalmente no hace falta.
+
+**npm falla detras del proxy:** npm tiene su propia configuracion, aparte de la del kit:
+```powershell
+npm config set proxy http://usuario:clave@proxy.empresa:8080
+npm config set https-proxy http://usuario:clave@proxy.empresa:8080
+```
+
+**El PATH quedo raro:** cada modificacion guarda una copia previa en
+`%LOCALAPPDATA%\AssassinSkipAdm\path-backups\`.
+
+**Laptop sin permisos de admin:**
+- Todo funciona en carpetas de usuario
+- Los shells .bat funcionan sin restricciones de PowerShell
+
+## Anadir un runtime nuevo
+
+El patron esta pensado para crecer (Java, Go, .NET, Git portable...):
+
+1. Crear `scripts\Setup-<Runtime>Env.ps1`.
+2. Empezar con `. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\Common.ps1")`.
+3. Usar `$WorkspaceRoot` para la carpeta destino, `Invoke-Download` para bajar,
+   `Test-ZipIntegrity` antes de extraer y `Add-UserPathEntry` para el PATH.
+4. Crear el `.bat` de 3 lineas en la raiz apuntando a `scripts\`.
+5. Anadir una comprobacion en `Doctor-Env.ps1` y el archivo a su lista `$expected`.
+
+No hay que reescribir proxy, TLS, reintentos ni manejo de PATH: ya vienen de `Common.ps1`.
+
+### Lo que ofrece `lib\Common.ps1`
+
+| Funcion | Para que |
+|---|---|
+| `Write-Log` | Log con timestamp y color |
+| `Invoke-Download` | Descarga con proxy, TLS, reintentos, SHA-256 y diagnostico |
+| `Invoke-JsonApi` | GET de una API JSON con el mismo tratamiento de proxy |
+| `Get-Sha256FromShasums` | Lee un `SHASUMS256.txt` remoto |
+| `Get-FileSha256` | SHA-256 de un archivo local |
+| `Test-ZipIntegrity` | Detecta zips truncados antes de extraer |
+| `Test-SemverRange` | Comprueba una version contra un rango npm (`^`, `~`, `>=`, `\|\|`) |
+| `Add-UserPathEntry` | Anade al PATH (al principio por defecto), sin duplicar |
+| `Remove-UserPathEntry` | Quita entradas exactas o todo lo que cuelgue de una carpeta |
+| `Show-PathConflicts` | Avisa si ya hay otras versiones del runtime en el PATH |
+| `Resolve-DownloadProxy` | Devuelve el proxy a usar para una URL |
+| `Format-ProxyForDisplay` | Oculta la clave de una URL de proxy antes de mostrarla |
+| `Invoke-NativeCommand` | Ejecuta un `.exe` sin que su stderr aborte el script |
+| `Restore-EnvVar` | Devuelve una variable de entorno a su valor previo |
+| `Get-WebText` | GET que devuelve texto (listados HTML), con proxy |
+| `Test-UrlExists` | HEAD para saber si un archivo existe sin descargarlo |
+
+`Invoke-NativeCommand` es obligatorio para llamar a `python`, `pip`, `npm`, `ng`, `7z`
+o `innounp`. En PowerShell 5.1 todo lo que un `.exe` escribe en stderr se convierte en
+un `ErrorRecord`, y con `$ErrorActionPreference = "Stop"` eso aborta el script aunque
+el comando fuera solo una comprobacion. Ni `2>$null` ni `*> $null` lo impiden.
+
+### npm y la configuracion del usuario
+
+`Setup-AngularEnv` **no** ejecuta `npm config set`: eso escribiria en
+`%USERPROFILE%\.npmrc` de forma permanente y dejaria el npm que el usuario ya tuviera
+apuntando su cache dentro de este kit. En su lugar se usan `NPM_CONFIG_PREFIX` y
+`NPM_CONFIG_CACHE`, solo para el proceso y en el shell generado.
+
+`Test-SemverRange` cubre lo que usan los campos `engines` en la practica, pero no es
+semver completo: no soporta rangos con guion (`1.2 - 1.5`) ni comodines (`1.x`).

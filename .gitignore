@@ -1,0 +1,27 @@
+# Instaladores de terceros usados para probar Install-NoAdmin (7-Zip, Git,
+# VirtualBox, Visual Studio 2003...). Son varios GB de binarios ajenos: sirven
+# para probar la deteccion MSI / Burn / Inno / NSIS, pero no son parte del kit.
+softwares_locked/
+
+# Carpetas hermanas que crea el kit. Normalmente viven un nivel por encima, pero
+# se ignoran tambien aqui por si alguien clona el repo dentro del workspace.
+/Angular/
+/Python/
+/Java/
+/Apps/
+
+# Bundles de Export-Env y su manifiesto.
+*.zip
+env.json
+
+# Descargas interrumpidas de Invoke-Download.
+*.part
+
+# Copias que dejan Use-Env e Install-NoAdmin al respaldar algo del usuario.
+*.assassinskipadm-backup
+autorun-previo.txt
+
+# Windows
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/

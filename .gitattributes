@@ -1,0 +1,11 @@
+# El kit es solo para Windows. cmd.exe puede comportarse de forma rara con .bat
+# en LF (y los shells que genera el kit tambien son .bat), asi que se fuerza CRLF
+# al hacer checkout: un clon desde WSL o Linux no los degrada.
+* text=auto eol=crlf
+
+# Binarios, por si algun dia entra alguno: que git no intente normalizarlos.
+*.zip binary
+*.png binary
+*.ico binary
+*.exe binary
+*.msi binary
