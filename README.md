@@ -290,6 +290,13 @@ Detalles de seguridad, porque `AutoRun` corre en **cada** `cmd`, incluidos los
   generados el perfil sigue funcionando.
 - Si ya tenias un `AutoRun` de otra herramienta, se conserva y se respalda.
 - `-Off` deja perfil y registro exactamente como estaban.
+- Las rutas se **escapan** al generar los scripts: comilla simple duplicada en el
+  `.ps1`, porcentaje duplicado en el `.cmd`. Sin eso, una carpeta de usuario como
+  `C:\Users\O'Brien` producia un `activate.ps1` roto, y como lo carga el perfil, el
+  sintoma era que **todas** las terminales nuevas fallaban al abrirse sin que nada
+  lo relacionara con haber ejecutado `Use-Env`. La ruta del perfil va ademas en
+  comillas simples: con dobles, un `$` en la ruta (`C:\Users\dev$user`) se expandia
+  y la activacion apuntaba a un sitio inexistente, fallando **en silencio**.
 
 Los enganches solo afectan a **terminales nuevas**.
 

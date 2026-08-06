@@ -134,6 +134,36 @@ function Get-RuntimeShell {
 # Generacion de los scripts de activacion
 # --------------------------------------------------------------------------
 
+function ConvertTo-PsLiteral {
+    <#
+        Escapa un valor para incrustarlo entre comillas SIMPLES en el codigo de
+        PowerShell que se genera. Ahi el unico caracter con significado es la
+        propia comilla simple, y se anula duplicandola.
+
+        Sin esto, un usuario llamado O'Brien producia un activate.ps1
+        sintacticamente roto. Y ese archivo lo carga el perfil en CADA PowerShell
+        nuevo, asi que el sintoma aparecia lejisimos de la causa: todas las
+        terminales empezaban a escupir un error de sintaxis al abrirse, sin nada
+        que lo relacionara con haber ejecutado Use-Env.
+    #>
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
+    return $Value.Replace("'", "''")
+}
+
+function ConvertTo-CmdLiteral {
+    <#
+        Escapa un valor para incrustarlo en el .cmd generado dentro de
+        set "VAR=...". Las comillas ya neutralizan &, |, ^ y los espacios; lo que
+        sigue vivo es el porcentaje, que cmd expande al leer la linea y que es un
+        caracter legal en un nombre de carpeta. Duplicarlo lo deja literal.
+
+        Se aplica SOLO a los valores, nunca a la plantilla: el %PATH% del final
+        tiene que expandirse de verdad.
+    #>
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
+    return $Value.Replace('%', '%%')
+}
+
 function Write-ActivateScripts {
     param([hashtable]$State)
 
@@ -168,12 +198,12 @@ function Write-ActivateScripts {
     $ps += "if (-not `$env:$GuardVar) {"
     $ps += "    `$env:$GuardVar = '1'"
     $ps += "    `$__paths = @("
-    foreach ($p in $allPaths) { $ps += "        '$p'," }
+    foreach ($p in $allPaths) { $ps += "        '$(ConvertTo-PsLiteral $p)'," }
     $ps += "        `$null"
     $ps += "    )"
     $ps += "    `$__ok = @(`$__paths | Where-Object { `$_ -and (Test-Path -LiteralPath `$_) })"
     $ps += "    if (`$__ok.Count -gt 0) { `$env:PATH = (`$__ok -join ';') + ';' + `$env:PATH }"
-    foreach ($k in $allVars.Keys) { $ps += "    `$env:$k = '$($allVars[$k])'" }
+    foreach ($k in $allVars.Keys) { $ps += "    `$env:$k = '$(ConvertTo-PsLiteral $allVars[$k])'" }
     $ps += "    Remove-Variable __paths, __ok -ErrorAction SilentlyContinue"
     $ps += "}"
     Set-Content -LiteralPath $ActivatePs1 -Value ($ps -join "`r`n") -Encoding UTF8
@@ -188,9 +218,10 @@ function Write-ActivateScripts {
     $bat += "if not defined $GuardVar ("
     $bat += "    set `"$GuardVar=1`""
     if ($allPaths.Count -gt 0) {
-        $bat += "    set `"PATH=$($allPaths -join ';');%PATH%`""
+        $escaped = @($allPaths | ForEach-Object { ConvertTo-CmdLiteral $_ })
+        $bat += "    set `"PATH=$($escaped -join ';');%PATH%`""
     }
-    foreach ($k in $allVars.Keys) { $bat += "    set `"$k=$($allVars[$k])`"" }
+    foreach ($k in $allVars.Keys) { $bat += "    set `"$k=$(ConvertTo-CmdLiteral $allVars[$k])`"" }
     $bat += ")"
     Set-Content -LiteralPath $ActivateCmd -Value ($bat -join "`r`n") -Encoding ASCII
 
@@ -247,9 +278,13 @@ function Add-ProfileHook {
     # Ojo con la construccion: dentro de @( ... ) la coma tiene MAS precedencia
     # que el "+", asi que 'a' + $b + 'c' se convierte en tres elementos sueltos
     # en vez de una cadena. Se usa -f entre parentesis para evitarlo.
+    #
+    # La ruta va en comillas SIMPLES y escapada. Con comillas dobles, un $ o una
+    # tilde invertida en la ruta (ambos legales en Windows) los interpretaria
+    # PowerShell al cargar el perfil, en vez de tomarlos como parte del nombre.
     $block = @(
         $MarkerStart,
-        ('$__assassinSkipAdm = "{0}"' -f $ActivatePs1),
+        ("`$__assassinSkipAdm = '{0}'" -f (ConvertTo-PsLiteral $ActivatePs1)),
         'if (Test-Path -LiteralPath $__assassinSkipAdm) { . $__assassinSkipAdm }',
         'Remove-Variable __assassinSkipAdm -ErrorAction SilentlyContinue',
         $MarkerEnd
