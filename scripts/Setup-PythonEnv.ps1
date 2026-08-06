@@ -320,37 +320,51 @@ function Install-Packages {
 
     Write-Log "Instalando paquetes: $Packages"
 
-    # pip no lee $env:HTTPS_PROXY en todas las versiones de Windows, asi que se
-    # lo pasamos explicito cuando lo tenemos.
+    # pip no lee $env:HTTPS_PROXY en todas las versiones de Windows, asi que hay
+    # que decirselo explicitamente. Se hace con PIP_PROXY y no con --proxy:
     #
-    # OJO: si el proxy lleva credenciales, --proxy las deja en la linea de
-    # comandos de pip, que cualquier proceso del equipo puede leer (Win32_Process).
-    # No se quita porque pasarlo por variable de entorno no funciona de forma
-    # fiable, que es justo el motivo de este bloque. Al menos no se imprime.
-    $pipProxy = @()
+    #   - PIP_PROXY es el mecanismo propio de pip (toda opcion larga tiene su
+    #     PIP_<OPCION>), asi que es tan fiable como el argumento. No es el
+    #     HTTPS_PROXY generico que interpreta requests, que es el que no siempre
+    #     se respeta y el motivo de que exista este bloque.
+    #   - Con --proxy la clave quedaba en la linea de comandos del proceso, y esa
+    #     la lee cualquier proceso del equipo (Win32_Process, Administrador de
+    #     tareas). El bloque de entorno de un proceso ajeno no se lee sin permiso
+    #     para abrir su memoria.
+    #
+    # Verificado con pip 22.3: apuntando PIP_PROXY a un puerto cerrado la descarga
+    # falla, y sin el funciona. Es decir, se honra de verdad.
     $proxy = Resolve-DownloadProxy -Uri ([Uri]"https://pypi.org")
+    $previousPipProxy = $env:PIP_PROXY
     if ($proxy) {
         Write-Log "  Usando proxy para pip: $(Format-ProxyForDisplay $proxy)"
-        $pipProxy = @('--proxy', $proxy)
+        $env:PIP_PROXY = $proxy
     }
 
     $packageList = $Packages -split ","
     $failed = @()
 
-    foreach ($pkg in $packageList) {
-        $pkg = $pkg.Trim()
-        if ($pkg) {
-            Write-Log "  Instalando: $pkg"
-            # Ojo: no llamar a esta variable $args, que es una automatica de
-            # PowerShell dentro de una funcion.
-            $pipArgs = @('-m', 'pip', 'install', $pkg) + $pipProxy +
-                       @('--disable-pip-version-check', '--no-warn-script-location')
-            $run = Invoke-NativeCommand -FilePath $pythonExe -Arguments $pipArgs
-            if ($run.ExitCode -ne 0) {
-                Write-Log "  Fallo al instalar: $pkg" "ERROR"
-                $failed += $pkg
+    try {
+        foreach ($pkg in $packageList) {
+            $pkg = $pkg.Trim()
+            if ($pkg) {
+                Write-Log "  Instalando: $pkg"
+                # Ojo: no llamar a esta variable $args, que es una automatica de
+                # PowerShell dentro de una funcion.
+                $pipArgs = @('-m', 'pip', 'install', $pkg,
+                             '--disable-pip-version-check', '--no-warn-script-location')
+                $run = Invoke-NativeCommand -FilePath $pythonExe -Arguments $pipArgs
+                if ($run.ExitCode -ne 0) {
+                    Write-Log "  Fallo al instalar: $pkg" "ERROR"
+                    $failed += $pkg
+                }
             }
         }
+    }
+    finally {
+        # Restore-EnvVar y no una asignacion directa: si PIP_PROXY no estaba
+        # definida hay que ELIMINARLA, no dejarla vacia. Para pip no es lo mismo.
+        if ($proxy) { Restore-EnvVar -Name 'PIP_PROXY' -Value $previousPipProxy }
     }
 
     if ($failed.Count -eq 0) {

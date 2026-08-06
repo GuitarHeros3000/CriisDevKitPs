@@ -540,8 +540,12 @@ $env:HTTPS_PROXY = "http://usuario:clave@proxy.empresa:8080"
 hace falta para diagnosticar). Importa sobre todo en `Doctor`, cuya salida es justo
 la que se acaba pegando en un ticket para IT.
 
-La unica excepcion es `pip`, que la recibe en su linea de comandos porque no lee
-`$env:HTTPS_PROXY` de forma fiable en Windows; queda anotado en `Setup-PythonEnv.ps1`.
+Tampoco viaja en la linea de comandos de `pip`. Se le pasa por `PIP_PROXY`, que es su
+propio mecanismo de variables de entorno (toda opcion larga tiene su `PIP_<OPCION>`),
+no el `HTTPS_PROXY` generico que no siempre se respeta. Con un argumento `--proxy` la
+clave quedaba visible para cualquier proceso del equipo mientras pip corriera
+(`Win32_Process`, Administrador de tareas); el bloque de entorno de un proceso ajeno,
+en cambio, no se lee sin permiso para abrir su memoria.
 
 Si el proxy inspecciona HTTPS y falla el certificado, pide a IT el certificado raiz e
 importalo en *Certificados - Usuario actual* > *Entidades de certificacion raiz de
