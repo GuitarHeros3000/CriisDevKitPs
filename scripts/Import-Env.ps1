@@ -131,6 +131,13 @@ try {
         exit 1
     }
 
+    # La version del kit es informativa, no bloqueante: quien decide si el bundle
+    # se puede importar es manifestVersion, que describe el formato. Esto solo
+    # sirve para que, si algo sale raro, se sepa que no se generaron con el mismo.
+    if ($m.kitVersion -and $m.kitVersion -ne $KitVersion) {
+        Write-Log "El bundle lo genero un kit v$($m.kitVersion) y este es v$KitVersion." "WARN"
+    }
+
     Write-Host "Bundle creado el $($m.created)" -ForegroundColor Gray
     Write-Host "en la maquina '$($m.createdOn)'" -ForegroundColor Gray
     Write-Host ""

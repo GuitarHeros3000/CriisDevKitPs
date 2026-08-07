@@ -223,6 +223,7 @@ try {
 
     $manifest = [ordered]@{
         manifestVersion = $ManifestVersion
+        kitVersion      = $KitVersion
         created         = (Get-Date -Format "o")
         createdOn       = $env:COMPUTERNAME
         includesBinaries = (-not $SkipBinaries)

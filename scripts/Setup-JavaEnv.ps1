@@ -31,7 +31,9 @@ param(
 
     [switch]$SetJavaHome,
 
-    [switch]$Force
+    [switch]$Force,
+
+    [switch]$WhatIf
 )
 
 $ErrorActionPreference = "Stop"
@@ -271,6 +273,48 @@ if (-not $binary) { exit 1 }
 Write-Log "  Release : $($binary.Release)"
 Write-Log "  Archivo : $($binary.FileName)"
 Write-Log ""
+
+if ($WhatIf) {
+    # Aqui el plan vale doble: la API de Adoptium ya ha dicho el tamano exacto,
+    # asi que se ve que son ~200 MB antes de empezar a bajarlos.
+    $destino = Join-Path $JavaRoot $FolderName
+    $javaExe = Join-Path $destino "bin\java.exe"
+    $yaHay = if (Test-Path $javaExe) { Get-InstalledJavaRelease -JdkPath $destino } else { $null }
+
+    Write-Host ""
+    Write-Host "Se va a instalar:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host ("  [release]  {0}" -f $binary.Release)
+    Write-Host ("  [descarga] {0} MB  (SHA-256 verificado)" -f $binary.SizeMb)
+    Write-Host ("             {0}" -f $binary.Link) -ForegroundColor DarkGray
+    Write-Host ("  [carpeta]  {0}" -f $destino)
+    if ($yaHay) {
+        if ($yaHay -eq $binary.Release) {
+            Write-Host  "             ya esta instalada esa misma release: no se descargaria nada" -ForegroundColor Green
+        }
+        elseif ($Force) {
+            Write-Host ("             -Force BORRARIA la actual ({0})" -f $yaHay) -ForegroundColor Red
+        }
+        else {
+            Write-Host ("             ya hay {0}; sin -Force no se tocaria" -f $yaHay) -ForegroundColor Yellow
+        }
+    }
+    Write-Host ("  [PATH]     {0}" -f (Join-Path $destino "bin"))
+    Write-Host ("  [shell]    java{0}-shell.bat" -f $JavaVersion)
+    if ($SetJavaHome) {
+        $previo = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')
+        Write-Host ("  [JAVA_HOME] de usuario -> {0}" -f $destino) -ForegroundColor Yellow
+        if ($previo) { Write-Host ("              sustituiria a: {0}" -f $previo) -ForegroundColor Yellow }
+        Write-Host  "              Maven, Gradle y los IDE compilarian con este JDK." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host  "  [JAVA_HOME] no se tocaria (usa -SetJavaHome si lo quieres)" -ForegroundColor DarkGray
+    }
+    Write-Host ""
+    Write-Host "-WhatIf: no se ha tocado nada." -ForegroundColor Cyan
+    Write-Host ""
+    exit 0
+}
 
 $jdkPath = Get-JavaPortable -Binary $binary -FolderName $FolderName
 if (-not $jdkPath) { exit 1 }

@@ -27,7 +27,9 @@ param(
 
     [string]$NodeVersion,
 
-    [string]$NewProject
+    [string]$NewProject,
+
+    [switch]$WhatIf
 )
 
 $ErrorActionPreference = "Stop"
@@ -446,6 +448,35 @@ $EnvSetup = @{
     NodeShasumsUrl    = "https://nodejs.org/dist/v$resolvedNode/SHASUMS256.txt"
     AngularVersion    = $AngularVersion
     AngularFolderName = "angular-v$AngularVersion"
+}
+
+if ($WhatIf) {
+    # Se imprime despues de resolver la Node por el registro de npm (solo
+    # lectura): lo mas util de este plan es ver QUE Node se ha elegido y por que,
+    # antes de bajar 30 MB y de que npm instale 292 paquetes.
+    $destinoNode = Join-Path $EnvSetup.AngularRoot $EnvSetup.NodeFolderName
+    $destinoAng  = Join-Path $EnvSetup.AngularRoot $EnvSetup.AngularFolderName
+
+    Write-Host ""
+    Write-Host "Se va a instalar:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host ("  [angular]  Angular CLI v{0}" -f $EnvSetup.AngularVersion)
+    Write-Host ("  [node]     v{0}{1}" -f $EnvSetup.NodeVersion,
+                 $(if ($NodeVersion) { "  (forzada con -NodeVersion)" } else { "  (resuelta segun lo que pide el CLI)" }))
+    Write-Host ("  [descarga] {0}" -f $EnvSetup.NodeDownloadUrl) -ForegroundColor DarkGray
+    Write-Host  "             + el CLI y sus dependencias desde registry.npmjs.org" -ForegroundColor DarkGray
+    Write-Host ("  [carpeta]  {0}{1}" -f $destinoNode, $(if (Test-Path (Join-Path $destinoNode "node.exe")) { "   (ya existe: se reutiliza)" } else { "" }))
+    Write-Host ("  [carpeta]  {0}" -f $destinoAng)
+    Write-Host ("  [PATH]     {0}" -f $destinoNode)
+    Write-Host  "             el CLI NO se publica en el PATH: solo dentro de su shell" -ForegroundColor DarkGray
+    Write-Host ("  [shell]    shell-v{0}.bat" -f $EnvSetup.AngularVersion)
+    if (-not [string]::IsNullOrWhiteSpace($NewProject)) {
+        Write-Host ("  [proyecto] {0}" -f (Join-Path $destinoAng "projects\$NewProject"))
+    }
+    Write-Host ""
+    Write-Host "-WhatIf: no se ha tocado nada." -ForegroundColor Cyan
+    Write-Host ""
+    exit 0
 }
 
 $angularPath = Initialize-AngularDirectories -Version $EnvSetup.AngularVersion

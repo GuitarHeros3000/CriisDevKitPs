@@ -30,6 +30,15 @@
 $DevKitRoot    = Split-Path -Parent $PSScriptRoot
 $WorkspaceRoot = Split-Path -Parent $DevKitRoot
 
+# Version del kit. No es lo mismo que $ManifestVersion de Export-Env: aquella
+# describe el FORMATO del env.json y decide si un bundle se puede importar; esta
+# identifica el kit que lo genero y sirve para diagnosticar ("que version tienes"
+# en un informe) y para saber con que se creo un bundle.
+#
+# Subela al cambiar comportamiento visible; Doctor la muestra y Export-Env la
+# anota en el manifiesto.
+$KitVersion = "1.0.0"
+
 # Windows PowerShell 5.1 negocia TLS 1.0 por defecto, y python.org y nodejs.org
 # ya lo rechazan. Sin esto, las descargas fallan con un error de "conexion cerrada"
 # que no dice nada.

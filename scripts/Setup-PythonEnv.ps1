@@ -13,6 +13,9 @@
     Reinstala aunque ya exista esa version menor. Necesario para actualizar el
     patch (3.12.9 -> 3.12.10), porque la carpeta se llama solo python-3.12.
     Borra la carpeta: se pierden los paquetes pip instalados ahi.
+.PARAMETER WhatIf
+    Muestra el plan y no toca nada. Resuelve la version por red (solo lectura),
+    asi que dice la version EXACTA que se instalaria antes de bajar nada.
 .EXAMPLE
     .\Setup-PythonEnv.ps1 -PythonVersion 3.12
 .EXAMPLE
@@ -27,7 +30,9 @@ param(
 
     [string]$InstallPackages,
 
-    [switch]$Force
+    [switch]$Force,
+
+    [switch]$WhatIf
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,6 +43,10 @@ $ProgressPreference = "SilentlyContinue"
 $PythonRoot = Join-Path $WorkspaceRoot "Python"
 
 $PythonFtpUrl = "https://www.python.org/ftp/python/"
+
+# Archivo donde se anota el SHA-256 del zip instalado. Trazabilidad, no
+# autenticidad: ver el comentario en Get-PythonPortable.
+$ShaMarker = ".assassinskipadm-sha256"
 
 function Get-EmbedZipUrl {
     param([string]$FullVersion)
@@ -225,6 +234,15 @@ function Get-PythonPortable {
         return $null
     }
 
+    # Se anota el SHA-256 de lo que se instalo. NO es verificacion de
+    # autenticidad -no hay con que compararlo- sino trazabilidad: permite
+    # comparar dos maquinas que dicen tener la misma version, y detectar que los
+    # archivos han cambiado despues. python.org ya no publica hashes junto al
+    # zip embeddable; solo firmas sigstore/GPG, que necesitan herramientas que
+    # una maquina bloqueada no tiene (y para Python seria la pescadilla que se
+    # muerde la cola). Mismo patron que la marca de release del JDK.
+    $sha = Get-FileSha256 -FilePath $zipPath
+
     Write-Log "Extrayendo..."
     if (Test-Path $tempExtract) {
         Remove-Item $tempExtract -Recurse -Force
@@ -240,7 +258,10 @@ function Get-PythonPortable {
     Remove-Item $tempExtract -Recurse -Force
     Remove-Item $zipPath -Force
 
+    Set-Content -LiteralPath (Join-Path $pythonFolderPath $ShaMarker) -Value $sha -Encoding ASCII
+
     Write-Log "Python instalado en $pythonFolderPath" "SUCCESS"
+    Write-Log "  SHA-256 del zip: $sha"
 
     return $pythonFolderPath
 }
@@ -419,6 +440,43 @@ function Install-Packages {
 Write-Log "Version a instalar: $($EnvSetup.FullVersion)" "INFO"
 Write-Log "Carpeta destino:    $($EnvSetup.PythonRoot)" "INFO"
 Write-Log ""
+
+if ($WhatIf) {
+    # El plan se imprime DESPUES de resolver la version por red (solo lectura) y
+    # ANTES de crear ninguna carpeta: lo que interesa saber antes de bajar 10 MB
+    # por un proxy lento es que version exacta va a caer y donde.
+    $destino = Join-Path $EnvSetup.PythonRoot $EnvSetup.FolderName
+    $exe = Join-Path $destino "python.exe"
+    $yaHay = if (Test-Path $exe) { Get-InstalledPythonVersion -PythonExe $exe } else { $null }
+
+    Write-Host ""
+    Write-Host "Se va a instalar:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host ("  [version]  Python {0}" -f $EnvSetup.FullVersion)
+    Write-Host ("  [descarga] {0}" -f $EnvSetup.DownloadUrl) -ForegroundColor DarkGray
+    Write-Host ("  [carpeta]  {0}" -f $destino)
+    if ($yaHay) {
+        if ($yaHay -eq $EnvSetup.FullVersion) {
+            Write-Host ("             ya esta instalada esa misma version: no se descargaria nada") -ForegroundColor Green
+        }
+        elseif ($Force) {
+            Write-Host ("             -Force BORRARIA la actual ({0}) y con ella sus paquetes pip" -f $yaHay) -ForegroundColor Red
+        }
+        else {
+            Write-Host ("             ya hay {0}; sin -Force no se tocaria" -f $yaHay) -ForegroundColor Yellow
+        }
+    }
+    Write-Host ("  [PATH]     {0}" -f $destino)
+    Write-Host ("  [PATH]     {0}" -f (Join-Path $destino "Scripts"))
+    Write-Host ("  [shell]    py{0}-shell.bat" -f $EnvSetup.MinorTag)
+    if (-not [string]::IsNullOrWhiteSpace($InstallPackages)) {
+        Write-Host ("  [pip]      {0}" -f (($InstallPackages -split ',' | ForEach-Object { $_.Trim() }) -join ', '))
+    }
+    Write-Host ""
+    Write-Host "-WhatIf: no se ha tocado nada." -ForegroundColor Cyan
+    Write-Host ""
+    exit 0
+}
 
 Initialize-PythonDirectories | Out-Null
 

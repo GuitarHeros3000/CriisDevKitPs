@@ -380,6 +380,14 @@ function Test-PythonInstall {
             Write-Detail "Instalacion corrupta; borra la carpeta y reejecuta el setup."
         }
 
+        # SHA-256 del zip con que se instalo. Es trazabilidad, no verificacion:
+        # sirve para comparar dos maquinas que dicen tener la misma version.
+        # python.org no publica hashes con los que contrastarlo.
+        $shaFile = Join-Path $v.FullName ".assassinskipadm-sha256"
+        if (Test-Path $shaFile) {
+            Write-Check "  SHA-256 del zip" (Get-Content -LiteralPath $shaFile -Raw).Trim() 'info'
+        }
+
         # Las comprobaciones de fichero valen aunque el binario este roto: dicen
         # si ademas hay que rehacer la configuracion, no solo la descarga.
         $pth = Join-Path $v.FullName "python$tag._pth"
@@ -775,6 +783,7 @@ function Test-PathConflicts {
 function Test-KitIntegrity {
     Write-Section "Kit"
 
+    Write-Check "Version del kit" $KitVersion 'info'
     Write-Check "Raiz del kit" $DevKitRoot 'info'
     Write-Check "Workspace" $WorkspaceRoot 'info'
 

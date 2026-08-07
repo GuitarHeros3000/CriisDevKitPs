@@ -47,6 +47,31 @@ Proyectos Individuales/
     └── <nombre-app>/
 ```
 
+## Ver el plan antes de descargar: `-WhatIf`
+
+Los tres `Setup-*Env` aceptan `-WhatIf`. Resuelven la version por red (solo lectura) y
+te dicen exactamente que pasaria, **sin tocar nada**:
+
+```powershell
+.\Setup-JavaEnv.bat -JavaVersion 21 -WhatIf
+```
+```
+Se va a instalar:
+
+  [release]  jdk-21.0.12+8
+  [descarga] 195.6 MB  (SHA-256 verificado)
+  [carpeta]  ...\Java\jdk-21
+  [PATH]     ...\Java\jdk-21\bin
+  [shell]    java21-shell.bat
+  [JAVA_HOME] no se tocaria (usa -SetJavaHome si lo quieres)
+
+-WhatIf: no se ha tocado nada.
+```
+
+Sirve sobre todo para tres cosas: ver **cuanto** vas a descargar antes de hacerlo por
+un proxy lento, ver **que version exacta** se ha resuelto (el patch de Python o la
+Node que pide ese Angular), y confirmar que `-Force` no va a borrar algo que querias.
+
 ## Por donde empezar
 
 El flujo depende de si en esa maquina ya hay algo instalado con permisos de
@@ -126,6 +151,11 @@ dentro del bundle van rutas absolutas del origen, que alli no valdrian.
 -SkipBinaries       Solo el manifiesto (unos KB); el destino necesitara internet
 -WhatIf             Import-Env: muestra el plan sin instalar
 ```
+
+El manifiesto lleva dos versiones distintas: `manifestVersion` describe el **formato**
+del `env.json` y decide si el bundle se puede importar, y `kitVersion` identifica el
+kit que lo genero. La segunda es informativa: si no coincide, `Import-Env` lo dice
+pero no bloquea. `Doctor` muestra la version del kit de esta maquina.
 
 ## Registro de ejecuciones
 
@@ -621,12 +651,25 @@ confianza* (no necesita admin).
 | Descarga | Verificacion |
 |---|---|
 | Node.js | SHA-256 contra el `SHASUMS256.txt` oficial de nodejs.org |
-| Python  | HTTPS + comprobacion de integridad del zip |
+| JDK (Temurin) | SHA-256 que publica la propia API de Adoptium |
+| Python  | HTTPS + integridad del zip + se anota su SHA-256 |
 | get-pip.py | HTTPS |
 
-python.org no publica un archivo de checksums junto al zip embeddable (solo firmas
-GPG/sigstore, que necesitan herramientas extra), asi que ahi la autenticidad se apoya
-en HTTPS y solo se comprueba que el zip no llego truncado.
+**Python es el unico sin verificacion de autenticidad, y no se puede arreglar.**
+python.org ya no publica hashes junto al zip embeddable: retiro las sumas MD5 de la
+pagina de release y hoy solo ofrece `.sigstore`, `.asc` y `.crt`. Verificar esas
+firmas de verdad exige contrastarlas contra el log de transparencia, o sea
+herramientas que una maquina bloqueada no tiene; y en el caso de Python haria falta
+Python para verificar Python.
+
+Sacar el digest del `.sigstore` a mano no serviria: quien pudiera servir un zip
+manipulado serviria tambien un `.sigstore` a juego. Seria seguridad de mentira, asi
+que no se hace.
+
+Lo que si se hace es anotar el SHA-256 del zip instalado en
+`.assassinskipadm-sha256`, y `Doctor` lo muestra. Es **trazabilidad, no
+autenticidad**: sirve para comparar dos maquinas que dicen tener la misma version, y
+para detectar que los archivos cambiaron despues.
 
 ## Solucion de problemas
 
