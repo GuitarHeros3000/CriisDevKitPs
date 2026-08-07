@@ -251,7 +251,14 @@ function Add-ProfileHook {
             Write-Log "  Copia del perfil previo: $backup"
         }
         Remove-ProfileHook | Out-Null
-        $content = Get-Content -LiteralPath $ProfilePath -Raw
+
+        # Hay que volver a comprobar que existe: si el perfil solo contenia
+        # NUESTRO bloque, Remove-ProfileHook acaba de borrarlo por quedar vacio,
+        # y este Get-Content reventaba el script entero. Se disparaba al activar
+        # un SEGUNDO runtime, que es un flujo de lo mas normal.
+        $content = if (Test-Path -LiteralPath $ProfilePath) {
+            Get-Content -LiteralPath $ProfilePath -Raw
+        } else { '' }
     }
     else {
         $content = ''
