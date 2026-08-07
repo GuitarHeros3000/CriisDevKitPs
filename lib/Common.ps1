@@ -171,8 +171,22 @@ function Test-ProxyUsable {
     if ($valida) { return $true }
 
     Write-Log "La URL del proxy no es valida: $(Format-ProxyForDisplay $Proxy)" "ERROR"
-    Write-Log "  Si tu usuario es de dominio, la barra invertida hay que codificarla como %5C:" "WARN"
-    Write-Log '    $env:HTTPS_PROXY = "http://dominio%5Cusuario:clave@proxy.empresa:8080"' "WARN"
+
+    # La pista tiene que apuntar a la causa REAL. Una primera version soltaba
+    # siempre el consejo del %5C, que con un proxy al que solo le falta el
+    # esquema manda a quien lo lea a mirar justo donde no esta el problema.
+    if ($Proxy -notmatch '^[A-Za-z][A-Za-z0-9+.-]*://') {
+        Write-Log "  Le falta el esquema. .NET no admite un proxy sin http:// delante:" "WARN"
+        Write-Log '    $env:HTTPS_PROXY = "http://proxy.empresa:8080"' "WARN"
+    }
+    elseif ($Proxy -match '\\') {
+        Write-Log "  Lleva una barra invertida. Si tu usuario es de dominio, codificala como %5C:" "WARN"
+        Write-Log '    $env:HTTPS_PROXY = "http://dominio%5Cusuario:clave@proxy.empresa:8080"' "WARN"
+    }
+    else {
+        Write-Log "  Revisa que tenga la forma  http://[usuario:clave@]servidor:puerto" "WARN"
+    }
+
     Write-Log "  Se sigue SIN proxy, asi que las descargas fallaran si hace falta pasar por el." "WARN"
     return $false
 }

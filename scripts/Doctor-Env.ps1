@@ -805,7 +805,12 @@ function Test-KitIntegrity {
         "Start-PythonEnv.bat",
         "Install-NoAdmin.bat",
         "Doctor-Env.bat",
-        "Uninstall-Env.bat"
+        "Uninstall-Env.bat",
+        "Run-Tests.bat",
+        "scripts\Run-Tests.ps1",
+        "tests\Common.Tests.ps1",
+        "tests\Shells.Tests.ps1",
+        "tests\UserPath.Tests.ps1"
     )
 
     $missing = @()

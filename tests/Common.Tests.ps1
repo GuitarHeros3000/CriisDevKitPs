@@ -108,6 +108,33 @@ Describe "Test-ProxyUsable" {
         Test-ProxyUsable -Proxy 'http://dominio\usuario:clave@proxy.empresa:8080' | Should Be $false
     }
 
+    It "rechaza un proxy sin esquema" -TestCases @(
+        @{ Proxy = 'proxy.empresa:8080' }
+        @{ Proxy = '10.20.30.40:8080' }
+    ) {
+        param($Proxy)
+        # .NET no admite un proxy sin http:// delante. Nunca funciono, pero antes
+        # fallaba con un error incomprensible mucho mas adelante.
+        Test-ProxyUsable -Proxy $Proxy | Should Be $false
+    }
+
+    # La pista tiene que apuntar a la causa real: una version anterior soltaba
+    # siempre el consejo del %5C, incluso cuando lo que faltaba era el esquema.
+    It "la pista corresponde a la causa" -TestCases @(
+        @{ Proxy = 'proxy.empresa:8080';                          Espera = 'esquema'; NoEspera = '%5C' }
+        @{ Proxy = 'http://dominio\usuario:c@proxy.empresa:8080'; Espera = '%5C';     NoEspera = 'esquema' }
+    ) {
+        param($Proxy, $Espera, $NoEspera)
+        $dichos = New-Object System.Collections.ArrayList
+        Mock Write-Log { $dichos.Add($Message) | Out-Null }
+
+        Test-ProxyUsable -Proxy $Proxy | Out-Null
+
+        $todo = ($dichos -join ' ')
+        $todo | Should Match $Espera
+        $todo | Should Not Match $NoEspera
+    }
+
     It "explica como arreglarlo sin mostrar la clave" {
         # ArrayList y .Add() en vez de "$x += ...": el scriptblock del mock corre
         # en su propio ambito, asi que el += crearia una copia local y la de fuera
