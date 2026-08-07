@@ -594,6 +594,50 @@ npm config set https-proxy http://usuario:clave@proxy.empresa:8080
 - Todo funciona en carpetas de usuario
 - Los shells .bat funcionan sin restricciones de PowerShell
 
+## Pruebas
+
+```powershell
+.\Run-Tests.bat                    Todas
+.\Run-Tests.bat -Name UserPath     Solo un archivo
+.\Run-Tests.bat -Quiet             Solo el resumen
+```
+
+Sale con codigo 1 si falla alguna, asi que se puede encadenar.
+
+### Por que Pester 3.4
+
+Es la version que **viene de fabrica con Windows**. Pedir Pester 5 obligaria a un
+`Install-Module` contra PSGallery, que es justo lo que bloquea el proxy corporativo
+para el que existe este kit: unas pruebas que no se pueden ejecutar en la maquina de
+destino no sirven de nada. El runner fuerza la 3.x aunque haya una 5 instalada,
+porque la sintaxis de asercion cambio (`Should Be` paso a `Should -Be`).
+
+### Que se cubre
+
+| Archivo | Que prueba |
+|---|---|
+| `Common.Tests.ps1` | Funciones puras: enmascarado del proxy, los cuatro escapados, `Test-SemverRange` contra los `engines` reales del CLI, semver, URLs |
+| `Shells.Tests.ps1` | Los tres shells generados: que el `.bat` **funciona al ejecutarlo en cmd** y que `Use-Env` recupera de el la ruta exacta |
+| `UserPath.Tests.ps1` | `Add-UserPathEntry` y `Remove-UserPathEntry` |
+
+Ninguna prueba toca el registro, el PATH real ni la red. Las del PATH sustituyen por
+mocks sus dos unicas puertas al sistema, `Get-RawUserPath` y `Save-UserPath`.
+
+### El caso que justifica todo esto
+
+Casi cada prueba cubre un fallo que existio de verdad, y **ninguno se reproduce en la
+maquina de quien desarrolla el kit**:
+
+| Fallo | Solo aparece si... |
+|---|---|
+| Todas las terminales rotas al abrirse | tu usuario se llama `O'Brien` |
+| El PATH del shell cortado por la mitad | tu carpeta se llama `Marks & Spencer` |
+| La contrasena del proxy filtrada a medias | tu clave contiene un `@` |
+| Rutas reescapadas en bucle (`%%%%`) | tu ruta contiene un `%` |
+
+Probar el kit a mano en la propia maquina no encuentra nada de esto. Por eso las
+pruebas usan una carpeta llamada `Marks & Spencer 100% ^O'Brien`.
+
 ## Anadir un runtime nuevo
 
 El patron esta pensado para crecer (Java, Go, .NET, Git portable...):
