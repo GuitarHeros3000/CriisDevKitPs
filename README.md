@@ -623,6 +623,23 @@ seguidos, porque el primer fallo aborta todo lo demas.
 
 No hay que reescribir proxy, TLS, reintentos ni manejo de PATH: ya vienen de `Common.ps1`.
 
+### Los shells se generan con las rutas escapadas
+
+Un `.bat` tiene dos contextos y cada uno escapa distinto, asi que hay dos funciones:
+
+| Donde | Que protege | Ejemplo generado |
+|---|---|---|
+| `set "VAR=..."` | las comillas cubren `&`, `\|`, `^`, `<`, `>`; queda el `%` | `set "PATH=C:\Marks & Spencer 100%%\bin;%PATH%"` |
+| `echo ...` | no admite comillas: hay que escapar a mano | `echo Ruta: C:\Marks ^& Spencer 100%%` |
+
+Con `set PATH=` **sin** comillas, un `&` en la ruta partia la linea en dos comandos
+y el shell quedaba con el PATH a medias. Nombres asi son de lo mas normal en una
+carpeta corporativa.
+
+`Use-Env` vuelve a **leer** estos shells para saber que rutas antepone cada uno, asi
+que su expresion regular acepta las comillas como opcionales: los shells generados
+por una version anterior del kit siguen en disco y tienen que seguir entendiendose.
+
 ### Lo que ofrece `lib\Common.ps1`
 
 | Funcion | Para que |
@@ -639,6 +656,10 @@ No hay que reescribir proxy, TLS, reintentos ni manejo de PATH: ya vienen de `Co
 | `Show-PathConflicts` | Avisa si ya hay otras versiones del runtime en el PATH |
 | `Resolve-DownloadProxy` | Devuelve el proxy a usar para una URL |
 | `Format-ProxyForDisplay` | Oculta la clave de una URL de proxy antes de mostrarla |
+| `ConvertTo-PsLiteral` | Escapa un valor para codigo PowerShell generado (comillas simples) |
+| `ConvertTo-CmdLiteral` | Escapa un valor para `set "VAR=..."` de un `.bat` |
+| `ConvertFrom-CmdLiteral` | Lo deshace, al volver a leer un shell generado |
+| `ConvertTo-CmdEchoText` | Escapa un valor para una linea `echo` de un `.bat` |
 | `Invoke-NativeCommand` | Ejecuta un `.exe` sin que su stderr aborte el script |
 | `Restore-EnvVar` | Devuelve una variable de entorno a su valor previo |
 | `Get-WebText` | GET que devuelve texto (listados HTML), con proxy |

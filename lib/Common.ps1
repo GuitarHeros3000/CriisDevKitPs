@@ -511,6 +511,60 @@ function Test-SemverRange {
 # maquina destino) y Doctor -Fix (que los regenera si faltan). Con copias sueltas
 # acabarian divergiendo y el shell diria una cosa distinta segun quien lo escribio.
 
+function ConvertTo-PsLiteral {
+    <#
+        Escapa un valor para incrustarlo entre comillas SIMPLES en codigo de
+        PowerShell generado. Ahi el unico caracter con significado es la propia
+        comilla simple, y se anula duplicandola.
+
+        Sin esto, un usuario llamado O'Brien producia un activate.ps1
+        sintacticamente roto que el perfil carga en CADA PowerShell nuevo.
+    #>
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
+    return $Value.Replace("'", "''")
+}
+
+function ConvertTo-CmdLiteral {
+    <#
+        Escapa un valor para incrustarlo en un .bat dentro de set "VAR=...".
+        Las comillas ya neutralizan &, |, ^, < y >; lo que sigue vivo es el
+        porcentaje, que cmd expande al leer la linea y que es legal en un nombre
+        de carpeta de Windows. Duplicarlo lo deja literal.
+
+        Se aplica SOLO a los valores, nunca a la plantilla: el %PATH% del final
+        tiene que expandirse de verdad.
+    #>
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
+    return $Value.Replace('%', '%%')
+}
+
+function ConvertFrom-CmdLiteral {
+    <#
+        Deshace ConvertTo-CmdLiteral. Hace falta porque Use-Env vuelve a LEER los
+        shells generados para saber que rutas antepone cada uno: sin esto, una
+        ruta con porcentaje se leeria con el %% puesto y se volveria a escapar en
+        cada pasada (%%%%, %%%%%%%%...).
+    #>
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
+    return $Value.Replace('%%', '%')
+}
+
+function ConvertTo-CmdEchoText {
+    <#
+        Escapa un valor para una linea "echo ..." de un .bat. Aqui no se puede
+        recurrir a las comillas como en set: se imprimirian. Hay que escapar a
+        mano cada caracter especial de cmd.
+
+        El circunflejo va PRIMERO porque es el propio caracter de escape: hacerlo
+        despues escaparia los que acabamos de anadir.
+    #>
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
+
+    $result = $Value.Replace('^', '^^')
+    foreach ($c in @('&', '|', '<', '>')) { $result = $result.Replace($c, "^$c") }
+    return $result.Replace('%', '%%')
+}
+
 function Write-AngularShell {
     param(
         [Parameter(Mandatory=$true)][string]$AngularPath,
@@ -525,11 +579,20 @@ function Write-AngularShell {
 
     # El prefix y la cache van aqui, no en el .npmrc del usuario: asi el npm que
     # ya tuviera instalado sigue intacto y este shell queda autocontenido.
+    #
+    # Las rutas van en set "VAR=..." y escapadas. Sin las comillas, un & o un ^
+    # en la ruta (legales en Windows: "Marks & Spencer", muy posible en el nombre
+    # de una carpeta corporativa) rompia la linea entera.
+    $nodeCmd    = ConvertTo-CmdLiteral $NodePath
+    $prefixCmd  = ConvertTo-CmdLiteral $npmPrefix
+    $cacheCmd   = ConvertTo-CmdLiteral $npmCache
+    $proyectos  = ConvertTo-CmdEchoText (Join-Path $AngularPath "projects")
+
     $lines = @(
         "@echo off",
-        "set PATH=$NodePath;$npmPrefix;%PATH%",
-        "set NPM_CONFIG_PREFIX=$npmPrefix",
-        "set NPM_CONFIG_CACHE=$npmCache",
+        "set `"PATH=$nodeCmd;$prefixCmd;%PATH%`"",
+        "set `"NPM_CONFIG_PREFIX=$prefixCmd`"",
+        "set `"NPM_CONFIG_CACHE=$cacheCmd`"",
         "title Angular v$Version Development Shell",
         "echo.",
         "echo ============================================",
@@ -539,7 +602,7 @@ function Write-AngularShell {
         "echo Node: $NodeVersion",
         "echo Angular CLI: v$Version",
         "echo.",
-        "echo Proyectos: $AngularPath\projects",
+        "echo Proyectos: $proyectos",
         "echo.",
         "echo Comandos:",
         "echo   ng new [nombre]     - Crear proyecto",
@@ -563,9 +626,12 @@ function Write-PythonShell {
     $tag = $Version -replace '\.', ''
     $scripts = Join-Path $PythonPath "Scripts"
 
+    $pythonCmd  = ConvertTo-CmdLiteral $PythonPath
+    $scriptsCmd = ConvertTo-CmdLiteral $scripts
+
     $lines = @(
         "@echo off",
-        "set PATH=$PythonPath;$scripts;%PATH%",
+        "set `"PATH=$pythonCmd;$scriptsCmd;%PATH%`"",
         "title Python v$Version Shell",
         "echo.",
         "echo ============================================",
@@ -596,10 +662,14 @@ function Write-JavaShell {
 
     $bin = Join-Path $JdkPath "bin"
 
+    $binCmd     = ConvertTo-CmdLiteral $bin
+    $jdkCmd     = ConvertTo-CmdLiteral $JdkPath
+    $jdkEcho    = ConvertTo-CmdEchoText $JdkPath
+
     $lines = @(
         "@echo off",
-        "set PATH=$bin;%PATH%",
-        "set JAVA_HOME=$JdkPath",
+        "set `"PATH=$binCmd;%PATH%`"",
+        "set `"JAVA_HOME=$jdkCmd`"",
         "title Java $Major Shell",
         "echo.",
         "echo ============================================",
@@ -607,7 +677,7 @@ function Write-JavaShell {
         "echo ============================================",
         "echo.",
         "echo Release: $Release",
-        "echo JAVA_HOME: $JdkPath",
+        "echo JAVA_HOME: $jdkEcho",
         "echo.",
         "java -version",
         "echo.",

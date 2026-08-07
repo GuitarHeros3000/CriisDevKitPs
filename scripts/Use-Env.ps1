@@ -95,6 +95,15 @@ function Get-ShellEnvironment {
         Extrae del shell-vN.bat / pyXYZ-shell.bat las rutas que antepone y las
         variables que define. Se lee de ahi en vez de recalcularlo para que
         "activar" y "abrir el shell" den exactamente el mismo entorno.
+
+        Las comillas del set van OPCIONALES en la expresion regular a proposito:
+        los shells nuevos usan set "VAR=..." pero los generados por una version
+        anterior del kit no llevan comillas, y seguirian en disco. Sin esa
+        tolerancia, actualizar el kit dejaria de encontrar las rutas y Use-Env
+        no activaria nada.
+
+        El ConvertFrom-CmdLiteral deshace el %% con que se escapa el porcentaje
+        al generar: sin el, una ruta con porcentaje se reescaparia en cada pasada.
     #>
     param([Parameter(Mandatory=$true)][string]$ShellBat)
 
@@ -104,11 +113,13 @@ function Get-ShellEnvironment {
     $vars  = @{}
 
     foreach ($line in (Get-Content -LiteralPath $ShellBat)) {
-        if ($line -match '^\s*set\s+PATH=(.+?);?%PATH%\s*$') {
-            $paths = @($Matches[1] -split ';' | Where-Object { $_.Trim() -ne '' })
+        if ($line -match '^\s*set\s+"?PATH=(.+?);?%PATH%"?\s*$') {
+            $paths = @($Matches[1] -split ';' |
+                Where-Object { $_.Trim() -ne '' } |
+                ForEach-Object { ConvertFrom-CmdLiteral $_ })
         }
-        elseif ($line -match '^\s*set\s+(NPM_CONFIG_[A-Z_]+|JAVA_HOME)=(.+?)\s*$') {
-            $vars[$Matches[1]] = $Matches[2]
+        elseif ($line -match '^\s*set\s+"?(NPM_CONFIG_[A-Z_]+|JAVA_HOME)=(.+?)"?\s*$') {
+            $vars[$Matches[1]] = ConvertFrom-CmdLiteral $Matches[2]
         }
     }
 
@@ -134,35 +145,8 @@ function Get-RuntimeShell {
 # Generacion de los scripts de activacion
 # --------------------------------------------------------------------------
 
-function ConvertTo-PsLiteral {
-    <#
-        Escapa un valor para incrustarlo entre comillas SIMPLES en el codigo de
-        PowerShell que se genera. Ahi el unico caracter con significado es la
-        propia comilla simple, y se anula duplicandola.
-
-        Sin esto, un usuario llamado O'Brien producia un activate.ps1
-        sintacticamente roto. Y ese archivo lo carga el perfil en CADA PowerShell
-        nuevo, asi que el sintoma aparecia lejisimos de la causa: todas las
-        terminales empezaban a escupir un error de sintaxis al abrirse, sin nada
-        que lo relacionara con haber ejecutado Use-Env.
-    #>
-    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
-    return $Value.Replace("'", "''")
-}
-
-function ConvertTo-CmdLiteral {
-    <#
-        Escapa un valor para incrustarlo en el .cmd generado dentro de
-        set "VAR=...". Las comillas ya neutralizan &, |, ^ y los espacios; lo que
-        sigue vivo es el porcentaje, que cmd expande al leer la linea y que es un
-        caracter legal en un nombre de carpeta. Duplicarlo lo deja literal.
-
-        Se aplica SOLO a los valores, nunca a la plantilla: el %PATH% del final
-        tiene que expandirse de verdad.
-    #>
-    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
-    return $Value.Replace('%', '%%')
-}
+# ConvertTo-PsLiteral y ConvertTo-CmdLiteral viven en Common.ps1, junto a los
+# generadores de shells que usan el mismo escapado.
 
 function Write-ActivateScripts {
     param([hashtable]$State)
