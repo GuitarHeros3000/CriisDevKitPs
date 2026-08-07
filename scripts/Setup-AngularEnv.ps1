@@ -205,6 +205,11 @@ function Resolve-NodeVersion {
     <#
         Decide que Node instalar: primero lo que pidio el usuario, luego lo que
         dice el registro de npm, y como ultimo recurso la tabla local.
+
+        Devuelve $null si no hay forma de decidirlo, despues de explicar por que.
+        No llama a exit: matar el proceso desde dentro de una funcion la hace
+        intesteable e impide reutilizarla. Misma convencion que Invoke-Download
+        e Invoke-JsonApi en Common.ps1.
     #>
     param(
         [int]$Version,
@@ -224,7 +229,7 @@ function Resolve-NodeVersion {
     if ($engineInfo -and -not $engineInfo.CliVersion) {
         Write-Log "No existe ninguna version estable de @angular/cli v$Version." "ERROR"
         Write-Log "  Comprueba el numero:  npm view @angular/cli versions" "WARN"
-        exit 1
+        return $null
     }
 
     if ($engineInfo -and $engineInfo.Engine) {
@@ -255,7 +260,7 @@ function Resolve-NodeVersion {
     Write-Log "No se pudo determinar que Node necesita Angular v$Version." "ERROR"
     Write-Log "  No hay conexion al registro de npm y la version no esta en la tabla local." "ERROR"
     Write-Log "  Indica la version a mano:  -NodeVersion 22.23.2" "WARN"
-    exit 1
+    return $null
 }
 
 function Test-NodeSatisfiesAngular {
@@ -307,12 +312,12 @@ function Get-NodeJsPortable {
                           -OutFile $nodeZipPath `
                           -Sha256 $expectedHash `
                           -Description "Node.js v$($EnvSetup.NodeVersion)"
-    if (-not $ok) { exit 1 }
+    if (-not $ok) { return $null }
 
     if (-not (Test-ZipIntegrity -ZipPath $nodeZipPath)) {
         Write-Log "El zip de Node.js llego danado o incompleto" "ERROR"
         Remove-Item $nodeZipPath -Force -ErrorAction SilentlyContinue
-        exit 1
+        return $null
     }
 
     Write-Log "Extrayendo..."
@@ -360,7 +365,7 @@ function Install-AngularCLI {
         Write-Log "  Si estas detras de un proxy, npm necesita su propia config:" "WARN"
         Write-Log "  npm config set proxy http://usuario:clave@proxy.empresa:8080" "WARN"
         Write-Log "  npm config set https-proxy http://usuario:clave@proxy.empresa:8080" "WARN"
-        exit 1
+        return $null
     }
 
     Write-Log "Angular CLI v$Version instalado" "SUCCESS"
@@ -410,7 +415,14 @@ Write-Log ""
 
 # La version de Node no es fija: depende de lo que pida este Angular. Se resuelve
 # antes de construir $EnvSetup porque el nombre de carpeta y las URLs dependen de ella.
+#
+# Los exit viven AQUI, en el cuerpo del script, y no dentro de las funciones:
+# ellas explican que fallo y devuelven $null, y es este nivel el que decide que
+# eso es fatal. Asi se pueden probar por separado y reutilizar desde otro script
+# sin que se lleven por delante el proceso entero.
 $resolvedNode = Resolve-NodeVersion -Version $AngularVersion -Forced $NodeVersion
+if (-not $resolvedNode) { exit 1 }
+
 Test-NodeSatisfiesAngular -NodeVer $resolvedNode -Version $AngularVersion
 Write-Log ""
 
@@ -428,12 +440,15 @@ $EnvSetup = @{
 }
 
 $angularPath = Initialize-AngularDirectories -Version $EnvSetup.AngularVersion
+
 $nodePath = Get-NodeJsPortable
+if (-not $nodePath) { exit 1 }
 
 Show-PathConflicts -Root $EnvSetup.AngularRoot -Keep $nodePath -Label "Angular"
 Add-UserPathEntry -Path $nodePath
 
 $ngCmd = Install-AngularCLI -AngularPath $angularPath -NodePath $nodePath -Version $EnvSetup.AngularVersion
+if (-not $ngCmd) { exit 1 }
 
 Write-AngularShell -AngularPath $angularPath -NodePath $nodePath -Version $EnvSetup.AngularVersion -NodeVersion $EnvSetup.NodeVersion | Out-Null
 Write-Log "Shell creado: $angularPath\shell-v$($EnvSetup.AngularVersion).bat" "SUCCESS"

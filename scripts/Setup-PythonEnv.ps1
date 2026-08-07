@@ -57,6 +57,11 @@ function Resolve-PythonVersion {
         "solo seguridad", python.org publica esas versiones SOLO como codigo
         fuente. Por eso se prueban las candidatas de mayor a menor hasta dar
         con una que tenga de verdad el zip embeddable.
+
+        Devuelve $null si no se pudo resolver, despues de explicar por que. No
+        llama a exit: matar el proceso desde dentro de una funcion la hace
+        intesteable e impide que nadie la reutilice. Misma convencion que
+        Invoke-Download e Invoke-JsonApi en Common.ps1.
     #>
     param([string]$Requested)
 
@@ -75,7 +80,7 @@ function Resolve-PythonVersion {
     if (-not $listing) {
         Write-Log "No se pudo leer el indice de python.org." "WARN"
         Write-Log "  Indica la version completa a mano:  -PythonVersion $minorPrefix.10" "WARN"
-        exit 1
+        return $null
     }
 
     $pattern = 'href="(' + [regex]::Escape($minorPrefix) + '\.\d+)/"'
@@ -85,7 +90,7 @@ function Resolve-PythonVersion {
 
     if ($candidates.Count -eq 0) {
         Write-Log "python.org no publica ninguna version $minorPrefix.x" "ERROR"
-        exit 1
+        return $null
     }
 
     # Se limita el sondeo: si en 12 intentos no aparece un zip, algo raro pasa.
@@ -101,7 +106,7 @@ function Resolve-PythonVersion {
 
     Write-Log "Ninguna $minorPrefix.x reciente tiene zip embeddable para Windows." "ERROR"
     Write-Log "  Esa serie ya solo se publica como codigo fuente; usa una mas nueva." "WARN"
-    exit 1
+    return $null
 }
 
 Write-Log "========================================" "INFO"
@@ -111,7 +116,14 @@ Write-Log ""
 
 # Acepta "3.12" o "3.12.4". El zip embeddable requiere la version completa X.Y.Z;
 # el archivo ._pth usa solo el tag mayor+menor (ej: python312._pth).
-$fullVersion  = Resolve-PythonVersion -Requested $PythonVersion
+#
+# El exit vive AQUI, en el cuerpo del script, y no dentro de las funciones: ellas
+# explican que fallo y devuelven $null, y es este nivel el que decide que eso es
+# fatal. Asi se pueden probar por separado y reutilizar desde otro script sin que
+# se lleven por delante el proceso entero.
+$fullVersion = Resolve-PythonVersion -Requested $PythonVersion
+if (-not $fullVersion) { exit 1 }
+
 $versionParts = $fullVersion.Split('.')
 $major = $versionParts[0]
 $minor = $versionParts[1]
@@ -188,7 +200,7 @@ function Get-PythonPortable {
         else {
             Write-Log "Hay un python.exe que no arranca en $($EnvSetup.FolderName)" "ERROR"
             Write-Log "  Instalacion corrupta. Reinstala con:  -PythonVersion $($EnvSetup.Version) -Force" "WARN"
-            exit 1
+            return $null
         }
     }
 
@@ -204,13 +216,13 @@ function Get-PythonPortable {
                           -Description "Python v$($EnvSetup.FullVersion) (embeddable)"
     if (-not $ok) {
         Write-Log "Sugerencia: comprueba que la version $($EnvSetup.FullVersion) exista en python.org/ftp/python" "WARN"
-        exit 1
+        return $null
     }
 
     if (-not (Test-ZipIntegrity -ZipPath $zipPath)) {
         Write-Log "El zip de Python llego danado o incompleto" "ERROR"
         Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-        exit 1
+        return $null
     }
 
     Write-Log "Extrayendo..."
@@ -409,7 +421,9 @@ Write-Log "Carpeta destino:    $($EnvSetup.PythonRoot)" "INFO"
 Write-Log ""
 
 Initialize-PythonDirectories | Out-Null
+
 $pythonPath = Get-PythonPortable
+if (-not $pythonPath) { exit 1 }
 
 Enable-Pip -PythonPath $pythonPath
 $pipReady = Install-Pip -PythonPath $pythonPath

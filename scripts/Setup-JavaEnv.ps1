@@ -60,6 +60,12 @@ function Get-AdoptiumReleases {
 }
 
 function Resolve-JavaVersion {
+    <#
+        Devuelve 0 si la version pedida no existe, despues de explicar por que.
+        No llama a exit: matar el proceso desde dentro de una funcion la hace
+        intesteable e impide reutilizarla. Misma convencion que Invoke-JsonApi
+        en Common.ps1.
+    #>
     param([int]$Requested)
 
     $info = Get-AdoptiumReleases
@@ -69,7 +75,7 @@ function Resolve-JavaVersion {
             Write-Log "Adoptium no publica el JDK $Requested." "ERROR"
             Write-Log "  Disponibles: $($info.available_releases -join ', ')" "WARN"
             Write-Log "  LTS:         $($info.available_lts_releases -join ', ')" "WARN"
-            exit 1
+            return 0
         }
         return $Requested
     }
@@ -99,7 +105,7 @@ function Get-AdoptiumBinary {
 
     if (-not $assets -or $assets.Count -eq 0) {
         Write-Log "Adoptium no devolvio ningun binario para el JDK $Major." "ERROR"
-        exit 1
+        return $null
     }
 
     # Puede devolver varios (jdk/jre, distintos empaquetados): nos quedamos con
@@ -108,7 +114,7 @@ function Get-AdoptiumBinary {
     if ($zip.Count -eq 0) {
         Write-Log "Adoptium no publica zip para el JDK $Major en Windows x64." "ERROR"
         Write-Log "  Solo hay instalador .msi, que no sirve para el modo portable." "WARN"
-        exit 1
+        return $null
     }
 
     $r = $zip[0]
@@ -193,7 +199,7 @@ function Get-JavaPortable {
         else {
             Write-Log "Hay un java.exe que no arranca en $FolderName" "ERROR"
             Write-Log "  Instalacion corrupta. Reinstala con:  -JavaVersion $JavaVersion -Force" "WARN"
-            exit 1
+            return $null
         }
     }
 
@@ -211,13 +217,13 @@ function Get-JavaPortable {
     if (-not $ok) {
         Write-Log "Los binarios de Adoptium se sirven desde GitHub." "WARN"
         Write-Log "  Si tu red bloquea github.com, pidelo a IT o usa otra fuente." "WARN"
-        exit 1
+        return $null
     }
 
     if (-not (Test-ZipIntegrity -ZipPath $zipPath)) {
         Write-Log "El zip del JDK llego danado" "ERROR"
         Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-        exit 1
+        return $null
     }
 
     Write-Log "Extrayendo..."
@@ -247,18 +253,28 @@ function Get-JavaPortable {
 
 # --------------------------------------------------------------------------
 
+# Los exit viven AQUI, en el cuerpo del script, y no dentro de las funciones:
+# ellas explican que fallo y devuelven $null (o 0), y es este nivel el que decide
+# que eso es fatal. Asi se pueden probar por separado y reutilizar desde otro
+# script sin que se lleven por delante el proceso entero.
 $JavaVersion = Resolve-JavaVersion -Requested $JavaVersion
-$FolderName  = "jdk-$JavaVersion"
+if ($JavaVersion -le 0) { exit 1 }
+
+$FolderName = "jdk-$JavaVersion"
 
 Write-Log "Carpeta destino: $JavaRoot" "INFO"
 Write-Log ""
 
 $binary = Get-AdoptiumBinary -Major $JavaVersion
+if (-not $binary) { exit 1 }
+
 Write-Log "  Release : $($binary.Release)"
 Write-Log "  Archivo : $($binary.FileName)"
 Write-Log ""
 
 $jdkPath = Get-JavaPortable -Binary $binary -FolderName $FolderName
+if (-not $jdkPath) { exit 1 }
+
 $binPath = Join-Path $jdkPath "bin"
 
 Show-PathConflicts -Root $JavaRoot -Keep $jdkPath -Label "Java"

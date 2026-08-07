@@ -602,8 +602,24 @@ El patron esta pensado para crecer (Java, Go, .NET, Git portable...):
 2. Empezar con `. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\Common.ps1")`.
 3. Usar `$WorkspaceRoot` para la carpeta destino, `Invoke-Download` para bajar,
    `Test-ZipIntegrity` antes de extraer y `Add-UserPathEntry` para el PATH.
-4. Crear el `.bat` de 3 lineas en la raiz apuntando a `scripts\`.
+4. Copiar un `.bat` existente de la raiz y cambiarle el nombre del `.ps1`.
 5. Anadir una comprobacion en `Doctor-Env.ps1` y el archivo a su lista `$expected`.
+
+### Convencion: las funciones no llaman a `exit`
+
+Una funcion que falla **explica el motivo y devuelve `$null`**; quien la llama
+decide si eso es fatal. Los `exit` viven solo en el cuerpo del script:
+
+```powershell
+$version = Resolve-MiRuntimeVersion -Requested $Pedida
+if (-not $version) { exit 1 }
+```
+
+Es la misma convencion que ya siguen `Invoke-Download` (`$true`/`$false`) e
+`Invoke-JsonApi` (`$null`) en `Common.ps1`, y existe por dos motivos: una funcion
+que llama a `exit` **no se puede probar** (se lleva por delante el proceso de
+pruebas) y **no se puede reutilizar** desde un script que instale varios runtimes
+seguidos, porque el primer fallo aborta todo lo demas.
 
 No hay que reescribir proxy, TLS, reintentos ni manejo de PATH: ya vienen de `Common.ps1`.
 
