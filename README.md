@@ -547,6 +547,10 @@ clave quedaba visible para cualquier proceso del equipo mientras pip corriera
 (`Win32_Process`, Administrador de tareas); el bloque de entorno de un proceso ajeno,
 en cambio, no se lee sin permiso para abrir su memoria.
 
+Cubre los **dos** momentos en que se usa pip: instalar los paquetes de
+`-InstallPackages` y arrancar pip con `get-pip.py`. El segundo tambien necesita red
+(ver mas abajo), y sin proxy el Python recien instalado se quedaba sin pip.
+
 Si el proxy inspecciona HTTPS y falla el certificado, pide a IT el certificado raiz e
 importalo en *Certificados - Usuario actual* > *Entidades de certificacion raiz de
 confianza* (no necesita admin).

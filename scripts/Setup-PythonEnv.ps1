@@ -284,7 +284,32 @@ function Install-Pip {
     }
 
     Write-Log "Instalando pip..."
-    $run = Invoke-NativeCommand -FilePath $pythonExe -Arguments @($getPip, '--no-warn-script-location')
+
+    # get-pip.py NO instala el pip que lleva embebido: lo usa solo para poder
+    # ejecutarse, y el paquete lo BAJA de PyPI (junto a setuptools y wheel). Asi
+    # que detras de un proxy corporativo hay que decirselo, o este paso falla y el
+    # Python recien instalado se queda sin pip.
+    #
+    # Va por PIP_PROXY, igual que en Install-Packages y por el mismo motivo: con
+    # --proxy la clave acabaria en la linea de comandos del proceso.
+    #
+    # Verificado con un venv --without-pip y la cache desactivada: con PIP_PROXY
+    # apuntando a un puerto cerrado, get-pip.py falla. Ojo al comprobarlo a mano,
+    # que con la cache de pip caliente la instalacion sale bien sin tocar la red
+    # y parece que el proxy no se usa.
+    $proxy = Resolve-DownloadProxy -Uri ([Uri]"https://pypi.org")
+    $previousPipProxy = $env:PIP_PROXY
+    if ($proxy) {
+        Write-Log "  Usando proxy para pip: $(Format-ProxyForDisplay $proxy)"
+        $env:PIP_PROXY = $proxy
+    }
+
+    try {
+        $run = Invoke-NativeCommand -FilePath $pythonExe -Arguments @($getPip, '--no-warn-script-location')
+    }
+    finally {
+        if ($proxy) { Restore-EnvVar -Name 'PIP_PROXY' -Value $previousPipProxy }
+    }
     $ok = ($run.ExitCode -eq 0)
 
     Remove-Item $getPip -Force -ErrorAction SilentlyContinue
@@ -294,6 +319,10 @@ function Install-Pip {
     }
     else {
         Write-Log "get-pip.py fallo (codigo $($run.ExitCode))" "ERROR"
+        Write-Log "  get-pip.py descarga pip de PyPI, asi que este paso necesita red." "WARN"
+        if (-not $proxy) {
+            Write-Log "  Si sales a internet por proxy, declaralo:  `$env:HTTPS_PROXY = ..." "WARN"
+        }
     }
 
     return $ok
