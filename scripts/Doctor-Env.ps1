@@ -622,7 +622,12 @@ function Test-UserPath {
         $logs = @(Get-ChildItem $KitLogDir -Filter *.log -ErrorAction SilentlyContinue)
         if ($logs.Count -gt 0) {
             Write-Check "Registro de ejecuciones" "$($logs.Count) en $KitLogDir" 'info'
-            Write-Detail "El de esta ejecucion: $(Split-Path -Leaf $env:ASSASSINSKIPADM_LOGFILE)"
+            # Puede haber logs de ejecuciones ANTERIORES y no de esta: con
+            # ASSASSINSKIPADM_NOLOG la variable no existe. Sin esta comprobacion,
+            # Split-Path recibia $null y Doctor escupia un error de PowerShell.
+            if ($env:ASSASSINSKIPADM_LOGFILE) {
+                Write-Detail "El de esta ejecucion: $(Split-Path -Leaf $env:ASSASSINSKIPADM_LOGFILE)"
+            }
             Write-Detail "Adjunta el mas reciente si tienes que abrir un ticket a IT."
         }
     }
