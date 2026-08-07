@@ -127,6 +127,52 @@ dentro del bundle van rutas absolutas del origen, que alli no valdrian.
 -WhatIf             Import-Env: muestra el plan sin instalar
 ```
 
+## Registro de ejecuciones
+
+Cada ejecucion deja un archivo en `%LOCALAPPDATA%\AssassinSkipAdm\logs`, con el
+nombre del comando y la hora:
+
+```
+Setup-PythonEnv-20260807-153529.log
+Doctor-Env-20260807-154551.log
+```
+
+Se conservan los **20 ultimos**. `Doctor` te dice cuantos hay y cual es el de esa
+ejecucion, para que puedas adjuntarlo a un ticket sin buscarlo.
+
+### Para que sirve
+
+El kit falla en la maquina de **otra persona**, no en la tuya: es un portatil
+corporativo con otro proxy, otras politicas y otra red. Sin registro, lo unico que
+podias pedirle era una captura de pantalla, y solo de lo que aun se viera.
+
+| Sin registro | Con registro |
+|---|---|
+| "me sale un error" + captura recortada | el archivo entero, con horas |
+| la ventana se cerro y no hay nada | queda en disco |
+| no se sabe que version de Windows ni de PowerShell | van en la cabecera |
+| hay que reproducirlo para verlo | ya esta reproducido |
+
+Tambien captura lo que se te fue de la pantalla al hacer scroll, y el orden exacto
+en que pasaron las cosas.
+
+### Como esta hecho
+
+Se usa `Start-Transcript`, no un `append` dentro de `Write-Log`. El motivo es
+concreto: `Doctor` imprime casi todo con `Write-Host` (39 llamadas frente a 3 de
+`Write-Log`), asi que enganchar solo `Write-Log` habria dejado el registro **vacio
+justo en el caso que mas importa**. El transcript captura toda la salida de consola
+sin tocar ninguna de las ~300 llamadas del kit.
+
+Reglas que cumple:
+
+- **Nunca rompe nada.** Disco lleno, permisos, un transcript ya abierto: se ignora
+  y la herramienta sigue.
+- **Silencioso.** El "Transcript started" iria a parar a la salida que leen otros
+  procesos.
+- **La clave del proxy no acaba ahi**, ni siquiera dentro de un mensaje de .NET.
+- Se desactiva con `ASSASSINSKIPADM_NOLOG`.
+
 ## Diagnostico
 
 ```powershell
@@ -535,10 +581,25 @@ Si el proxy pide credenciales:
 $env:HTTPS_PROXY = "http://usuario:clave@proxy.empresa:8080"
 ```
 
+**Si tu usuario es de dominio, codifica la barra invertida como `%5C`:**
+
+```powershell
+$env:HTTPS_PROXY = "http://dominio%5Cusuario:clave@proxy.empresa:8080"
+```
+
+Sin codificar, la URL **no es una URI valida** y el proxy no funciona en absoluto:
+ni siquiera llega a intentarse la conexion. El error de .NET no lo explica, asi que
+el kit lo detecta antes y te dice esto mismo.
+
 **La clave nunca se imprime.** Todo lo que muestra un proxy pasa por
 `Format-ProxyForDisplay`, que la sustituye por `***` y conserva el usuario (que si
 hace falta para diagnosticar). Importa sobre todo en `Doctor`, cuya salida es justo
 la que se acaba pegando en un ticket para IT.
+
+Y como los mensajes de excepcion de .NET incrustan la URL del proxy tal cual,
+`Write-Log` pasa **todo** por `Protect-ProxySecrets` antes de imprimirlo. Enmascarar
+solo en origen no bastaba: la fuga que lo motivo venia de dentro de un error de
+.NET, o sea de un sitio donde nadie se habria acordado de enmascarar.
 
 Tampoco viaja en la linea de comandos de `pip`. Se le pasa por `PIP_PROXY`, que es su
 propio mecanismo de variables de entorno (toda opcion larga tiene su `PIP_<OPCION>`),
@@ -700,6 +761,10 @@ por una version anterior del kit siguen en disco y tienen que seguir entendiendo
 | `Show-PathConflicts` | Avisa si ya hay otras versiones del runtime en el PATH |
 | `Resolve-DownloadProxy` | Devuelve el proxy a usar para una URL |
 | `Format-ProxyForDisplay` | Oculta la clave de una URL de proxy antes de mostrarla |
+| `Protect-ProxySecrets` | Igual, pero en cualquier punto de un texto (errores de .NET) |
+| `Test-ProxyUsable` | Valida la URL del proxy y explica el `%5C` de las cuentas de dominio |
+| `Start-KitLog` | Abre el registro en archivo de la ejecucion |
+| `Get-UnsupportedSemverComparators` | Terminos de un rango que `Test-SemverRange` no sabe leer |
 | `ConvertTo-PsLiteral` | Escapa un valor para codigo PowerShell generado (comillas simples) |
 | `ConvertTo-CmdLiteral` | Escapa un valor para `set "VAR=..."` de un `.bat` |
 | `ConvertFrom-CmdLiteral` | Lo deshace, al volver a leer un shell generado |
@@ -721,5 +786,15 @@ el comando fuera solo una comprobacion. Ni `2>$null` ni `*> $null` lo impiden.
 apuntando su cache dentro de este kit. En su lugar se usan `NPM_CONFIG_PREFIX` y
 `NPM_CONFIG_CACHE`, solo para el proceso y en el shell generado.
 
-`Test-SemverRange` cubre lo que usan los campos `engines` en la practica, pero no es
-semver completo: no soporta rangos con guion (`1.2 - 1.5`) ni comodines (`1.x`).
+`Test-SemverRange` cubre lo que usan los campos `engines` en la practica: `^`, `~`,
+`>=`, `<=`, `>`, `<`, `=`, alternativas con `||`, conjunciones separadas por espacio,
+comodines (`14.x`, `20.19.*`) y versiones parciales (`20` equivale a `20.x.x`).
+
+No es semver completo: **los rangos con guion (`1.2 - 1.5`) siguen sin soportarse**.
+La diferencia es que ahora se avisa en vez de descartarlos en silencio:
+`Get-UnsupportedSemverComparators` senala los terminos que no se entienden y
+`Setup-AngularEnv` los reporta una vez, antes de elegir la version de Node.
+
+Los comodines si se anadieron, porque `"node": "14.x"` es de lo mas comun en un campo
+`engines` y antes se interpretaba como **exactamente 14.0.0**: cualquier Node 14.21
+quedaba descartado y nadie se enteraba.

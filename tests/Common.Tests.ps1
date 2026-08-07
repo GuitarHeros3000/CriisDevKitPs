@@ -53,6 +53,76 @@ Describe "Format-ProxyForDisplay" {
     }
 }
 
+Describe "Protect-ProxySecrets" {
+
+    # Enmascarar solo lo que imprime el kit no bastaba: los mensajes de excepcion
+    # de .NET incrustan la URL del proxy tal cual, y ese texto se imprimia y
+    # quedaba en el registro. Esta funcion enmascara en cualquier posicion.
+    It "tapa la clave en medio de un mensaje de error" {
+        $msg = 'No se puede convertir el valor "http://usuario:MiClave@proxy.empresa:8080" al tipo "System.Uri".'
+        $r = Protect-ProxySecrets -Text $msg
+        $r | Should Not Match 'MiClave'
+        $r | Should Match ':\*\*\*@proxy\.empresa:8080'
+    }
+
+    It "tapa varias apariciones en el mismo texto" {
+        $msg = 'fallo con http://u:c1@p1:8080 y con http://u:c2@p2:8080'
+        $r = Protect-ProxySecrets -Text $msg
+        $r | Should Not Match 'c1'
+        $r | Should Not Match 'c2'
+    }
+
+    It "no toca una URL normal" {
+        $msg = 'No se pudo descargar https://nodejs.org/dist/index.json'
+        Protect-ProxySecrets -Text $msg | Should Be $msg
+    }
+
+    It "tolera vacio y nulo" {
+        Protect-ProxySecrets -Text '' | Should Be ''
+        Protect-ProxySecrets -Text $null | Should BeNullOrEmpty
+    }
+
+    It "sobre un texto ya enmascarado no hace nada" {
+        $ya = 'Proxy detectado: http://usuario:***@proxy:8080'
+        Protect-ProxySecrets -Text $ya | Should Be $ya
+    }
+}
+
+Describe "Test-ProxyUsable" {
+
+    BeforeEach { Mock Write-Log { } }
+
+    It "acepta una URL de proxy valida" -TestCases @(
+        @{ Proxy = 'http://proxy.empresa:8080' }
+        @{ Proxy = 'http://usuario:clave@proxy.empresa:8080' }
+        @{ Proxy = 'http://dominio%5Cusuario:clave@proxy.empresa:8080' }
+    ) {
+        param($Proxy)
+        Test-ProxyUsable -Proxy $Proxy | Should Be $true
+    }
+
+    # Con la barra invertida sin codificar la URI es invalida y el proxy NO
+    # funciona: Invoke-WebRequest ni consigue enlazar el parametro. Ademas, ese
+    # fallo hacia que PowerShell escribiera la clave en claro en el transcript.
+    It "rechaza una cuenta de dominio sin codificar" {
+        Test-ProxyUsable -Proxy 'http://dominio\usuario:clave@proxy.empresa:8080' | Should Be $false
+    }
+
+    It "explica como arreglarlo sin mostrar la clave" {
+        # ArrayList y .Add() en vez de "$x += ...": el scriptblock del mock corre
+        # en su propio ambito, asi que el += crearia una copia local y la de fuera
+        # quedaria vacia. Una coleccion se muta por referencia y si funciona.
+        $dichos = New-Object System.Collections.ArrayList
+        Mock Write-Log { $dichos.Add($Message) | Out-Null }
+
+        Test-ProxyUsable -Proxy 'http://dominio\usuario:MiClaveSecreta@proxy:8080' | Out-Null
+
+        $todo = ($dichos -join ' ')
+        $todo | Should Match '%5C'
+        $todo | Should Not Match 'MiClaveSecreta'
+    }
+}
+
 Describe "Escapado de codigo generado" {
 
     Context "ConvertTo-PsLiteral (comillas simples de PowerShell)" {
@@ -164,13 +234,62 @@ Describe "Test-SemverRange" {
         Test-SemverRange -Version '20.19.0-rc.1'  -Range '^20.19.0' | Should Be $true
     }
 
-    # LIMITACION CONOCIDA, no un acierto. El README la documenta: no se soportan
-    # comodines ni rangos con guion. Se fija aqui para que quede constancia de que
-    # el comportamiento es "devuelve false en silencio", y para que este test
-    # falle -avisando- el dia que alguien anada soporte de verdad.
-    It "NO soporta comodines: 1.x se interpreta como 1.0.0 exacto" {
-        Test-SemverRange -Version '1.5.0' -Range '1.x' | Should Be $false
-        Test-SemverRange -Version '1.0.0' -Range '1.x' | Should Be $true
+    # "14.x" es de lo mas comun en un campo engines. Antes se trataba como version
+    # EXACTA (la x se descartaba al normalizar), asi que "14.x" significaba
+    # "exactamente 14.0.0" y cualquier 14.21 quedaba fuera, en silencio.
+    It "entiende los comodines" -TestCases @(
+        @{ Rango = '14.x';    Version = '14.21.3'; Esperado = $true }
+        @{ Rango = '14.x';    Version = '14.0.0';  Esperado = $true }
+        @{ Rango = '14.x';    Version = '15.0.0';  Esperado = $false }
+        @{ Rango = '14.*';    Version = '14.21.3'; Esperado = $true }
+        @{ Rango = '20.19.x'; Version = '20.19.9'; Esperado = $true }
+        @{ Rango = '20.19.x'; Version = '20.20.0'; Esperado = $false }
+    ) {
+        param($Rango, $Version, $Esperado)
+        Test-SemverRange -Version $Version -Range $Rango | Should Be $Esperado
+    }
+
+    # Una version parcial es un RANGO en semver, no una version exacta:
+    # "20" equivale a 20.x.x y "20.19" a 20.19.x.
+    It "trata las versiones parciales como rango" -TestCases @(
+        @{ Rango = '20';    Version = '20.19.2'; Esperado = $true }
+        @{ Rango = '20';    Version = '21.0.0';  Esperado = $false }
+        @{ Rango = '20.19'; Version = '20.19.9'; Esperado = $true }
+        @{ Rango = '20.19'; Version = '20.20.0'; Esperado = $false }
+    ) {
+        param($Rango, $Version, $Esperado)
+        Test-SemverRange -Version $Version -Range $Rango | Should Be $Esperado
+    }
+
+    It "una version completa sigue siendo exacta" {
+        Test-SemverRange -Version '20.19.2' -Range '20.19.2' | Should Be $true
+        Test-SemverRange -Version '20.19.3' -Range '20.19.2' | Should Be $false
+    }
+}
+
+Describe "Get-UnsupportedSemverComparators" {
+
+    # Existe para poder avisar UNA vez antes de usar el rango, en vez de que
+    # Test-SemverRange devuelva $false en silencio por cada candidata.
+    It "no senala nada en los rangos que si se entienden" -TestCases @(
+        @{ Rango = '^18.19.1 || ^20.11.1 || >=22.0.0' }
+        @{ Rango = '14.x' }
+        @{ Rango = '>=18.0.0 <21.0.0' }
+        @{ Rango = '*' }
+    ) {
+        param($Rango)
+        (Get-UnsupportedSemverComparators -Range $Rango).Count | Should Be 0
+    }
+
+    # Los rangos con guion siguen sin soportarse; la diferencia es que ahora se
+    # avisa en vez de descartar en silencio.
+    It "senala el guion de un rango con guion" {
+        $r = Get-UnsupportedSemverComparators -Range '1.2 - 1.5'
+        $r -contains '-' | Should Be $true
+    }
+
+    It "senala la basura que no reconoce" {
+        (Get-UnsupportedSemverComparators -Range 'lo-que-sea').Count | Should Be 1
     }
 }
 

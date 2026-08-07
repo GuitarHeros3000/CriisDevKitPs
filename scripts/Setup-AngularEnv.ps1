@@ -235,6 +235,15 @@ function Resolve-NodeVersion {
     if ($engineInfo -and $engineInfo.Engine) {
         Write-Log "  @angular/cli@$($engineInfo.CliVersion) requiere Node: $($engineInfo.Engine)"
 
+        # Se avisa UNA vez y aqui, no dentro de Test-SemverRange: alli se llama una
+        # vez por cada version candidata de Node y el aviso saldria repetido.
+        $raros = Get-UnsupportedSemverComparators -Range $engineInfo.Engine
+        if ($raros.Count -gt 0) {
+            Write-Log "  Aviso: hay terminos del rango que este kit no sabe leer: $($raros -join ', ')" "WARN"
+            Write-Log "  Se ignoran, asi que la Node elegida puede no ser la mejor." "WARN"
+            Write-Log "  Si algo falla, fuerza la version:  -NodeVersion 22.23.2" "WARN"
+        }
+
         $lts = Get-NodeLtsReleases
         $pick = Select-NodeForEngine -Engine $engineInfo.Engine -LtsReleases $lts -MinMajor $MinNodeMajor
 

@@ -42,6 +42,84 @@ catch {
 }
 
 # --------------------------------------------------------------------------
+# Registro en archivo
+# --------------------------------------------------------------------------
+#
+# Se usa Start-Transcript y no un append dentro de Write-Log por una razon
+# concreta: Doctor imprime con Write-Host casi todo (39 llamadas frente a 3 de
+# Write-Log), asi que enganchar solo Write-Log dejaria el registro vacio justo en
+# el caso que mas importa, que es mandarle el diagnostico a IT. El transcript
+# captura toda la salida de consola sin tocar ni una de las 300 llamadas del kit.
+
+$KitLogDir = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\logs"
+$script:KitLogsToKeep = 20
+
+function Remove-OldKitLogs {
+    try {
+        $viejos = @(Get-ChildItem -LiteralPath $KitLogDir -Filter '*.log' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -Skip $script:KitLogsToKeep)
+        foreach ($f in $viejos) {
+            Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+        # La rotacion nunca debe impedir que el registro se haya abierto.
+    }
+}
+
+function Start-KitLog {
+    <#
+    .SYNOPSIS
+        Abre el registro en archivo de esta ejecucion. Devuelve la ruta, o $null.
+    .DESCRIPTION
+        Un archivo por ejecucion, en %LOCALAPPDATA%\AssassinSkipAdm\logs, para
+        poder decir "mandame el ultimo" sin mas explicaciones.
+
+        Se llama solo al cargar Common.ps1. Reglas que cumple:
+
+          - NUNCA rompe nada. Disco lleno, permisos, un transcript que el usuario
+            ya tenia abierto: todo se traga y la herramienta sigue.
+          - Silencioso: el "Transcript started" iria a parar a la salida que leen
+            otros procesos.
+          - Uno por proceso. Common.ps1 se carga por dot-sourcing desde varios
+            sitios y Start-Transcript da error si ya hay uno abierto.
+          - Se puede desactivar con ASSASSINSKIPADM_NOLOG.
+
+        La clave del proxy no acaba aqui: todo lo que la imprime pasa antes por
+        Format-ProxyForDisplay, asi que al registro llega ya enmascarada.
+    #>
+    param([string]$Name)
+
+    if ($env:ASSASSINSKIPADM_NOLOG) { return $null }
+    if ($env:ASSASSINSKIPADM_LOGFILE) { return $env:ASSASSINSKIPADM_LOGFILE }
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($Name)) {
+            # El frame mas externo de la pila con nombre de script es el que
+            # lanzo el usuario; los de dentro son este archivo y sus funciones.
+            $conNombre = @(Get-PSCallStack | Where-Object { $_.ScriptName })
+            $Name = if ($conNombre.Count) {
+                [IO.Path]::GetFileNameWithoutExtension($conNombre[-1].ScriptName)
+            } else { 'kit' }
+        }
+
+        if (-not (Test-Path -LiteralPath $KitLogDir)) {
+            New-Item -ItemType Directory -Path $KitLogDir -Force | Out-Null
+        }
+
+        $file = Join-Path $KitLogDir ("{0}-{1}.log" -f $Name, (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        Start-Transcript -LiteralPath $file -Force | Out-Null
+        $env:ASSASSINSKIPADM_LOGFILE = $file
+
+        Remove-OldKitLogs
+        return $file
+    }
+    catch {
+        return $null
+    }
+}
+
+# --------------------------------------------------------------------------
 # Log
 # --------------------------------------------------------------------------
 
@@ -54,12 +132,50 @@ function Write-Log {
         "WARN" { "Yellow" }
         default { "White" }
     }
-    Write-Host "[$timestamp] [$Level] $Message" -ForegroundColor $color
+    # Red de seguridad, no sustituto de enmascarar en origen: la fuga que motivo
+    # esto llego dentro de un mensaje de excepcion, o sea desde un sitio donde
+    # nadie se habria acordado de llamar a Format-ProxyForDisplay. Sobre un texto
+    # ya enmascarado no hace nada.
+    Write-Host "[$timestamp] [$Level] $(Protect-ProxySecrets -Text $Message)" -ForegroundColor $color
 }
 
 # --------------------------------------------------------------------------
 # Descargas
 # --------------------------------------------------------------------------
+
+function Test-ProxyUsable {
+    <#
+        Comprueba que la URL del proxy sea una URI valida ANTES de pasarsela a
+        Invoke-WebRequest. Dos motivos, y el segundo no es nada evidente:
+
+        1. Una cuenta de dominio escrita tal cual ("dominio\usuario") hace la URI
+           invalida, y entonces el proxy NO FUNCIONA: Invoke-WebRequest ni
+           siquiera consigue enlazar el parametro. Hay que codificar la barra
+           invertida como %5C. Es el caso normal en una empresa, y el error de
+           .NET no dice nada de esto.
+
+        2. Al fallar ese enlace, PowerShell escribe el error CRUDO en el
+           transcript -con la clave en claro- antes de que este codigo pueda
+           enmascararla. Validando aqui, ese error no llega a producirse.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Proxy)
+
+    $valida = $false
+    try {
+        $u = [Uri]$Proxy
+        $valida = ($null -ne $u -and -not [string]::IsNullOrWhiteSpace($u.Host))
+    }
+    catch {
+        $valida = $false
+    }
+    if ($valida) { return $true }
+
+    Write-Log "La URL del proxy no es valida: $(Format-ProxyForDisplay $Proxy)" "ERROR"
+    Write-Log "  Si tu usuario es de dominio, la barra invertida hay que codificarla como %5C:" "WARN"
+    Write-Log '    $env:HTTPS_PROXY = "http://dominio%5Cusuario:clave@proxy.empresa:8080"' "WARN"
+    Write-Log "  Se sigue SIN proxy, asi que las descargas fallaran si hace falta pasar por el." "WARN"
+    return $false
+}
 
 function Resolve-DownloadProxy {
     <#
@@ -71,7 +187,10 @@ function Resolve-DownloadProxy {
 
     $explicit = if ($Uri.Scheme -eq 'https') { $env:HTTPS_PROXY } else { $env:HTTP_PROXY }
     if ([string]::IsNullOrWhiteSpace($explicit)) { $explicit = $env:ALL_PROXY }
-    if (-not [string]::IsNullOrWhiteSpace($explicit)) { return $explicit }
+    if (-not [string]::IsNullOrWhiteSpace($explicit)) {
+        if (Test-ProxyUsable -Proxy $explicit) { return $explicit }
+        return $null
+    }
 
     # Proxy del sistema: el que IT configura por WPAD/PAC o en Opciones de Internet.
     # GetProxy() devuelve la misma URL de entrada cuando no hay proxy para ese destino.
@@ -122,6 +241,33 @@ function Format-ProxyForDisplay {
         '${scheme}${user}:***@')
 }
 
+function Protect-ProxySecrets {
+    <#
+        Enmascara credenciales de proxy que aparezcan EN CUALQUIER PARTE de un
+        texto, no solo al principio como Format-ProxyForDisplay.
+
+        Hace falta porque los mensajes de excepcion de .NET incrustan la URL del
+        proxy tal cual. Con un proxy mal formado, por ejemplo, salia esto:
+
+          No se puede convertir el valor "http://dominio\u:CLAVE@proxy:8080"
+          al tipo "System.Uri"
+
+        y ese texto se imprimia y quedaba en el registro. Enmascarar solo lo que
+        imprime el kit no basta: hay que enmascarar tambien lo que imprime .NET.
+    #>
+    param([AllowNull()][AllowEmptyString()][string]$Text)
+
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+
+    # La clave se captura greedy hasta el ULTIMO arroba antes de un espacio o una
+    # comilla, por el mismo motivo que en Format-ProxyForDisplay: una clave puede
+    # contener arrobas. El usuario no puede llevar ':' porque ahi empieza ella.
+    return [regex]::Replace(
+        $Text,
+        '([A-Za-z][A-Za-z0-9+.-]*://)([^/:\s"]+):([^/\s"]*)@',
+        '${1}${2}:***@')
+}
+
 function Get-WebErrorText {
     param([System.Management.Automation.ErrorRecord]$ErrorRecord)
 
@@ -131,7 +277,7 @@ function Get-WebErrorText {
         $parts += $inner.Message
         $inner = $inner.InnerException
     }
-    return ($parts -join ' ')
+    return (Protect-ProxySecrets -Text ($parts -join ' '))
 }
 
 function Get-WebErrorStatus {
@@ -461,7 +607,77 @@ function Test-SemverComparator {
     if ($c -match '^<\s*(.+)$')  { return $Version -lt (ConvertTo-SemverObject $Matches[1]) }
     if ($c -match '^=\s*(.+)$')  { return $Version -eq (ConvertTo-SemverObject $Matches[1]) }
 
-    return ($Version -eq (ConvertTo-SemverObject $c))
+    # Comodines y versiones parciales: "20", "20.x", "20.*", "20.19", "20.19.x".
+    # La forma "14.x" es de lo mas comun en un campo engines, y antes caia en el
+    # ultimo return de esta funcion, que la trataba como version EXACTA: la 'x' se
+    # descartaba al normalizar y "14.x" acababa significando "exactamente 14.0.0".
+    # Cualquier Node 14.21 quedaba descartado y nadie se enteraba.
+    if ($c -match '^v?(\d+)(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?$') {
+        $major = [int]$Matches[1]
+        $minor = $Matches[2]
+        $patch = $Matches[3]
+
+        # Sin menor, o con comodin => toda la mayor:  >=X.0.0  <(X+1).0.0
+        if ([string]::IsNullOrEmpty($minor) -or $minor -match '^[xX*]$') {
+            return ($Version -ge [version]("{0}.0.0" -f $major) -and
+                    $Version -lt [version]("{0}.0.0" -f ($major + 1)))
+        }
+
+        # Sin parche, o con comodin => toda la menor:  >=X.Y.0  <X.(Y+1).0
+        if ([string]::IsNullOrEmpty($patch) -or $patch -match '^[xX*]$') {
+            return ($Version -ge [version]("{0}.{1}.0" -f $major, [int]$minor) -and
+                    $Version -lt [version]("{0}.{1}.0" -f $major, ([int]$minor + 1)))
+        }
+
+        return ($Version -eq [version]("{0}.{1}.{2}" -f $major, [int]$minor, [int]$patch))
+    }
+
+    # No se entiende. Se devuelve $false, que es lo conservador, pero quien llama
+    # deberia haber avisado antes con Get-UnsupportedSemverComparators: fallar en
+    # silencio aqui es como "14.x" paso desapercibido tanto tiempo.
+    return $false
+}
+
+function Test-SemverComparatorSupported {
+    <#
+        Dice si Test-SemverComparator sabe interpretar este termino. Se mantiene
+        al lado de la funcion anterior a proposito: si alli se anade una forma
+        nueva, aqui hay que anadirla tambien o se avisara de algo que si funciona.
+    #>
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Comparator)
+
+    $c = $Comparator.Trim()
+    if ($c -eq '' -or $c -eq '*') { return $true }
+    if ($c -match '^(\^|~|>=|<=|>|<|=)\s*v?\d') { return $true }
+    if ($c -match '^v?\d+(\.(\d+|[xX*]))?(\.(\d+|[xX*]))?$') { return $true }
+    return $false
+}
+
+function Get-UnsupportedSemverComparators {
+    <#
+    .SYNOPSIS
+        Devuelve los terminos de un rango que Test-SemverRange no sabe leer.
+    .DESCRIPTION
+        Sirve para avisar UNA vez, antes de usar el rango, en vez de que
+        Test-SemverRange devuelva $false en silencio por cada version candidata.
+
+        Lo tipico que aparece aqui es un rango con guion ("1.2 - 1.5"), que sigue
+        sin soportarse. Si algun dia un campo engines lo usara, el usuario vera el
+        aviso y podra forzar la version a mano en vez de quedarse sin entender por
+        que el kit eligio lo que eligio.
+    .EXAMPLE
+        Get-UnsupportedSemverComparators -Range '^20.19.0 || 1.2 - 1.5'
+        # -1.2, -, 1.5  ->  se avisa del guion
+    #>
+    param([Parameter(Mandatory=$true)][string]$Range)
+
+    $raros = @()
+    foreach ($branch in ($Range -split '\|\|')) {
+        foreach ($c in @($branch.Trim() -split '\s+' | Where-Object { $_ -ne '' })) {
+            if (-not (Test-SemverComparatorSupported -Comparator $c)) { $raros += $c }
+        }
+    }
+    return @($raros | Select-Object -Unique)
 }
 
 function Test-SemverRange {
@@ -1289,3 +1505,7 @@ function Remove-UserPathEntry {
 
     return $removed.Count
 }
+
+# El registro se abre al cargar la libreria, para que capture desde la primera
+# linea del script que la cargo. Silencioso y nunca fatal (ver Start-KitLog).
+Start-KitLog | Out-Null

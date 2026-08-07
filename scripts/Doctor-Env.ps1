@@ -614,6 +614,18 @@ function Test-UserPath {
         $backups = @(Get-ChildItem $backupDir -Filter *.txt -ErrorAction SilentlyContinue)
         Write-Check "Copias del PATH" "$($backups.Count) en $backupDir" 'info'
     }
+
+    # El registro se menciona aqui y no al arrancar cada comando: Doctor es el
+    # punto de entrada documentado cuando algo falla, asi que es donde el usuario
+    # va a mirar. Anadir una linea a cada ejecucion seria ruido.
+    if (Test-Path $KitLogDir) {
+        $logs = @(Get-ChildItem $KitLogDir -Filter *.log -ErrorAction SilentlyContinue)
+        if ($logs.Count -gt 0) {
+            Write-Check "Registro de ejecuciones" "$($logs.Count) en $KitLogDir" 'info'
+            Write-Detail "El de esta ejecucion: $(Split-Path -Leaf $env:ASSASSINSKIPADM_LOGFILE)"
+            Write-Detail "Adjunta el mas reciente si tienes que abrir un ticket a IT."
+        }
+    }
 }
 
 function Get-KitProvidedCommand {
