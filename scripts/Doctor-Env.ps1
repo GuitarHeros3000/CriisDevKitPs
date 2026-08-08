@@ -65,6 +65,7 @@ function Add-Fix {
 $AngularRoot = Join-Path $WorkspaceRoot "Angular"
 $PythonRoot  = Join-Path $WorkspaceRoot "Python"
 $JavaRoot    = Join-Path $WorkspaceRoot "Java"
+$NodeRoot    = Join-Path $WorkspaceRoot "Node"
 $AppsRoot    = Join-Path $WorkspaceRoot "Apps"
 
 # Contadores para el resumen final.
@@ -529,7 +530,7 @@ function Test-NodeInstall {
     }
 
     $dirs = @(Get-ChildItem $nodeRoot -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^node-v(\d+)\.' })
+        Where-Object { $_.Name -match '^node-(\d+)$' })
 
     if ($dirs.Count -eq 0) {
         Write-Check "Instalado" "ninguna version en $nodeRoot" 'info'
@@ -537,7 +538,7 @@ function Test-NodeInstall {
     }
 
     foreach ($d in $dirs) {
-        $null = $d.Name -match '^node-v(\d+)\.'
+        $null = $d.Name -match '^node-(\d+)$'
         $major = $Matches[1]
         $exe = Join-Path $d.FullName "node.exe"
 
@@ -641,7 +642,10 @@ function Test-UserPath {
         # Solo se ofrecen para borrar las que cuelgan de las carpetas del kit.
         # Una ruta muerta ajena puede ser una unidad de red o un USB desconectado
         # ahora mismo: borrarla seria destruir algo que el usuario si quiere.
-        $roots = @($AngularRoot, $PythonRoot, $JavaRoot | ForEach-Object {
+        # OJO al anadir un runtime nuevo: si su carpeta raiz no esta en esta lista,
+        # Doctor no reconocera sus rutas muertas como propias y las dejara para
+        # siempre marcadas como "ajena". Paso con Node\ al anadirlo.
+        $roots = @($AngularRoot, $PythonRoot, $JavaRoot, $NodeRoot | ForEach-Object {
             [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\')
         })
 
@@ -872,6 +876,8 @@ function Test-KitIntegrity {
         "Start-NodeEnv.bat",
         "scripts\Setup-NodeEnv.ps1",
         "scripts\Start-NodeEnv.ps1",
+        "Update-Env.bat",
+        "scripts\Update-Env.ps1",
         "tests\Common.Tests.ps1",
         "tests\Shells.Tests.ps1",
         "tests\UserPath.Tests.ps1"

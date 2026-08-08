@@ -80,24 +80,31 @@ function Get-InstalledNodeVersion {
 }
 
 function Get-NodePortable {
-    param([PSCustomObject]$Archive)
+    param([PSCustomObject]$Archive, [string]$FolderName)
 
-    $nodePath = Join-Path $NodeRoot $Archive.FolderName
+    $nodePath = Join-Path $NodeRoot $FolderName
     $nodeExe  = Join-Path $nodePath "node.exe"
 
     if (Test-Path $nodeExe) {
         $instalada = Get-InstalledNodeVersion -NodeExe $nodeExe
 
         if ($Force) {
-            Write-Log "-Force: se reinstala $($Archive.FolderName) desde cero" "WARN"
+            Write-Log "-Force: se reinstala $FolderName desde cero" "WARN"
+            if ($instalada) { Write-Log "  habia: $instalada  ->  se pondra: $($Archive.Version)" }
             Remove-Item -LiteralPath $nodePath -Recurse -Force
         }
+        elseif ($instalada -eq $Archive.Version) {
+            Write-Log "Node v$instalada ya esta instalado y al dia" "SUCCESS"
+            return $nodePath
+        }
         elseif ($instalada) {
-            Write-Log "Node v$instalada ya esta instalado en $($Archive.FolderName)" "SUCCESS"
+            Write-Log "Ya hay Node $instalada instalado en $FolderName" "WARN"
+            Write-Log "  Disponible: $($Archive.Version)" "WARN"
+            Write-Log "  Para actualizarlo:  .\Setup-NodeEnv.bat -NodeVersion $($Archive.Version) -Force" "WARN"
             return $nodePath
         }
         else {
-            Write-Log "Hay un node.exe que no arranca en $($Archive.FolderName)" "ERROR"
+            Write-Log "Hay un node.exe que no arranca en $FolderName" "ERROR"
             Write-Log "  Instalacion corrupta. Reinstala con:  -NodeVersion $($Archive.Version) -Force" "WARN"
             return $null
         }
@@ -128,9 +135,25 @@ function Get-NodePortable {
     }
 
     Write-Log "Extrayendo..."
-    # El zip ya trae dentro una carpeta node-vX-win-x64, asi que se extrae en la
-    # raiz y queda con el nombre correcto sin mover nada.
-    Expand-Archive -Path $zipPath -DestinationPath $NodeRoot -Force
+    # El zip trae dentro una carpeta node-vX.Y.Z-win-x64, pero la instalacion se
+    # guarda como node-<mayor>. Es la misma convencion que python-3.12 y jdk-21:
+    # una carpeta por linea, y -Force actualiza el patch DENTRO. Con el nombre
+    # completo del zip, cada patch creaba una carpeta nueva y -Force instalaba al
+    # lado en vez de reemplazar, dejando la vieja para siempre.
+    $temp = Join-Path $NodeRoot "temp_node"
+    if (Test-Path $temp) { Remove-Item $temp -Recurse -Force }
+    Expand-Archive -Path $zipPath -DestinationPath $temp -Force
+
+    $inner = @(Get-ChildItem $temp -Directory)
+    if ($inner.Count -eq 1) {
+        Move-Item -LiteralPath $inner[0].FullName -Destination $nodePath -Force
+    }
+    else {
+        New-Item -ItemType Directory -Path $nodePath -Force | Out-Null
+        Move-Item -Path "$temp\*" -Destination $nodePath -Force
+    }
+
+    Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item $zipPath -Force
 
     Write-Log "Node.js instalado en $nodePath" "SUCCESS"
@@ -145,11 +168,16 @@ if (-not $version) { exit 1 }
 $archive = Get-NodeArchiveInfo -Version $version
 $archive | Add-Member -NotePropertyName Version -NotePropertyValue $version -Force
 
+# node-<mayor>, no el nombre completo del zip: una carpeta por linea, igual que
+# python-3.12 y jdk-21.
+$major      = $version.Split('.')[0]
+$FolderName = "node-$major"
+
 Write-Log "Carpeta destino: $NodeRoot" "INFO"
 Write-Log ""
 
 if ($WhatIf) {
-    $destino = Join-Path $NodeRoot $archive.FolderName
+    $destino = Join-Path $NodeRoot $FolderName
     $yaHay = if (Test-Path (Join-Path $destino "node.exe")) {
         Get-InstalledNodeVersion -NodeExe (Join-Path $destino "node.exe")
     } else { $null }
@@ -165,7 +193,7 @@ if ($WhatIf) {
         else        { Write-Host ("             ya hay v{0}; sin -Force no se tocaria" -f $yaHay) -ForegroundColor Yellow }
     }
     Write-Host ("  [PATH]     {0}" -f $destino)
-    Write-Host ("  [shell]    node{0}-shell.bat" -f $version.Split('.')[0])
+    Write-Host ("  [shell]    node{0}-shell.bat" -f $major)
     Write-Host ""
     Write-Host "Nota: es independiente de la Node que instala Setup-AngularEnv." -ForegroundColor DarkGray
     Write-Host ""
@@ -174,14 +202,14 @@ if ($WhatIf) {
     exit 0
 }
 
-$nodePath = Get-NodePortable -Archive $archive
+$nodePath = Get-NodePortable -Archive $archive -FolderName $FolderName
 if (-not $nodePath) { exit 1 }
 
 Show-PathConflicts -Root $NodeRoot -Keep $nodePath -Label "Node"
 Add-UserPathEntry -Path $nodePath
 
 Write-NodeShell -NodePath $nodePath -Version $version | Out-Null
-$major = $version.Split('.')[0]
+
 Write-Log "Shell creado: $nodePath\node$major-shell.bat" "SUCCESS"
 
 Write-Host ""
@@ -191,13 +219,13 @@ Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Estructura creada:" -ForegroundColor Yellow
 Write-Host "  $NodeRoot"
-Write-Host "  +-- $($archive.FolderName)\"
+Write-Host "  +-- $FolderName\"
 Write-Host "      +-- node.exe"
 Write-Host "      +-- node$major-shell.bat"
 Write-Host ""
 Write-Host "Node v$version agregado al PATH." -ForegroundColor Green
 Write-Host ""
 Write-Host "Para comenzar:" -ForegroundColor Yellow
-Write-Host "  Usa el shell: ..\Node\$($archive.FolderName)\node$major-shell.bat" -ForegroundColor White
+Write-Host "  Usa el shell: ..\Node\$FolderName\node$major-shell.bat" -ForegroundColor White
 Write-Host "  Comprueba con: .\Doctor-Env.bat" -ForegroundColor Gray
 Write-Host ""

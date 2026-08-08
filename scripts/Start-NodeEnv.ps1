@@ -23,13 +23,23 @@ function Get-NodeVersions {
 
     $result = @()
     foreach ($dir in (Get-ChildItem $NodeRoot -Directory -ErrorAction SilentlyContinue)) {
-        if ($dir.Name -notmatch '^node-v(\d+)\.(\d+)\.(\d+)-win-x64$') { continue }
-        $ver = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+        if ($dir.Name -notmatch '^node-(\d+)$') { continue }
+        $major = $Matches[1]
+
+        # La carpeta solo lleva la mayor (node-22), asi que el patch exacto se
+        # pregunta al binario.
+        $exe = Join-Path $dir.FullName "node.exe"
+        $ver = $major
+        if (Test-Path $exe) {
+            $run = Invoke-NativeCommand -FilePath $exe -Arguments @('--version') -Quiet
+            if ($run.ExitCode -eq 0 -and $run.Output -match 'v?(\d+\.\d+\.\d+)') { $ver = $Matches[1] }
+        }
+
         $result += [PSCustomObject]@{
             Version = $ver
-            Major   = $Matches[1]
+            Major   = $major
             Path    = $dir.FullName
-            Shell   = Join-Path $dir.FullName "node$($Matches[1])-shell.bat"
+            Shell   = Join-Path $dir.FullName "node$major-shell.bat"
         }
     }
     return $result
@@ -41,7 +51,7 @@ Write-Host "  Node.js Development Environment" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
-$versions = @(Get-NodeVersions | Sort-Object { [version]$_.Version } -Descending)
+$versions = @(Get-NodeVersions | Sort-Object { [int]$_.Major } -Descending)
 
 if ($versions.Count -eq 0) {
     Write-Host "No hay versiones instaladas." -ForegroundColor Red

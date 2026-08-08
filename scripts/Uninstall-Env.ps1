@@ -81,9 +81,10 @@ function Get-InstalledItems {
             }
         }
         elseif ($Runtime -eq 'Node') {
-            # Solo la Node SUELTA, la de Node\. La que vive dentro de Angular\ la
-            # gestiona -Runtime Angular: son instalaciones independientes.
-            if ($dir.Name -match '^node-v(.+)-win-x64$') {
+            # Solo la Node SUELTA, la de Node\ y con nombre node-<mayor>. La que
+            # vive dentro de Angular\ se llama node-vX.Y.Z-win-x64 y la gestiona
+            # -Runtime Angular: son instalaciones independientes.
+            if ($dir.Name -match '^node-(\d+)$') {
                 $items += [PSCustomObject]@{ Kind = 'Node'; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
             }
         }

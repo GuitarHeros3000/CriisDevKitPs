@@ -83,39 +83,23 @@ function Resolve-PythonVersion {
     $minorPrefix = "$($parts[0]).$($parts[1])"
     Write-Log "Buscando la ultima $minorPrefix.x con binario para Windows..."
 
-    # El indice de python.org es un listado HTML de directorio, no JSON.
-    $listing = Get-WebText -Uri $PythonFtpUrl
+    # La busqueda vive en Common.ps1 porque Update-Env necesita exactamente lo
+    # mismo para decidir si lo instalado esta al dia. Aqui solo se cuenta.
+    $encontrada = Get-LatestPythonPatch -MinorPrefix $minorPrefix
 
-    if (-not $listing) {
-        Write-Log "No se pudo leer el indice de python.org." "WARN"
-        Write-Log "  Indica la version completa a mano:  -PythonVersion $minorPrefix.10" "WARN"
+    if (-not $encontrada) {
+        Write-Log "No se encontro ninguna $minorPrefix.x con zip embeddable para Windows." "ERROR"
+        Write-Log "  Puede ser que no haya red, o que esa serie ya solo se publique" "WARN"
+        Write-Log "  como codigo fuente. Prueba una serie mas nueva, o indica la" "WARN"
+        Write-Log "  version completa a mano:  -PythonVersion $minorPrefix.10" "WARN"
         return $null
     }
 
-    $pattern = 'href="(' + [regex]::Escape($minorPrefix) + '\.\d+)/"'
-    $candidates = @([regex]::Matches($listing, $pattern) |
-        ForEach-Object { $_.Groups[1].Value } |
-        Sort-Object { [version]$_ } -Descending)
-
-    if ($candidates.Count -eq 0) {
-        Write-Log "python.org no publica ninguna version $minorPrefix.x" "ERROR"
-        return $null
+    Write-Log "  Elegida: $($encontrada.Version)" "SUCCESS"
+    if ($encontrada.SoloFuente) {
+        Write-Log "  ($($encontrada.MasNueva) es mas nueva pero solo se publica como codigo fuente)"
     }
-
-    # Se limita el sondeo: si en 12 intentos no aparece un zip, algo raro pasa.
-    foreach ($candidate in ($candidates | Select-Object -First 12)) {
-        if (Test-UrlExists -Uri (Get-EmbedZipUrl -FullVersion $candidate)) {
-            Write-Log "  Elegida: $candidate" "SUCCESS"
-            if ($candidate -ne $candidates[0]) {
-                Write-Log "  ($($candidates[0]) es mas nueva pero solo se publica como codigo fuente)"
-            }
-            return $candidate
-        }
-    }
-
-    Write-Log "Ninguna $minorPrefix.x reciente tiene zip embeddable para Windows." "ERROR"
-    Write-Log "  Esa serie ya solo se publica como codigo fuente; usa una mas nueva." "WARN"
-    return $null
+    return $encontrada.Version
 }
 
 Write-Log "========================================" "INFO"

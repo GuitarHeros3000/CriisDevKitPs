@@ -1038,6 +1038,8 @@ function Write-NodeShell {
     return $file
 }
 
+$PythonFtpIndexUrl = "https://www.python.org/ftp/python/"
+
 function Get-PythonArchiveInfo {
     param([Parameter(Mandatory=$true)][string]$FullVersion)
 
@@ -1046,6 +1048,73 @@ function Get-PythonArchiveInfo {
         FileName = $file
         Url      = "https://www.python.org/ftp/python/$FullVersion/$file"
     }
+}
+
+function Get-LatestPythonPatch {
+    <#
+    .SYNOPSIS
+        Ultima X.Y.Z de una serie que tenga zip embeddable para Windows.
+    .DESCRIPTION
+        No basta con coger el numero mas alto: cuando una serie pasa a modo "solo
+        seguridad", python.org publica esas versiones SOLO como codigo fuente.
+        Por eso se prueban las candidatas de mayor a menor hasta dar con una que
+        tenga de verdad el binario.
+
+        Vive aqui porque lo necesitan Setup-PythonEnv (para decidir que instalar)
+        y Update-Env (para decidir si lo instalado esta al dia). Con dos copias
+        acabarian divergiendo y cada una diria una cosa.
+
+        Devuelve $null si no se pudo determinar. Silencioso salvo con -Verbose:
+        quien llama decide como contarlo.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$MinorPrefix,
+        [int]$MaxProbes = 12
+    )
+
+    # El indice de python.org es un listado HTML de directorio, no JSON.
+    $listing = Get-WebText -Uri $PythonFtpIndexUrl -Quiet
+    if (-not $listing) { return $null }
+
+    $pattern = 'href="(' + [regex]::Escape($MinorPrefix) + '\.\d+)/"'
+    $candidates = @([regex]::Matches($listing, $pattern) |
+        ForEach-Object { $_.Groups[1].Value } |
+        Sort-Object { [version]$_ } -Descending)
+
+    if ($candidates.Count -eq 0) { return $null }
+
+    foreach ($candidate in ($candidates | Select-Object -First $MaxProbes)) {
+        if (Test-UrlExists -Uri (Get-PythonArchiveInfo -FullVersion $candidate).Url) {
+            return [PSCustomObject]@{
+                Version   = $candidate
+                MasNueva  = $candidates[0]   # puede existir pero solo como fuente
+                SoloFuente = ($candidate -ne $candidates[0])
+            }
+        }
+    }
+
+    return $null
+}
+
+function Get-LatestAngularCliVersion {
+    <#
+        Ultima version estable del CLI para una mayor de Angular, segun el
+        registro de npm. Devuelve $null si el registro no respondio, y cadena
+        vacia si respondio pero esa mayor no existe.
+    #>
+    param([Parameter(Mandatory=$true)][int]$Major)
+
+    $pack = Invoke-JsonApi -Uri "https://registry.npmjs.org/@angular%2fcli" `
+                           -Headers @{ Accept = 'application/vnd.npm.install-v1+json' } `
+                           -TimeoutSec 120 -Quiet
+    if (-not $pack -or -not $pack.versions) { return $null }
+
+    $stable = @($pack.versions.PSObject.Properties.Name |
+        Where-Object { $_ -match "^$Major\." -and $_ -notmatch '-(next|rc|beta|alpha)' } |
+        Sort-Object { ConvertTo-SemverObject $_ })
+
+    if ($stable.Count -eq 0) { return '' }
+    return $stable[-1]
 }
 
 function Get-JavaArchiveInfo {
