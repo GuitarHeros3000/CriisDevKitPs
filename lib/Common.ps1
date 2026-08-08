@@ -966,6 +966,78 @@ function Get-NodeArchiveInfo {
     }
 }
 
+$NodeIndexUrl = "https://nodejs.org/dist/index.json"
+
+function Get-NodeLtsReleases {
+    <#
+        Ultima release de cada linea LTS de Node que tenga zip para win-x64.
+        El indice viene ordenado de mas nueva a mas vieja.
+
+        Vive aqui y no en Setup-AngularEnv porque lo usan tres sitios: la
+        resolucion de Node para Angular, Setup-NodeEnv y Update-Env.
+    #>
+    $index = Invoke-JsonApi -Uri $NodeIndexUrl -TimeoutSec 120 -Quiet
+    if (-not $index) { return @() }
+
+    $seen = @{}
+    $result = @()
+    foreach ($rel in $index) {
+        if (-not $rel.lts -or $rel.lts -eq $false) { continue }
+        if ($rel.files -notcontains 'win-x64-zip') { continue }
+
+        $major = [int](($rel.version.TrimStart('v')).Split('.')[0])
+        if ($seen.ContainsKey($major)) { continue }
+
+        $seen[$major] = $true
+        $result += [PSCustomObject]@{
+            Major   = $major
+            Version = $rel.version.TrimStart('v')
+            Lts     = $rel.lts
+        }
+    }
+
+    return @($result | Sort-Object Major)
+}
+
+function Write-NodeShell {
+    <#
+        Shell de una Node instalada suelta (sin Angular). No define
+        NPM_CONFIG_PREFIX: al no haber un CLI global que aislar, npm usa su
+        prefijo normal dentro de la propia carpeta de Node.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$NodePath,
+        [Parameter(Mandatory=$true)][string]$Version
+    )
+
+    $nodeCmd = ConvertTo-CmdLiteral $NodePath
+    $major   = $Version.Split('.')[0]
+
+    $lines = @(
+        "@echo off",
+        "set `"PATH=$nodeCmd;%PATH%`"",
+        "title Node v$Version Shell",
+        "echo.",
+        "echo ============================================",
+        "echo   Node v$Version Shell",
+        "echo ============================================",
+        "echo.",
+        "node --version",
+        "npm --version",
+        "echo.",
+        "echo Comandos:",
+        "echo   node archivo.js     - Ejecutar",
+        "echo   npm install         - Instalar dependencias",
+        "echo.",
+        "echo Escribe exit para cerrar",
+        "cmd /k"
+    )
+
+    $file = Join-Path $NodePath "node$major-shell.bat"
+    Set-Content -Path $file -Value ($lines -join "`n") -Encoding ASCII
+    return $file
+}
+
 function Get-PythonArchiveInfo {
     param([Parameter(Mandatory=$true)][string]$FullVersion)
 

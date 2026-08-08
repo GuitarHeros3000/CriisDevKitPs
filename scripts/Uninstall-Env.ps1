@@ -33,7 +33,7 @@
 
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Angular', 'Python', 'Java')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node')]
     [string]$Runtime,
 
     [string]$Version,
@@ -78,6 +78,13 @@ function Get-InstalledItems {
         elseif ($Runtime -eq 'Python') {
             if ($dir.Name -match '^python-(\d+\.\d+)$') {
                 $items += [PSCustomObject]@{ Kind = 'Python'; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
+            }
+        }
+        elseif ($Runtime -eq 'Node') {
+            # Solo la Node SUELTA, la de Node\. La que vive dentro de Angular\ la
+            # gestiona -Runtime Angular: son instalaciones independientes.
+            if ($dir.Name -match '^node-v(.+)-win-x64$') {
+                $items += [PSCustomObject]@{ Kind = 'Node'; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
             }
         }
         else {

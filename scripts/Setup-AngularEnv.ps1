@@ -40,7 +40,6 @@ $ProgressPreference = "SilentlyContinue"
 $AngularRoot = Join-Path $WorkspaceRoot "Angular"
 
 $NpmRegistryUrl = "https://registry.npmjs.org/@angular%2fcli"
-$NodeIndexUrl   = "https://nodejs.org/dist/index.json"
 
 # Suelo de version de Node. Angular 14 declara "^14.15.0 || >=16.10.0", asi que
 # sin este limite se elegiria Node 14, que lleva anos sin parches y ya no trae
@@ -134,33 +133,6 @@ function Get-AngularNodeEngine {
     return $script:AngularEngineCache[$Version]
 }
 
-function Get-NodeLtsReleases {
-    <#
-        Ultima release de cada linea LTS de Node que tenga zip para win-x64.
-        El indice viene ordenado de mas nueva a mas vieja.
-    #>
-    $index = Invoke-JsonApi -Uri $NodeIndexUrl -TimeoutSec 120 -Quiet
-    if (-not $index) { return @() }
-
-    $seen = @{}
-    $result = @()
-    foreach ($rel in $index) {
-        if (-not $rel.lts -or $rel.lts -eq $false) { continue }
-        if ($rel.files -notcontains 'win-x64-zip') { continue }
-
-        $major = [int](($rel.version.TrimStart('v')).Split('.')[0])
-        if ($seen.ContainsKey($major)) { continue }
-
-        $seen[$major] = $true
-        $result += [PSCustomObject]@{
-            Major   = $major
-            Version = $rel.version.TrimStart('v')
-            Lts     = $rel.lts
-        }
-    }
-
-    return @($result | Sort-Object Major)
-}
 
 function Select-NodeForEngine {
     <#

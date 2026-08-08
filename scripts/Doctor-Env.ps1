@@ -513,6 +513,57 @@ function Test-JavaInstall {
     }
 }
 
+function Test-NodeInstall {
+    <#
+        La Node SUELTA, la que instala Setup-NodeEnv en Node\. La que vive dentro
+        de Angular\ se reporta en la seccion de Angular: son independientes y
+        conviene verlas por separado para no creer que sobra una.
+    #>
+    Write-Section "Node (suelto)"
+
+    $nodeRoot = Join-Path $WorkspaceRoot "Node"
+    if (-not (Test-Path $nodeRoot)) {
+        Write-Check "Instalado" "no ($nodeRoot no existe)" 'info'
+        Write-Detail "Instala con:  .\Setup-NodeEnv.bat"
+        return
+    }
+
+    $dirs = @(Get-ChildItem $nodeRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^node-v(\d+)\.' })
+
+    if ($dirs.Count -eq 0) {
+        Write-Check "Instalado" "ninguna version en $nodeRoot" 'info'
+        return
+    }
+
+    foreach ($d in $dirs) {
+        $null = $d.Name -match '^node-v(\d+)\.'
+        $major = $Matches[1]
+        $exe = Join-Path $d.FullName "node.exe"
+
+        if (-not (Test-Path $exe)) {
+            Write-Check "Node $($d.Name)" "falta node.exe" 'fail'
+            Write-Detail "Instalacion corrupta; reejecuta .\Setup-NodeEnv.bat"
+            continue
+        }
+
+        $ver = Invoke-VersionProbe -Exe $exe
+        if ($ver) { Write-Check "Node v$major" $ver 'ok' }
+        else      { Write-Check "Node v$major" "node.exe no arranca" 'fail' }
+
+        $shell = Join-Path $d.FullName "node$major-shell.bat"
+        if (-not (Test-Path $shell)) {
+            Write-Check "  node$major-shell.bat" "falta" 'warn'
+            Add-Fix -Description "regenerar node$major-shell.bat" `
+                    -Arguments @{ Path = $d.FullName; Version = $ver } `
+                    -Action {
+                        param($Path, $Version)
+                        Write-NodeShell -NodePath $Path -Version ($Version -replace '^v','') | Out-Null
+                    }
+        }
+    }
+}
+
 function Test-PortableApps {
     Write-Section "Install-NoAdmin"
 
@@ -817,6 +868,10 @@ function Test-KitIntegrity {
         "Uninstall-Env.bat",
         "Run-Tests.bat",
         "scripts\Run-Tests.ps1",
+        "Setup-NodeEnv.bat",
+        "Start-NodeEnv.bat",
+        "scripts\Setup-NodeEnv.ps1",
+        "scripts\Start-NodeEnv.ps1",
         "tests\Common.Tests.ps1",
         "tests\Shells.Tests.ps1",
         "tests\UserPath.Tests.ps1"
@@ -849,6 +904,7 @@ Test-Network
 Test-AngularInstall
 Test-PythonInstall
 Test-JavaInstall
+Test-NodeInstall
 Test-PortableApps
 Test-UserPath
 Test-PathConflicts
