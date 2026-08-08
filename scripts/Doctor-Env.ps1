@@ -15,12 +15,20 @@
     apuntando a una carpeta borrada. SIN este parametro, Doctor no toca nada.
 .PARAMETER Force
     Con -Fix, no pide confirmacion.
+.PARAMETER Report
+    Ademas de mostrarlo, guarda el diagnostico en un archivo markdown listo para
+    adjuntar a un ticket. La clave del proxy va enmascarada, como en pantalla.
+.PARAMETER ReportPath
+    Donde guardarlo. Por defecto, junto a los registros, en
+    %LOCALAPPDATA%\AssassinSkipAdm\informes.
 .EXAMPLE
     .\Doctor-Env.ps1
 .EXAMPLE
     .\Doctor-Env.ps1 -Fix
 .EXAMPLE
-    .\Doctor-Env.ps1 -SkipNetwork
+    .\Doctor-Env.ps1 -Report
+.EXAMPLE
+    .\Doctor-Env.ps1 -Report -ReportPath D:\ticket-4821.md
 #>
 
 param(
@@ -28,7 +36,11 @@ param(
 
     [switch]$Fix,
 
-    [switch]$Force
+    [switch]$Force,
+
+    [switch]$Report,
+
+    [string]$ReportPath
 )
 
 $ProgressPreference = "SilentlyContinue"
@@ -72,11 +84,21 @@ $AppsRoot    = Join-Path $WorkspaceRoot "Apps"
 $script:Problems = 0
 $script:Warnings = 0
 
+# Lineas del informe. Se acumulan siempre (cuesta nada) y solo se escriben con
+# -Report. Se engancha aqui, en las tres funciones de salida, y no con un
+# transcript como el registro: alli hacia falta capturar TODO, aqui se quiere
+# markdown estructurado, no un volcado de consola.
+$script:ReportLines = @()
+
 function Write-Section {
     param([string]$Title)
     Write-Host ""
     Write-Host "-- $Title " -ForegroundColor Cyan -NoNewline
     Write-Host ("-" * [Math]::Max(0, 58 - $Title.Length)) -ForegroundColor DarkGray
+
+    $script:ReportLines += ""
+    $script:ReportLines += "## $Title"
+    $script:ReportLines += ""
 }
 
 function Write-Check {
@@ -100,11 +122,19 @@ function Write-Check {
     Write-Host $mark -ForegroundColor $color -NoNewline
     Write-Host ("{0,-26}" -f $Label) -NoNewline
     Write-Host $Value -ForegroundColor $color
+
+    # Solo ASCII: PowerShell 5.1 lee los .ps1 como ANSI si no llevan BOM, asi que
+    # un guion largo o una tilde aqui corrompen el archivo y rompen el parser.
+    $icono = switch ($State) { 'ok' { '`[ok]`' } 'warn' { '`[!]`' } 'fail' { '`[X]`' } default { '`[--]`' } }
+    $script:ReportLines += "- $icono **$Label** : $Value"
 }
 
 function Write-Detail {
     param([string]$Text)
     Write-Host "        $Text" -ForegroundColor DarkGray
+
+    # Sangrado para que cuelgue del check anterior al renderizar el markdown.
+    $script:ReportLines += "  - $Text"
 }
 
 function Invoke-VersionProbe {
@@ -928,6 +958,99 @@ else {
 }
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
+
+# --------------------------------------------------------------------------
+# Informe
+# --------------------------------------------------------------------------
+
+function Save-DoctorReport {
+    <#
+        Vuelca el diagnostico a un markdown listo para adjuntar a un ticket.
+
+        Se escribe ANTES de las reparaciones a proposito: el informe debe
+        retratar el problema tal como estaba, no como quedo despues de -Fix. Si
+        alguien lo manda a IT tras reparar, lo util es lo que fallaba.
+    #>
+    param([string]$Destino)
+
+    if ([string]::IsNullOrWhiteSpace($Destino)) {
+        $dir = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\informes"
+        if (-not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        }
+        $Destino = Join-Path $dir ("doctor-{0}.md" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    }
+    else {
+        $padre = Split-Path -Parent $Destino
+        if ($padre -and -not (Test-Path -LiteralPath $padre)) {
+            New-Item -ItemType Directory -Path $padre -Force | Out-Null
+        }
+    }
+
+    $resumen = if ($script:Problems -eq 0 -and $script:Warnings -eq 0) { "Todo correcto." }
+               elseif ($script:Problems -eq 0) { "$($script:Warnings) aviso(s), ningun problema grave." }
+               else { "$($script:Problems) problema(s) y $($script:Warnings) aviso(s)." }
+
+    $cabecera = @(
+        "# Diagnostico del entorno de desarrollo",
+        "",
+        "| | |",
+        "|---|---|",
+        "| Generado | $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') |",
+        "| Version del kit | $KitVersion |",
+        "| Equipo | $env:COMPUTERNAME |",
+        "| Usuario | $env:USERNAME |",
+        "| Windows | $([Environment]::OSVersion.Version) |",
+        "| PowerShell | $($PSVersionTable.PSVersion) |",
+        "| Resultado | **$resumen** |",
+        "",
+        # El backtick es el escape de PowerShell: para que salga literal en el
+        # markdown hay que duplicarlo.
+        "> Este informe se puede adjuntar tal cual a un ticket. Si hay un proxy",
+        "> configurado, su contrasena aparece enmascarada como ``***``.",
+        ""
+    )
+
+    $pie = @(
+        "",
+        "---",
+        "",
+        "## Resumen",
+        "",
+        "**$resumen**",
+        ""
+    )
+    if ($script:Fixes.Count -gt 0) {
+        $pie += "Reparable automaticamente con ``.\Doctor-Env.bat -Fix``:"
+        $pie += ""
+        foreach ($f in $script:Fixes) { $pie += "- $($f.Description)" }
+        $pie += ""
+    }
+    if ($env:ASSASSINSKIPADM_LOGFILE) {
+        $pie += "Registro de esta ejecucion: ``$(Split-Path -Leaf $env:ASSASSINSKIPADM_LOGFILE)``"
+        $pie += ""
+    }
+
+    try {
+        Set-Content -LiteralPath $Destino -Value ($cabecera + $script:ReportLines + $pie) -Encoding UTF8
+        return $Destino
+    }
+    catch {
+        Write-Log "No se pudo escribir el informe: $($_.Exception.Message)" "ERROR"
+        return $null
+    }
+}
+
+if ($Report) {
+    $archivo = Save-DoctorReport -Destino $ReportPath
+    if ($archivo) {
+        Write-Host "Informe guardado en:" -ForegroundColor Green
+        Write-Host "  $archivo"
+        Write-Host ""
+        Write-Host "Se puede adjuntar tal cual a un ticket: la clave del proxy va enmascarada." -ForegroundColor Gray
+        Write-Host ""
+    }
+}
 
 # --------------------------------------------------------------------------
 # Reparaciones

@@ -203,13 +203,56 @@ Reglas que cumple:
 - **La clave del proxy no acaba ahi**, ni siquiera dentro de un mensaje de .NET.
 - Se desactiva con `ASSASSINSKIPADM_NOLOG`.
 
+## Que hay para actualizar
+
+```powershell
+.\Update-Env.bat                 Todo lo instalado
+.\Update-Env.bat -Runtime Java   Solo uno
+```
+
+```
+  Runtime               Instalado       Disponible
+  Python 3.12           3.12.10         3.12.10         al dia
+  Java 21               jdk-21.0.12+8   jdk-21.0.12+8   al dia
+  Node 22 (suelto)      22.14.0         22.23.2         actualizable
+  Angular CLI 20        20.3.33         20.3.33         al dia
+  Node 22 (de Angular)  22.23.2         22.23.2         al dia
+
+Para actualizar:
+  Node 22 (suelto)   .\Setup-NodeEnv.bat -NodeVersion 22.23.2 -Force
+```
+
+**No instala nada nunca.** Como `Doctor`, solo lee: te da el comando exacto y decides
+tu, porque actualizar implica `-Force` y en Python eso borra los paquetes pip.
+
+Sale con codigo **1 si hay algo que actualizar**, para poder encadenarlo.
+
+Distingue la Node suelta de la que Angular instala para si mismo, porque son
+instalaciones independientes: la de Angular la elige su CLI y no se toca a mano.
+
 ## Diagnostico
 
 ```powershell
 .\Doctor-Env.bat              Diagnostico completo (solo lee, no toca nada)
 .\Doctor-Env.bat -SkipNetwork Sin pruebas de conectividad
 .\Doctor-Env.bat -Fix         Repara lo que se pueda arreglar en local
+.\Doctor-Env.bat -Report      Ademas, guarda un informe para adjuntar a un ticket
 ```
+
+### -Report
+
+Guarda el diagnostico en un markdown listo para mandar a IT, con el equipo, el
+usuario, la build de Windows, la version de PowerShell y la del kit:
+
+```powershell
+.\Doctor-Env.bat -Report                              a %LOCALAPPDATA%\AssassinSkipAdm\informes
+.\Doctor-Env.bat -Report -ReportPath D:\ticket.md     a donde tu digas
+```
+
+**La clave del proxy va enmascarada** (`usuario:***@servidor`), asi que el archivo se
+puede adjuntar tal cual. Se escribe **antes** de las reparaciones a proposito: si lo
+generas junto con `-Fix`, lo util para el ticket es lo que fallaba, no como quedo
+despues.
 
 ### -Fix
 
