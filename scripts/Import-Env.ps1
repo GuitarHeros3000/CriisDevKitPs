@@ -230,6 +230,16 @@ try {
             Move-Item -Path "$temp\*" -Destination $pythonPath -Force
             Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
             New-Item -ItemType Directory -Path (Join-Path $pythonPath "Scripts") -Force | Out-Null
+
+            # Misma marca de trazabilidad que deja Setup-PythonEnv. Aqui el hash
+            # ya viene verificado en el manifiesto, asi que solo hay que
+            # anotarlo: sin esto, un Python importado quedaba sin marca y Doctor
+            # no lo mostraba, o sea que los dos caminos de instalacion dejaban
+            # estados distintos.
+            if ($p.sha256) {
+                Set-Content -LiteralPath (Join-Path $pythonPath ".assassinskipadm-sha256") `
+                            -Value $p.sha256 -Encoding ASCII
+            }
         }
 
         # El embeddable necesita el ._pth parcheado o pip no importa nada.

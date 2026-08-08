@@ -42,7 +42,6 @@ if ($versions.Count -eq 0) {
     Write-Host ""
     Write-Host "Ejecuta: .\Setup-AngularEnv.bat -AngularVersion 20" -ForegroundColor White
     Write-Host ""
-    Read-Host "Presiona Enter para salir"
     exit 1
 }
 
@@ -62,7 +61,6 @@ if ($PSBoundParameters.ContainsKey('Version')) {
         Write-Host ""
         Write-Host "Angular v$Version no esta instalado." -ForegroundColor Red
         Write-Host ""
-        Read-Host "Presiona Enter para salir"
         exit 1
     }
     $selected = @($match)[0]
@@ -73,7 +71,6 @@ if (-not (Test-Path -LiteralPath $selected.Shell)) {
     Write-Host "Falta el shell: $($selected.Shell)" -ForegroundColor Red
     Write-Host "Vuelve a ejecutar Setup-AngularEnv.bat para regenerarlo." -ForegroundColor White
     Write-Host ""
-    Read-Host "Presiona Enter para salir"
     exit 1
 }
 
