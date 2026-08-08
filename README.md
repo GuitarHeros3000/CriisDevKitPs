@@ -648,28 +648,43 @@ confianza* (no necesita admin).
 
 ### Verificacion de descargas
 
-| Descarga | Verificacion |
-|---|---|
-| Node.js | SHA-256 contra el `SHASUMS256.txt` oficial de nodejs.org |
-| JDK (Temurin) | SHA-256 que publica la propia API de Adoptium |
-| Python  | HTTPS + integridad del zip + se anota su SHA-256 |
-| get-pip.py | HTTPS |
+| Descarga | Que se comprueba | Nivel |
+|---|---|---|
+| Node.js | SHA-256 contra el `SHASUMS256.txt` de nodejs.org | integridad |
+| JDK (Temurin) | SHA-256 que publica la API de Adoptium | integridad |
+| Python | el zip abre y no llego truncado; se anota su SHA-256 | integridad |
+| get-pip.py | HTTPS | — |
 
-**Python es el unico sin verificacion de autenticidad, y no se puede arreglar.**
-python.org ya no publica hashes junto al zip embeddable: retiro las sumas MD5 de la
-pagina de release y hoy solo ofrece `.sigstore`, `.asc` y `.crt`. Verificar esas
-firmas de verdad exige contrastarlas contra el log de transparencia, o sea
-herramientas que una maquina bloqueada no tiene; y en el caso de Python haria falta
-Python para verificar Python.
+**Ninguno de los tres es verificacion de autenticidad, y conviene saberlo.**
 
-Sacar el digest del `.sigstore` a mano no serviria: quien pudiera servir un zip
-manipulado serviria tambien un `.sigstore` a juego. Seria seguridad de mentira, asi
-que no se hace.
+Un checksum viaja por **el mismo canal** que el archivo. Quien pueda sustituirte el
+zip puede sustituir tambien el hash, y encajaran perfectamente. Eso sirve contra una
+descarga corrupta o un fallo del CDN, que es lo habitual, pero **no** contra alguien
+capaz de interceptar la conexion. En una red con proxy que inspecciona HTTPS, ese
+"alguien" esta en el camino por diseno.
 
-Lo que si se hace es anotar el SHA-256 del zip instalado en
-`.assassinskipadm-sha256`, y `Doctor` lo muestra. Es **trazabilidad, no
-autenticidad**: sirve para comparar dos maquinas que dicen tener la misma version, y
-para detectar que los archivos cambiaron despues.
+Lo unico que resolveria eso es verificar las **firmas GPG**, que no se pueden
+falsificar sin la clave privada del firmante. Existen: nodejs.org publica
+`SHASUMS256.txt.asc`, python.org publica un `.asc` por archivo y Adoptium un `.sig`.
+El kit **no las verifica**, y la razon no es tecnica sino de mantenimiento:
+
+- Se comprobo que funciona: con el `gpg.exe` que trae Git for Windows y la clave
+  correcta, la firma del zip de Python valida (`Good signature`, salida 0).
+- El problema es **conseguir y mantener las claves**. Node firma cada release con la
+  clave del releaser que la publica, y hay una decena rotando: fijarlas en el repo
+  significa que el kit se rompe cada pocos meses. De las de Node y Adoptium no se
+  encontro fuente publica estable.
+
+Asi que el kit se queda en integridad y lo dice claro, en vez de aparentar mas.
+
+Sobre el `.sigstore` de Python: sacarle el digest a mano no aportaria nada, porque
+quien sirviera un zip manipulado serviria tambien un `.sigstore` a juego. Verificarlo
+de verdad exige contrastarlo contra el log de transparencia, o sea herramientas que
+una maquina bloqueada no tiene (y para Python haria falta Python).
+
+El SHA-256 que se anota en `.assassinskipadm-sha256` y muestra `Doctor` es
+**trazabilidad**: sirve para comparar dos maquinas que dicen tener la misma version y
+para detectar que los archivos cambiaron despues de instalarlos.
 
 ## Solucion de problemas
 
