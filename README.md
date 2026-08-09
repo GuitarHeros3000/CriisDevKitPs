@@ -630,11 +630,36 @@ alguno de esos MSI instala drivers o servicios, seguira necesitando admin.
 -DestRoot <ruta>   Carpeta destino para el modo portable (por defecto ..\Apps)
 ```
 
+### Las herramientas de extraccion se consiguen solas
+
+El modo portable necesita un extractor. Si no lo tienes, **el kit lo descarga** y lo
+deja en `..\Apps\tools`. Si ya tienes el tuyo en el PATH, se usa el tuyo.
+
+| Tipo | Herramienta | De donde sale |
+|---|---|---|
+| NSIS | `7z.exe` | del MSI oficial de 7-zip.org, extraido con `msiexec /a` |
+| Inno Setup | `innoextract.exe` | del zip oficial de constexpr.org |
+
+La version de 7-Zip no esta cableada: se lee de su pagina de descargas y se coge la
+mas alta, para que no caduque.
+
+**Limitacion real de Inno Setup.** `innoextract 1.9` es la ultima que existe y solo
+cubre hasta **Inno Setup 6.0.5**, asi que con un instalador reciente falla. Lo que si
+funciona con esos es `innounp`, pero **no se puede descargar de forma automatica**:
+solo se distribuye por SourceForge, que responde una pagina HTML intermedia en vez
+del archivo. Si te topas con ese caso el kit te lo dice con todas las letras y te
+propone la salida buena, que casi siempre es no extraer:
+
+> casi todos los Inno Setup admiten instalacion per-user, que es lo que este script
+> intenta **antes** de extraer. Prueba sin `-ExtractOnly`.
+
+7-Zip tampoco sirve de recambio ahi: se probo con un instalador de Inno moderno y no
+saca nada aprovechable.
+
 ### Notas
 
-- La extraccion de **NSIS** requiere `7z.exe` (7-Zip) en el PATH: `scoop install 7zip`.
-- La extraccion de **Inno Setup** requiere `innounp.exe` en el PATH.
 - Las instalaciones per-user aparecen en el menu Inicio y en `%LOCALAPPDATA%`.
+- Solo se copian `7z.exe` y `7z.dll`, no la carpeta entera del MSI.
 
 ## Redes corporativas (proxy y certificados)
 

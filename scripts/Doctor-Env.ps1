@@ -599,22 +599,31 @@ function Test-PortableApps {
     Write-Section "Install-NoAdmin"
 
     # Sin estas dos, el fallback portable de NSIS e Inno no puede funcionar.
-    $sevenZip = Get-Command '7z.exe' -ErrorAction SilentlyContinue
+    # Find-KitTool mira el PATH y ademas Apps\tools, que es donde deja las suyas
+    # Install-NoAdmin. Antes solo se miraba el PATH, asi que aunque el kit ya las
+    # hubiera descargado, Doctor seguia avisando de que faltaban.
+    $sevenZip = Find-KitTool -FileName '7z.exe'
     if ($sevenZip) {
-        Write-Check "7z.exe (NSIS)" $sevenZip.Source 'ok'
+        Write-Check "7z.exe (NSIS)" $sevenZip 'ok'
     }
     else {
-        Write-Check "7z.exe (NSIS)" "no esta en el PATH" 'warn'
-        Write-Detail "Sin admin:  scoop install 7zip"
+        # Ya no es un aviso: Install-NoAdmin la descarga sola cuando la necesita.
+        Write-Check "7z.exe (NSIS)" "no esta; se descargara al hacer falta" 'info'
     }
 
-    $innounp = Get-Command 'innounp.exe' -ErrorAction SilentlyContinue
-    if ($innounp) {
-        Write-Check "innounp.exe (Inno)" $innounp.Source 'ok'
+    # Se acepta cualquiera de los dos. innounp era el historico; innoextract es
+    # el equivalente moderno y el que el kit sabe descargar.
+    $inno = Find-KitTool -FileName 'innounp.exe'
+    $innoTipo = 'innounp.exe'
+    if (-not $inno) {
+        $inno = Find-KitTool -FileName 'innoextract.exe'
+        $innoTipo = 'innoextract.exe'
+    }
+    if ($inno) {
+        Write-Check "$innoTipo (Inno)" $inno 'ok'
     }
     else {
-        Write-Check "innounp.exe (Inno)" "no esta en el PATH" 'warn'
-        Write-Detail "Descarga innounp y ponlo en una carpeta del PATH."
+        Write-Check "Extractor Inno Setup" "no esta; se descargara al hacer falta" 'info'
     }
 
     if (Test-Path $AppsRoot) {

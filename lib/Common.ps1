@@ -933,6 +933,41 @@ function Write-JavaShell {
     return $file
 }
 
+# --------------------------------------------------------------------------
+# Herramientas auxiliares (7z, innoextract)
+# --------------------------------------------------------------------------
+#
+# Install-NoAdmin necesita un extractor para los instaladores NSIS e Inno Setup.
+# Antes se limitaba a decir que faltaba y parar. Ahora el kit puede conseguirlos
+# el mismo y los deja aqui, en una carpeta hermana como el resto.
+
+$KitToolsDir = Join-Path $WorkspaceRoot "Apps\tools"
+
+function Find-KitTool {
+    <#
+    .SYNOPSIS
+        Localiza una herramienta auxiliar. Devuelve su ruta, o $null.
+    .DESCRIPTION
+        Busca en dos sitios y en este orden:
+
+          1. El PATH. Si el usuario ya tiene la herramienta instalada, se usa la
+             suya: el kit no debe imponer su copia sobre algo que ya funciona.
+          2. Apps\tools, donde deja las que ha descargado el propio kit.
+
+        Solo busca. Descargarla es cosa de Install-NoAdmin, que es quien sabe si
+        hace falta de verdad; Doctor usa esto para informar sin descargar nada.
+    #>
+    param([Parameter(Mandatory=$true)][string]$FileName)
+
+    $enPath = Get-Command $FileName -ErrorAction SilentlyContinue
+    if ($enPath) { return $enPath.Source }
+
+    $propia = Join-Path $KitToolsDir $FileName
+    if (Test-Path -LiteralPath $propia) { return $propia }
+
+    return $null
+}
+
 function Test-RuntimeSelected {
     <#
         Ayuda a los scripts que aceptan un -Runtime opcional: sin valor, todos

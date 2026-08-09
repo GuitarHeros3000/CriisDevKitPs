@@ -45,6 +45,12 @@ if ([string]::IsNullOrWhiteSpace($DestRoot)) {
     $DestRoot = Join-Path $WorkspaceRoot "Apps"
 }
 
+# innoextract se publica en su propia web como zip descargable directo. La
+# version va fijada porque no hay una URL "latest" estable; si sube, se cambia
+# aqui. innounp seria la alternativa historica, pero solo se distribuye por
+# SourceForge, que responde una pagina HTML intermedia en vez del archivo.
+$InnoExtractUrl = "https://constexpr.org/innoextract/files/innoextract-1.9-windows.zip"
+
 # --------------------------------------------------------------------------
 # Deteccion de tipo de instalador
 # --------------------------------------------------------------------------
@@ -369,21 +375,165 @@ function Test-ExtractionSupported {
         'MSI'  { return $true }
         'Burn' { return $true }
         'NSIS' {
-            if (Get-Command '7z.exe' -ErrorAction SilentlyContinue) { return $true }
-            Write-Log "Falta 7-Zip (7z.exe) para extraer NSIS." "ERROR"
-            Write-Log "  Instalalo sin admin con Scoop:  scoop install 7zip" "WARN"
+            if (Get-SevenZip)   { return $true }
+            Write-Log "No hay 7-Zip y no se pudo conseguir." "ERROR"
+            Write-Log "  Alternativa: instalalo a mano y ponlo en el PATH." "WARN"
             return $false
         }
         'Inno' {
-            if (Get-Command 'innounp.exe' -ErrorAction SilentlyContinue) { return $true }
-            Write-Log "Falta innounp.exe para extraer Inno Setup." "ERROR"
-            Write-Log "  Descarga innounp (Inno Setup Unpacker) y ponlo en el PATH." "WARN"
+            if (Get-InnoExtractor) { return $true }
+            Write-Log "No hay extractor de Inno Setup y no se pudo conseguir." "ERROR"
+            Write-Log "  Alternativa: pon innounp.exe o innoextract.exe en el PATH." "WARN"
             return $false
         }
         default {
             Write-Log "No hay metodo de extraccion conocido para este instalador." "ERROR"
             return $false
         }
+    }
+}
+
+# --------------------------------------------------------------------------
+# Herramientas de extraccion: si no estan, el kit las consigue
+# --------------------------------------------------------------------------
+
+function Get-SevenZip {
+    <#
+        Devuelve la ruta de 7z.exe, descargandolo si hace falta.
+
+        Se saca del MSI oficial con "msiexec /a", que viene en Windows y no pide
+        admin: es la misma extraccion administrativa que este script ya sabe
+        hacer con cualquier MSI. La version no se cablea, se lee de la pagina de
+        descargas y se coge la mas alta, para que no caduque.
+    #>
+    $ya = Find-KitTool -FileName '7z.exe'
+    if ($ya) { return $ya }
+
+    Write-Log "Falta 7-Zip para extraer este instalador. Se va a descargar." "WARN"
+
+    $pagina = Get-WebText -Uri "https://www.7-zip.org/download.html" -Quiet
+    if (-not $pagina) {
+        Write-Log "  No se pudo leer 7-zip.org para saber la version actual." "ERROR"
+        return $null
+    }
+
+    $versiones = @([regex]::Matches($pagina, '7z(\d{4})(?:-x64)?\.msi') |
+        ForEach-Object { [int]$_.Groups[1].Value } | Sort-Object -Unique -Descending)
+    if ($versiones.Count -eq 0) {
+        Write-Log "  La pagina de 7-Zip no enlaza ningun .msi reconocible." "ERROR"
+        return $null
+    }
+
+    $v = $versiones[0]
+    $tmp = Join-Path $env:TEMP ("7z-" + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    try {
+        $msi = Join-Path $tmp "7z.msi"
+        Write-Log "  Descargando 7-Zip $($v.ToString().Insert(2,'.'))..."
+        if (-not (Invoke-Download -Uri "https://www.7-zip.org/a/7z$v-x64.msi" -OutFile $msi -Description "7-Zip")) {
+            return $null
+        }
+
+        # Start-Process -Wait y NO Invoke-NativeCommand: msiexec es una aplicacion
+        # de subsistema grafico, se desengancha nada mas arrancar y deja
+        # $LASTEXITCODE vacio, asi que parecia fallar siempre. Es el mismo patron
+        # que ya usa Install-MsiPerUser mas arriba.
+        $extraido = Join-Path $tmp "x"
+        $proc = Start-Process msiexec.exe -ArgumentList @('/a', "`"$msi`"", "TARGETDIR=`"$extraido`"", '/qb') -Wait -PassThru
+        if ($proc.ExitCode -ne 0) {
+            Write-Log "  msiexec no pudo extraer el MSI (codigo $($proc.ExitCode))." "ERROR"
+            return $null
+        }
+
+        $encontrado = @(Get-ChildItem -LiteralPath $extraido -Filter '7z.exe' -Recurse -File -ErrorAction SilentlyContinue)
+        if ($encontrado.Count -eq 0) {
+            Write-Log "  El MSI no traia 7z.exe donde se esperaba." "ERROR"
+            return $null
+        }
+
+        if (-not (Test-Path -LiteralPath $KitToolsDir)) {
+            New-Item -ItemType Directory -Path $KitToolsDir -Force | Out-Null
+        }
+
+        # Solo el ejecutable y su DLL. Copiar la carpeta entera del MSI traia
+        # ademas la ayuda, los idiomas y los modulos SFX: varios MB que no se
+        # usan para nada aqui.
+        $origen = $encontrado[0].DirectoryName
+        foreach ($f in @('7z.exe', '7z.dll')) {
+            $src = Join-Path $origen $f
+            if (Test-Path -LiteralPath $src) {
+                Copy-Item -LiteralPath $src -Destination $KitToolsDir -Force
+            }
+        }
+
+        $final = Join-Path $KitToolsDir '7z.exe'
+        if (Test-Path -LiteralPath $final) {
+            Write-Log "  7-Zip listo en $KitToolsDir" "SUCCESS"
+            return $final
+        }
+        return $null
+    }
+    finally {
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-InnoExtractor {
+    <#
+        Devuelve con que extraer un instalador de Inno Setup, y cual es.
+
+        Se admiten los dos: innounp, que es lo que usaba el kit, e innoextract,
+        que es el equivalente moderno. Si ya tienes uno, se usa el tuyo. Si no
+        hay ninguno se baja innoextract y NO innounp, por un motivo practico:
+        innounp solo se distribuye por SourceForge, que responde una pagina HTML
+        intermedia en vez del archivo, mientras que innoextract se publica en un
+        zip descargable directo desde su web.
+
+        Devuelve un objeto con Ruta y Tipo, o $null.
+    #>
+    $innounp = Find-KitTool -FileName 'innounp.exe'
+    if ($innounp) { return [PSCustomObject]@{ Ruta = $innounp; Tipo = 'innounp' } }
+
+    $ie = Find-KitTool -FileName 'innoextract.exe'
+    if ($ie) { return [PSCustomObject]@{ Ruta = $ie; Tipo = 'innoextract' } }
+
+    Write-Log "Falta un extractor de Inno Setup. Se va a descargar innoextract." "WARN"
+
+    $tmp = Join-Path $env:TEMP ("ie-" + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    try {
+        $zip = Join-Path $tmp "innoextract.zip"
+        if (-not (Invoke-Download -Uri $InnoExtractUrl -OutFile $zip -Description "innoextract")) {
+            return $null
+        }
+        if (-not (Test-ZipIntegrity -ZipPath $zip)) {
+            Write-Log "  El zip de innoextract llego danado." "ERROR"
+            return $null
+        }
+
+        $extraido = Join-Path $tmp "x"
+        Expand-Archive -Path $zip -DestinationPath $extraido -Force
+
+        $exe = @(Get-ChildItem -LiteralPath $extraido -Filter 'innoextract.exe' -Recurse -File -ErrorAction SilentlyContinue)
+        if ($exe.Count -eq 0) {
+            Write-Log "  El zip no traia innoextract.exe." "ERROR"
+            return $null
+        }
+
+        if (-not (Test-Path -LiteralPath $KitToolsDir)) {
+            New-Item -ItemType Directory -Path $KitToolsDir -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $exe[0].FullName -Destination $KitToolsDir -Force
+
+        $final = Join-Path $KitToolsDir 'innoextract.exe'
+        if (Test-Path -LiteralPath $final) {
+            Write-Log "  innoextract listo en $KitToolsDir" "SUCCESS"
+            return [PSCustomObject]@{ Ruta = $final; Tipo = 'innoextract' }
+        }
+        return $null
+    }
+    finally {
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -450,23 +600,49 @@ function Expand-Installer {
                 }
             }
             'NSIS' {
-                $sevenZip = Get-Command '7z.exe' -ErrorAction SilentlyContinue
+                # Ya se comprobo en Test-CanExtract, asi que aqui esta o se bajo.
+                $sevenZip = Get-SevenZip
                 Write-Log "Extrayendo NSIS con 7-Zip..."
-                $run = Invoke-NativeCommand -FilePath $sevenZip.Source `
+                $run = Invoke-NativeCommand -FilePath $sevenZip `
                                             -Arguments @('x', $InstallerPath, "-o$DestDir", '-y') -Quiet
                 $ok = ($run.ExitCode -eq 0)
             }
             'Inno' {
-                $innounp = Get-Command 'innounp.exe' -ErrorAction SilentlyContinue
-                Write-Log "Extrayendo Inno Setup con innounp..."
-                Push-Location $DestDir
-                try {
-                    $run = Invoke-NativeCommand -FilePath $innounp.Source `
-                                                -Arguments @('-x', '-y', $InstallerPath) -Quiet
+                $extractor = Get-InnoExtractor
+                Write-Log "Extrayendo Inno Setup con $($extractor.Tipo)..."
+
+                if ($extractor.Tipo -eq 'innoextract') {
+                    # innoextract acepta el destino por parametro; innounp no, y
+                    # por eso el otro camino necesita Push-Location.
+                    $run = Invoke-NativeCommand -FilePath $extractor.Ruta `
+                                                -Arguments @('-e', '-d', $DestDir, $InstallerPath) -Quiet
                     $ok = ($run.ExitCode -eq 0)
+
+                    # innoextract 1.9 es la ultima que existe y solo llega hasta
+                    # Inno Setup 6.0.5. Con un instalador mas nuevo falla con un
+                    # mensaje sobre "setup loader revision" que no dice nada al
+                    # que lo lee. Se traduce, porque es un caso de lo mas comun:
+                    # cualquier instalador reciente cae aqui.
+                    if (-not $ok -and $run.Output -match 'setup loader revision|Could not determine setup data version') {
+                        Write-Log "Este instalador usa un Inno Setup mas nuevo del que innoextract sabe leer." "ERROR"
+                        Write-Log "  innoextract 1.9 es la ultima publicada y solo cubre hasta Inno Setup 6.0.5." "WARN"
+                        Write-Log "  Para estos hace falta innounp, que no se puede descargar de forma" "WARN"
+                        Write-Log "  automatica: solo se distribuye por SourceForge, que responde una" "WARN"
+                        Write-Log "  pagina intermedia en vez del archivo. Bajalo a mano y ponlo en el PATH." "WARN"
+                        Write-Log "  Alternativa: casi todos los Inno Setup admiten instalacion per-user," "WARN"
+                        Write-Log "  que es lo que este script intenta ANTES de extraer. Prueba sin -ExtractOnly." "WARN"
+                    }
                 }
-                finally {
-                    Pop-Location
+                else {
+                    Push-Location $DestDir
+                    try {
+                        $run = Invoke-NativeCommand -FilePath $extractor.Ruta `
+                                                    -Arguments @('-x', '-y', $InstallerPath) -Quiet
+                        $ok = ($run.ExitCode -eq 0)
+                    }
+                    finally {
+                        Pop-Location
+                    }
                 }
             }
         }
