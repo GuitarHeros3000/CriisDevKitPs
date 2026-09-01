@@ -919,7 +919,8 @@ function Test-KitIntegrity {
         "scripts\Update-Env.ps1",
         "tests\Common.Tests.ps1",
         "tests\Shells.Tests.ps1",
-        "tests\UserPath.Tests.ps1"
+        "tests\UserPath.Tests.ps1",
+        "tests\InstallNoAdmin.Tests.ps1"
     )
 
     $missing = @()

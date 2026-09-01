@@ -603,9 +603,32 @@ sistema, y no eleva privilegios: si un software necesita admin de verdad, lo dic
 
 1. Detecta el tipo de instalador (MSI / WiX Burn / Inno Setup / NSIS / desconocido).
 2. Intenta la instalacion per-user nativa (sin admin).
-3. Verifica el resultado comparando el registro de usuario (HKCU) antes y despues.
+3. Verifica **donde aterrizo de verdad**, comparando HKCU **y HKLM** antes y despues.
 4. Si no hay modo per-user, extrae los archivos a una carpeta portable en `..\Apps`.
 5. Si necesita admin real (drivers, servicios, MSI per-machine), lo informa con honestidad.
+
+### Te dice si de verdad se evito el admin
+
+Que un instalador devuelva 0 **no significa** que se instalara sin admin. Significa
+que termino bien, y eso incluye el caso en que ignoro `/CURRENTUSER`, pidio permiso
+de administrador, se le concedio y se instalo para todos los usuarios.
+
+Eso paso de verdad con el instalador de Git, y el kit anunciaba
+`INSTALACION COMPLETADA (per-user)`, que era falso. Ahora se comparan **los dos**
+registros y el resultado se dice tal cual es:
+
+| Resultado | Codigo | Que significa |
+|---|---|---|
+| `INSTALACION COMPLETADA (per-user)` | 0 | entrada nueva en HKCU: se evito el admin |
+| `SE INSTALO PARA TODA LA MAQUINA` | **2** | entrada nueva en HKLM: **hubo elevacion** |
+| `AMBITO SIN CONFIRMAR` | 0 | sin rastro en ninguno; no se puede afirmar nada |
+
+El codigo **2** existe para distinguir el caso intermedio: el instalador funciono,
+pero el kit no cumplio su objetivo. Un `0` ahi seria mentir por omision.
+
+Si te sale el aviso de administrador, **responde NO**: significa que ese instalador
+ignora el modo por usuario. Luego prueba con `-ExtractOnly`, que lo saca a portable
+sin instalar nada.
 
 ### Tipos reconocidos
 

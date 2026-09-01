@@ -203,6 +203,74 @@ function Get-UserInstalledApps {
     return $apps
 }
 
+function Get-MachineInstalledApps {
+    <#
+        Lo mismo pero en HKLM, que es donde aterriza lo que se instala PARA TODA
+        LA MAQUINA. Solo lectura: el kit nunca escribe aqui.
+
+        Hace falta para detectar el caso que importa: un instalador que ignora el
+        modo per-user, se eleva por UAC y se instala a nivel de maquina. Mirando
+        solo HKCU eso era indistinguible de "se instalo bien y no dejo entrada".
+    #>
+    $keys = @(
+        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+
+    $apps = @{}
+    foreach ($base in $keys) {
+        if (Test-Path $base) {
+            Get-ChildItem $base -ErrorAction SilentlyContinue | ForEach-Object {
+                $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+                if ($props -and $props.DisplayName) {
+                    $apps[$_.PSChildName] = [PSCustomObject]@{
+                        Name     = $props.DisplayName
+                        Version  = $props.DisplayVersion
+                        Location = $props.InstallLocation
+                    }
+                }
+            }
+        }
+    }
+    return $apps
+}
+
+function Get-InstallScope {
+    <#
+    .SYNOPSIS
+        Dice DONDE aterrizo de verdad la instalacion. Devuelve 'usuario',
+        'maquina' o 'desconocido'.
+    .DESCRIPTION
+        Un codigo de salida 0 no significa "se instalo per-user". Significa "el
+        instalador termino bien", y eso incluye el caso en que ignoro
+        /CURRENTUSER, pidio permiso de administrador, se le concedio y se instalo
+        para toda la maquina.
+
+        Ese caso se dio de verdad con el instalador de Git: salio 0 y el kit
+        anuncio "INSTALACION COMPLETADA (per-user) - sin admin", que era
+        rotundamente falso. Tenia la pista delante (ninguna entrada nueva en
+        HKCU) y la descarto como ruido.
+
+        Por eso ahora se comparan LOS DOS registros. Una entrada nueva en HKLM es
+        prueba directa de que hubo elevacion.
+    #>
+    param(
+        [hashtable]$UserBefore,  [hashtable]$UserAfter,
+        [hashtable]$MachineBefore, [hashtable]$MachineAfter
+    )
+
+    $nuevasUsuario = @($UserAfter.Keys    | Where-Object { -not $UserBefore.ContainsKey($_) })
+    $nuevasMaquina = @($MachineAfter.Keys | Where-Object { -not $MachineBefore.ContainsKey($_) })
+
+    if ($nuevasMaquina.Count -gt 0) {
+        return [PSCustomObject]@{ Ambito = 'maquina'; Claves = $nuevasMaquina; Registro = $MachineAfter }
+    }
+    if ($nuevasUsuario.Count -gt 0) {
+        return [PSCustomObject]@{ Ambito = 'usuario'; Claves = $nuevasUsuario; Registro = $UserAfter }
+    }
+    return [PSCustomObject]@{ Ambito = 'desconocido'; Claves = @(); Registro = @{} }
+}
+
 function Show-NewApps {
     param(
         [hashtable]$Before,
@@ -734,18 +802,24 @@ $installed = $false
 switch ($type) {
     'MSI' {
         $before = Get-UserInstalledApps
+        $beforeM = Get-MachineInstalledApps
         $installed = Install-MsiPerUser -InstallerPath $Path
         if ($installed) {
             $after = Get-UserInstalledApps
             Show-NewApps -Before $before -After $after | Out-Null
+            $script:Ambito = Get-InstallScope -UserBefore $before -UserAfter $after `
+                                              -MachineBefore $beforeM -MachineAfter (Get-MachineInstalledApps)
         }
     }
     'Inno' {
         $before = Get-UserInstalledApps
+        $beforeM = Get-MachineInstalledApps
         $installed = Install-InnoPerUser -InstallerPath $Path
         if ($installed) {
             $after = Get-UserInstalledApps
             Show-NewApps -Before $before -After $after | Out-Null
+            $script:Ambito = Get-InstallScope -UserBefore $before -UserAfter $after `
+                                              -MachineBefore $beforeM -MachineAfter (Get-MachineInstalledApps)
         }
     }
     'NSIS' {
@@ -792,11 +866,77 @@ if (-not $installed) {
     }
 }
 
-Write-Host ""
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  INSTALACION COMPLETADA (per-user)" -ForegroundColor Cyan
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "Se instalo en tu perfil de usuario, sin admin." -ForegroundColor Green
-Write-Host "Busca la app en el menu Inicio o en %LOCALAPPDATA%." -ForegroundColor Gray
-Write-Host ""
+function Show-InstallResult {
+    <#
+    .SYNOPSIS
+        Anuncia el resultado segun DONDE aterrizo. Devuelve el codigo de salida.
+    .DESCRIPTION
+        Antes esto era un bloque suelto al final del script que anunciaba siempre
+        "per-user, sin admin". Con un instalador que ignora /CURRENTUSER y se
+        eleva, eso era falso: paso de verdad con el de Git.
+
+        Es una funcion y no codigo suelto para poder probar los tres caminos sin
+        instalar nada, que es justo lo que impedia detectar el fallo. Devuelve el
+        codigo en vez de llamar a exit, por la misma razon.
+
+        Tres resultados y tres codigos, porque son tres cosas distintas:
+          0  usuario      se evito el admin: objetivo cumplido
+          2  maquina      el instalador se elevo: NO se evito
+          0  desconocido  termino bien pero sin rastro; no se puede afirmar nada
+    #>
+    param([PSCustomObject]$Scope)
+
+    $ambito = if ($Scope) { $Scope.Ambito } else { 'desconocido' }
+
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Cyan
+
+    switch ($ambito) {
+        'usuario' {
+            Write-Host "  INSTALACION COMPLETADA (per-user)" -ForegroundColor Cyan
+            Write-Host "============================================" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "Se instalo en tu perfil de usuario, sin admin." -ForegroundColor Green
+            Write-Host "Busca la app en el menu Inicio o en %LOCALAPPDATA%." -ForegroundColor Gray
+            Write-Host ""
+            return 0
+        }
+        'maquina' {
+            Write-Host "  SE INSTALO PARA TODA LA MAQUINA" -ForegroundColor Yellow
+            Write-Host "============================================" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "Este instalador IGNORO el modo por usuario: pidio permiso de" -ForegroundColor Yellow
+            Write-Host "administrador, se le concedio, y se instalo para todos los usuarios." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "NO se ha evitado el admin, que es de lo que trata este kit." -ForegroundColor Yellow
+            Write-Host "Si habia una version anterior, puede haberse reemplazado." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Entradas nuevas en el registro de maquina:" -ForegroundColor Gray
+            foreach ($k in $Scope.Claves) {
+                $app = $Scope.Registro[$k]
+                Write-Host ("  {0} {1}" -f $app.Name, $app.Version) -ForegroundColor Gray
+                if ($app.Location) { Write-Host "    $($app.Location)" -ForegroundColor DarkGray }
+            }
+            Write-Host ""
+            Write-Host "Para no repetirlo: responde NO al aviso de administrador, y usa" -ForegroundColor Gray
+            Write-Host "-ExtractOnly para sacarlo a portable sin instalarlo." -ForegroundColor Gray
+            Write-Host ""
+            return 2
+        }
+        default {
+            Write-Host "  INSTALADOR TERMINADO, AMBITO SIN CONFIRMAR" -ForegroundColor Yellow
+            Write-Host "============================================" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "El instalador termino bien, pero no dejo rastro ni en el registro" -ForegroundColor Gray
+            Write-Host "de usuario ni en el de maquina, asi que no se puede afirmar donde" -ForegroundColor Gray
+            Write-Host "quedo. Hay paquetes que no se registran; tambien pasa si el" -ForegroundColor Gray
+            Write-Host "instalador no hizo nada." -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "Comprueba a mano en el menu Inicio o en %LOCALAPPDATA%." -ForegroundColor Gray
+            Write-Host ""
+            return 0
+        }
+    }
+}
+
+exit (Show-InstallResult -Scope $script:Ambito)
