@@ -242,19 +242,29 @@ function Get-InstallScope {
         'maquina' o 'desconocido'.
     .DESCRIPTION
         Un codigo de salida 0 no significa "se instalo per-user". Significa "el
-        instalador termino bien", y eso incluye el caso en que ignoro
-        /CURRENTUSER, pidio permiso de administrador, se le concedio y se instalo
-        para toda la maquina.
+        instalador termino bien", y eso incluye que ignorara /CURRENTUSER, se
+        elevara por UAC y se instalara para toda la maquina. Paso con el
+        instalador de Git y el kit lo anuncio como per-user.
 
-        Ese caso se dio de verdad con el instalador de Git: salio 0 y el kit
-        anuncio "INSTALACION COMPLETADA (per-user) - sin admin", que era
-        rotundamente falso. Tenia la pista delante (ninguna entrada nueva en
-        HKCU) y la descarto como ruido.
+        El orden de las pistas importa, y se aprendio a base de equivocarse:
 
-        Por eso ahora se comparan LOS DOS registros. Una entrada nueva en HKLM es
-        prueba directa de que hubo elevacion.
+        1. LO QUE DECLARA EL INSTALADOR. Para un MSI, el log de Windows Installer
+           dice "MSI_LUA: Per-User mode". Es la unica fuente autoritativa y manda
+           sobre todo lo demas.
+
+        2. DONDE ATERRIZARON LOS ARCHIVOS. Bajo el perfil del usuario es
+           per-user; bajo Program Files es de maquina.
+
+        NO se usa en que rama del registro quedo la entrada de desinstalacion.
+        Parece la pista obvia y es FALSA: 7-Zip se instala per-user, en
+        %LOCALAPPDATA%, y aun asi registra su entrada en HKLM. Una version
+        anterior de esta funcion tomaba eso por prueba de elevacion y declaraba
+        "SE INSTALO PARA TODA LA MAQUINA" en una instalacion per-user perfecta.
+        El mismo paquete que ya habia enganado a la comprobacion anterior por
+        HKCU, en la direccion contraria.
     #>
     param(
+        [string]$Declarado,
         [hashtable]$UserBefore,  [hashtable]$UserAfter,
         [hashtable]$MachineBefore, [hashtable]$MachineAfter
     )
@@ -262,13 +272,36 @@ function Get-InstallScope {
     $nuevasUsuario = @($UserAfter.Keys    | Where-Object { -not $UserBefore.ContainsKey($_) })
     $nuevasMaquina = @($MachineAfter.Keys | Where-Object { -not $MachineBefore.ContainsKey($_) })
 
-    if ($nuevasMaquina.Count -gt 0) {
-        return [PSCustomObject]@{ Ambito = 'maquina'; Claves = $nuevasMaquina; Registro = $MachineAfter }
+    # Las entradas nuevas sirven para INFORMAR de que se registro, aunque no para
+    # deducir el ambito.
+    $claves   = @($nuevasUsuario) + @($nuevasMaquina)
+    $registro = @{}
+    foreach ($k in $nuevasUsuario) { $registro[$k] = $UserAfter[$k] }
+    foreach ($k in $nuevasMaquina) { $registro[$k] = $MachineAfter[$k] }
+
+    # 1. Lo que declara el instalador manda.
+    if ($Declarado -in @('usuario', 'maquina')) {
+        return [PSCustomObject]@{ Ambito = $Declarado; Claves = $claves; Registro = $registro; Fuente = 'el instalador' }
     }
-    if ($nuevasUsuario.Count -gt 0) {
-        return [PSCustomObject]@{ Ambito = 'usuario'; Claves = $nuevasUsuario; Registro = $UserAfter }
+
+    # 2. Donde aterrizaron los archivos.
+    $perfil = [Environment]::GetFolderPath('UserProfile').TrimEnd('\')
+    foreach ($k in $claves) {
+        $loc = $registro[$k].Location
+        if ([string]::IsNullOrWhiteSpace($loc)) { continue }
+        $exp = [Environment]::ExpandEnvironmentVariables($loc).TrimEnd('\')
+
+        if ($exp.StartsWith($perfil + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            return [PSCustomObject]@{ Ambito = 'usuario'; Claves = $claves; Registro = $registro; Fuente = 'la ruta de instalacion' }
+        }
+        foreach ($pf in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+            if ($pf -and $exp.StartsWith($pf.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                return [PSCustomObject]@{ Ambito = 'maquina'; Claves = $claves; Registro = $registro; Fuente = 'la ruta de instalacion' }
+            }
+        }
     }
-    return [PSCustomObject]@{ Ambito = 'desconocido'; Claves = @(); Registro = @{} }
+
+    return [PSCustomObject]@{ Ambito = 'desconocido'; Claves = $claves; Registro = $registro; Fuente = $null }
 }
 
 function Show-NewApps {
@@ -357,10 +390,12 @@ function Install-MsiPerUser {
 
         if ($log -match 'MSI_LUA:.*?Per-User mode') {
             Write-Log "  Windows Installer confirma: modo per-user, sin elevacion" "SUCCESS"
+            $script:AmbitoDeclarado = 'usuario'
         }
         elseif ($log -match 'MSI_LUA:.*?Per-Machine mode') {
             Write-Log "  OJO: se instalo en modo PER-MACHINE, no solo para ti." "WARN"
             Write-Log "  Ese paquete no admite el modo por usuario." "WARN"
+            $script:AmbitoDeclarado = 'maquina'
         }
 
         if ($log -match 'Property\(S\): INSTALLDIR = (.+)') {
@@ -807,7 +842,10 @@ switch ($type) {
         if ($installed) {
             $after = Get-UserInstalledApps
             Show-NewApps -Before $before -After $after | Out-Null
-            $script:Ambito = Get-InstallScope -UserBefore $before -UserAfter $after `
+            # -Declarado lo rellena Install-MsiPerUser leyendo el log de Windows
+            # Installer, que es la fuente autoritativa para un MSI.
+            $script:Ambito = Get-InstallScope -Declarado $script:AmbitoDeclarado `
+                                              -UserBefore $before -UserAfter $after `
                                               -MachineBefore $beforeM -MachineAfter (Get-MachineInstalledApps)
         }
     }
@@ -818,7 +856,10 @@ switch ($type) {
         if ($installed) {
             $after = Get-UserInstalledApps
             Show-NewApps -Before $before -After $after | Out-Null
-            $script:Ambito = Get-InstallScope -UserBefore $before -UserAfter $after `
+            # Inno Setup no deja un log equivalente al de Windows Installer, asi
+            # que aqui no hay veredicto declarado: se deduce por la ruta.
+            $script:Ambito = Get-InstallScope -Declarado $script:AmbitoDeclarado `
+                                              -UserBefore $before -UserAfter $after `
                                               -MachineBefore $beforeM -MachineAfter (Get-MachineInstalledApps)
         }
     }

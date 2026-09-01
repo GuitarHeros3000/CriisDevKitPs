@@ -27,58 +27,85 @@ foreach ($nombre in @('Get-InstallScope', 'Show-InstallResult')) {
     Invoke-Expression (($funciones | Where-Object { $_.Name -eq $nombre }).Extent.Text)
 }
 
-function NuevaApp($nombre) {
-    return [PSCustomObject]@{ Name = $nombre; Version = '1.0'; Location = "C:\algun\sitio" }
+function NuevaApp($nombre, $ubicacion = '') {
+    return [PSCustomObject]@{ Name = $nombre; Version = '1.0'; Location = $ubicacion }
 }
+$Perfil       = [Environment]::GetFolderPath('UserProfile').TrimEnd('\')
+$ProgramFiles = $env:ProgramFiles.TrimEnd('\')
 
 Describe "Get-InstallScope" {
 
-    It "detecta una instalacion per-user" {
-        $r = Get-InstallScope -UserBefore @{} -UserAfter @{ 'App1' = (NuevaApp 'App Uno') } `
-                              -MachineBefore @{} -MachineAfter @{}
-        $r.Ambito | Should Be 'usuario'
-        $r.Claves.Count | Should Be 1
+    Context "lo que declara el instalador manda" {
+
+        # Para un MSI, el log de Windows Installer dice "MSI_LUA: Per-User mode".
+        # Es la unica fuente autoritativa y gana a cualquier deduccion.
+        It "respeta el veredicto per-user aunque la entrada quedara en HKLM" {
+            # Este es EXACTAMENTE el caso de 7-Zip: se instala en %LOCALAPPDATA%
+            # pero registra en HKLM. Una version anterior lo declaraba 'maquina'.
+            $r = Get-InstallScope -Declarado 'usuario' `
+                                  -UserBefore @{} -UserAfter @{} `
+                                  -MachineBefore @{} -MachineAfter @{ '7zip' = (NuevaApp '7-Zip') }
+            $r.Ambito | Should Be 'usuario'
+            $r.Fuente | Should Be 'el instalador'
+        }
+
+        It "respeta el veredicto per-machine" {
+            $r = Get-InstallScope -Declarado 'maquina' `
+                                  -UserBefore @{} -UserAfter @{ 'X' = (NuevaApp 'X') } `
+                                  -MachineBefore @{} -MachineAfter @{}
+            $r.Ambito | Should Be 'maquina'
+        }
     }
 
-    # EL CASO QUE MOTIVA TODO ESTO: el instalador se elevo y aterrizo en HKLM.
-    # Antes esto era indistinguible de "instalo bien y no dejo entrada".
-    It "detecta que se instalo para toda la maquina" {
-        $r = Get-InstallScope -UserBefore @{} -UserAfter @{} `
-                              -MachineBefore @{} -MachineAfter @{ 'Git_is1' = (NuevaApp 'Git') }
-        $r.Ambito | Should Be 'maquina'
-        $r.Claves -contains 'Git_is1' | Should Be $true
+    Context "sin veredicto, se deduce por DONDE aterrizaron los archivos" {
+
+        It "bajo el perfil del usuario es per-user" {
+            $r = Get-InstallScope -UserBefore @{} `
+                                  -UserAfter @{ 'A' = (NuevaApp 'App' "$Perfil\AppData\Local\Programs\App") } `
+                                  -MachineBefore @{} -MachineAfter @{}
+            $r.Ambito | Should Be 'usuario'
+            $r.Fuente | Should Be 'la ruta de instalacion'
+        }
+
+        # EL CASO QUE MOTIVA TODO ESTO: el instalador de Git se elevo y aterrizo
+        # en Program Files, y el kit lo anuncio como per-user.
+        It "bajo Program Files es de maquina" {
+            $r = Get-InstallScope -UserBefore @{} -UserAfter @{} `
+                                  -MachineBefore @{} `
+                                  -MachineAfter @{ 'Git_is1' = (NuevaApp 'Git' "$ProgramFiles\Git") }
+            $r.Ambito | Should Be 'maquina'
+            $r.Claves -contains 'Git_is1' | Should Be $true
+        }
+
+        # La rama del registro NO indica el ambito: 7-Zip lo demostro.
+        It "una entrada en HKLM sin ruta NO basta para decir maquina" {
+            $r = Get-InstallScope -UserBefore @{} -UserAfter @{} `
+                                  -MachineBefore @{} -MachineAfter @{ '7zip' = (NuevaApp '7-Zip') }
+            $r.Ambito | Should Be 'desconocido'
+        }
     }
 
-    It "no confunde lo que ya estaba instalado con algo nuevo" {
-        $previas = @{ 'Vieja' = (NuevaApp 'Ya estaba') }
-        $r = Get-InstallScope -UserBefore $previas -UserAfter $previas `
-                              -MachineBefore $previas -MachineAfter $previas
-        $r.Ambito | Should Be 'desconocido'
-    }
+    Context "casos sin informacion suficiente" {
 
-    It "devuelve desconocido cuando no hay rastro en ningun registro" {
-        # Pasa de verdad: hay paquetes que no se registran. No es un fallo, pero
-        # tampoco se puede afirmar que fuera per-user.
-        $r = Get-InstallScope -UserBefore @{} -UserAfter @{} -MachineBefore @{} -MachineAfter @{}
-        $r.Ambito | Should Be 'desconocido'
-    }
+        It "no confunde lo que ya estaba instalado con algo nuevo" {
+            $previas = @{ 'Vieja' = (NuevaApp 'Ya estaba' "$ProgramFiles\Vieja") }
+            $r = Get-InstallScope -UserBefore $previas -UserAfter $previas `
+                                  -MachineBefore $previas -MachineAfter $previas
+            $r.Ambito | Should Be 'desconocido'
+        }
 
-    # Si aparece en los dos, mandar el de maquina: significa que hubo elevacion,
-    # que es lo que el usuario necesita saber. Decir "usuario" ahi seria repetir
-    # el fallo original con otra cara.
-    It "prioriza maquina cuando aparecen entradas en ambos" {
-        $r = Get-InstallScope -UserBefore @{} -UserAfter @{ 'U' = (NuevaApp 'EnUsuario') } `
-                              -MachineBefore @{} -MachineAfter @{ 'M' = (NuevaApp 'EnMaquina') }
-        $r.Ambito | Should Be 'maquina'
-    }
+        It "devuelve desconocido cuando no hay rastro en ningun registro" {
+            $r = Get-InstallScope -UserBefore @{} -UserAfter @{} -MachineBefore @{} -MachineAfter @{}
+            $r.Ambito | Should Be 'desconocido'
+        }
 
-    It "solo cuenta lo que NO estaba antes" {
-        $r = Get-InstallScope -UserBefore @{ 'A' = (NuevaApp 'A') } `
-                              -UserAfter  @{ 'A' = (NuevaApp 'A'); 'B' = (NuevaApp 'B') } `
-                              -MachineBefore @{} -MachineAfter @{}
-        $r.Ambito | Should Be 'usuario'
-        $r.Claves.Count | Should Be 1
-        $r.Claves[0] | Should Be 'B'
+        It "solo cuenta lo que NO estaba antes" {
+            $r = Get-InstallScope -UserBefore @{ 'A' = (NuevaApp 'A') } `
+                                  -UserAfter  @{ 'A' = (NuevaApp 'A'); 'B' = (NuevaApp 'B' "$Perfil\B") } `
+                                  -MachineBefore @{} -MachineAfter @{}
+            $r.Claves.Count | Should Be 1
+            $r.Claves[0] | Should Be 'B'
+        }
     }
 }
 
