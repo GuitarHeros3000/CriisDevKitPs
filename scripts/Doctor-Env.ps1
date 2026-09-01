@@ -51,6 +51,14 @@ $ProgressPreference = "SilentlyContinue"
 # solo con -Fix: por defecto Doctor sigue siendo de solo lectura.
 $script:Fixes = @()
 
+# Use-Env se ofrece UNA vez por runtime aunque tape varios comandos: activar
+# Java cubre java, javac y el resto de golpe.
+$script:UseEnvOfrecido = @()
+# Se apunta aparte porque cambia el texto de la confirmacion: una reparacion
+# que toca el perfil de PowerShell y el AutoRun de cmd no es lo mismo que
+# regenerar un .bat, y quien confirma tiene que saberlo.
+$script:HayFixUseEnv = $false
+
 function Add-Fix {
     <#
         Registra algo reparable. Solo se apunta lo que se puede arreglar EN LOCAL:
@@ -1148,7 +1156,28 @@ function Test-PathConflicts {
             }
             if ($winner.Scope -eq 'maquina') {
                 Write-Detail "El PATH de maquina se busca ANTES que el de usuario, y el kit"
-                Write-Detail "no puede modificarlo sin admin. Usa el shell generado del kit."
+                Write-Detail "no puede modificarlo sin admin."
+
+                # Esto es EXACTAMENTE lo que resuelve Use-Env: no reordena el
+                # PATH -no se puede- sino que antepone las rutas del kit al
+                # abrir cada terminal, despues de que Windows lo componga.
+                # Hasta ahora Doctor detectaba el caso y se limitaba a
+                # contarlo; ofrecerlo cierra el bucle.
+                foreach ($k in $kitOnPath) {
+                    $rt = Resolve-RuntimeFromPath -Path $k.Path
+                    if (-not $rt) { continue }
+                    if ($script:UseEnvOfrecido -contains $rt.Runtime) { continue }
+                    $script:UseEnvOfrecido += $rt.Runtime
+
+                    Write-Detail "Se puede resolver activandolo:  .\Use-Env.bat -Runtime $($rt.Runtime) -Version $($rt.Version)"
+                    $script:HayFixUseEnv = $true
+                    Add-Fix -Description "activar $($rt.Nombre) $($rt.Version) con Use-Env (toca tu perfil de PowerShell y el AutoRun de cmd)" `
+                            -Arguments @{ Runtime = $rt.Runtime; Version = $rt.Version; Script = (Join-Path $PSScriptRoot 'Use-Env.ps1') } `
+                            -Action {
+                                param($Runtime, $Version, $Script)
+                                & $Script -Runtime $Runtime -Version $Version -Force
+                            }
+                }
             }
             continue
         }
@@ -1434,6 +1463,13 @@ if (-not $Fix) {
 if (-not $Force) {
     Write-Host "Se modificara tu PATH de usuario y/o archivos del kit." -ForegroundColor Yellow
     Write-Host "Cada cambio del PATH deja copia en %LOCALAPPDATA%\AssassinSkipAdm." -ForegroundColor Gray
+    if ($script:HayFixUseEnv) {
+        Write-Host ""
+        Write-Host "ADEMAS, activar Use-Env toca dos cosas de tu perfil de usuario:" -ForegroundColor Yellow
+        Write-Host "  1. $($PROFILE.CurrentUserAllHosts)" -ForegroundColor Gray
+        Write-Host "  2. HKCU\Software\Microsoft\Command Processor  (valor AutoRun)" -ForegroundColor Gray
+        Write-Host "Nunca del sistema, y se revierte con:  .\Use-Env.bat -Off" -ForegroundColor Gray
+    }
     Write-Host ""
     $answer = Read-Host "Confirmas? (escribe SI)"
     if ($answer -ne 'SI') {

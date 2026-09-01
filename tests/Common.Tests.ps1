@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
     Pruebas de las funciones puras de lib\Common.ps1: las que solo transforman
     un valor de entrada en uno de salida, sin tocar red, disco ni registro.
@@ -896,6 +896,52 @@ Describe "devenv.json (Read-DevEnvManifest)" {
         $p = Read-DevEnvManifest -Config (Manifiesto $json)
         $p.Errores.Count  | Should Be 0
         $p.Runtimes.Count | Should Be $claves.Count
+    }
+}
+
+Describe "Resolve-RuntimeFromPath" {
+
+    # Traduce "esta carpeta esta tapada en el PATH" a "esto se arregla con
+    # Use-Env -Runtime Java -Version 25", que es lo que permite a Doctor
+    # ofrecer la reparacion en vez de limitarse a contar el problema.
+
+    It "reconoce el bin de un JDK del kit" {
+        $r = Resolve-RuntimeFromPath -Path (Join-Path $WorkspaceRoot 'Java\jdk-25\bin')
+        $r.Runtime | Should Be 'Java'
+        $r.Version | Should Be '25'
+    }
+
+    It "reconoce la carpeta de un Python del kit" {
+        $r = Resolve-RuntimeFromPath -Path (Join-Path $WorkspaceRoot 'Python\python-3.12')
+        $r.Runtime | Should Be 'Python'
+        $r.Version | Should Be '3.12'
+    }
+
+    It "reconoce una subcarpeta profunda" {
+        $r = Resolve-RuntimeFromPath -Path (Join-Path $WorkspaceRoot 'Python\python-3.12\Scripts')
+        $r.Version | Should Be '3.12'
+    }
+
+    It "el nombre que devuelve sirve tal cual para Use-Env" {
+        $valida = @('Angular','Python','Java','Node','Git','Maven','Gradle','Dotnet','VSCode')
+        foreach ($e in (Get-RuntimeCatalog)) {
+            $valida -contains $e.Carpeta | Should Be $true
+        }
+    }
+
+    It "devuelve nulo para algo ajeno al kit" {
+        Resolve-RuntimeFromPath -Path 'C:\Program Files\Java\jdk1.8.0_202\bin' | Should BeNullOrEmpty
+        Resolve-RuntimeFromPath -Path 'C:\Program Files\nodejs' | Should BeNullOrEmpty
+    }
+
+    # Una carpeta con nombre libre dentro de la raiz de un runtime no es del
+    # kit: solo cuentan las que siguen su patron.
+    It "devuelve nulo para una carpeta que no sigue el patron" {
+        Resolve-RuntimeFromPath -Path (Join-Path $WorkspaceRoot 'Java\mi-jdk-a-mano\bin') | Should BeNullOrEmpty
+    }
+
+    It "tolera vacio" {
+        Resolve-RuntimeFromPath -Path '' | Should BeNullOrEmpty
     }
 }
 

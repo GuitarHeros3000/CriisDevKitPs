@@ -2004,6 +2004,40 @@ function Get-RuntimeCatalog {
     )
 }
 
+function Resolve-RuntimeFromPath {
+    <#
+    .SYNOPSIS
+        De una ruta dentro del workspace deduce a que runtime pertenece y de que
+        version. Devuelve $null si la ruta no es de ninguno.
+    .DESCRIPTION
+        Sirve para pasar de "esta carpeta esta tapada en el PATH" a "esto se
+        arregla con Use-Env -Runtime Java -Version 25".
+
+        El nombre de carpeta del catalogo coincide con el que espera Use-Env en
+        -Runtime, asi que se devuelve tal cual.
+    #>
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    $p = $Path.TrimEnd('\')
+
+    foreach ($e in (Get-RuntimeCatalog)) {
+        $raiz = (Join-Path $WorkspaceRoot $e.Carpeta).TrimEnd('\')
+        if (-not $p.StartsWith($raiz + '\', [StringComparison]::OrdinalIgnoreCase)) { continue }
+
+        # La primera carpeta por debajo de la raiz es la de la version.
+        $carpeta = (($p.Substring($raiz.Length).TrimStart('\')) -split '\\')[0]
+        if ($carpeta -match $e.Patron) {
+            return [PSCustomObject]@{
+                Runtime = $e.Carpeta      # es lo que espera Use-Env en -Runtime
+                Nombre  = $e.Nombre
+                Version = $Matches[1]
+            }
+        }
+    }
+    return $null
+}
+
 function Get-InstalledRuntimeLines {
     <#
         Devuelve que lineas hay instaladas de un runtime del catalogo, leyendo
