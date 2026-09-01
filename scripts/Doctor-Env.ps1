@@ -78,6 +78,7 @@ $AngularRoot = Join-Path $WorkspaceRoot "Angular"
 $PythonRoot  = Join-Path $WorkspaceRoot "Python"
 $JavaRoot    = Join-Path $WorkspaceRoot "Java"
 $NodeRoot    = Join-Path $WorkspaceRoot "Node"
+$GitRoot     = Join-Path $WorkspaceRoot "Git"
 $AppsRoot    = Join-Path $WorkspaceRoot "Apps"
 
 # Contadores para el resumen final.
@@ -596,6 +597,72 @@ function Test-NodeInstall {
     }
 }
 
+function Test-GitInstall {
+    <#
+        Git portable, el que instala Setup-GitEnv en Git\. No se comprueba
+        contra el "git" del PATH a secas: si hay uno de maquina instalado por
+        IT, el del kit puede estar tapado, y eso lo dice la seccion de
+        conflictos de PATH, no esta.
+    #>
+    Write-Section "Git (portable)"
+
+    if (-not (Test-Path $GitRoot)) {
+        Write-Check "Instalado" "no ($GitRoot no existe)" 'info'
+        Write-Detail "Instala con:  .\Setup-GitEnv.bat"
+        return
+    }
+
+    $dirs = @(Get-ChildItem $GitRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^git-(\d+\.\d+)$' })
+
+    if ($dirs.Count -eq 0) {
+        Write-Check "Instalado" "ninguna version en $GitRoot" 'info'
+        return
+    }
+
+    foreach ($d in $dirs) {
+        $null = $d.Name -match '^git-(\d+\.\d+)$'
+        $linea = $Matches[1]
+        $exe = Join-Path $d.FullName "cmd\git.exe"
+
+        if (-not (Test-Path $exe)) {
+            Write-Check "Git $($d.Name)" "falta cmd\git.exe" 'fail'
+            Write-Detail "Instalacion corrupta; reejecuta .\Setup-GitEnv.bat -Force"
+            continue
+        }
+
+        $ver = Invoke-VersionProbe -Exe $exe
+        if ($ver) { Write-Check "Git $linea" $ver 'ok' }
+        else      { Write-Check "Git $linea" "git.exe no arranca" 'fail' }
+
+        # Git Bash es la mitad del valor de PortableGit; si falta, la
+        # instalacion sirve pero esta coja.
+        if (-not (Test-Path (Join-Path $d.FullName "git-bash.exe"))) {
+            Write-Check "  git-bash.exe" "falta" 'warn'
+            Write-Detail "Reinstala con:  .\Setup-GitEnv.bat -Force"
+        }
+
+        # Si post-install.bat sigue ahi es que no llego a ejecutarse: git
+        # funciona, pero el entorno de Git Bash quedo a medias.
+        if (Test-Path (Join-Path $d.FullName "post-install.bat")) {
+            Write-Check "  post-instalacion" "sin completar" 'warn'
+            Write-Detail "Git funciona, pero Git Bash puede ir justo. Reinstala con -Force."
+        }
+
+        $shell = Join-Path $d.FullName ("git$($linea -replace '\.','')-shell.bat")
+        if (-not (Test-Path $shell)) {
+            Write-Check "  $(Split-Path -Leaf $shell)" "falta" 'warn'
+            Add-Fix -Description "regenerar $(Split-Path -Leaf $shell)" `
+                    -Arguments @{ Path = $d.FullName; Version = $ver } `
+                    -Action {
+                        param($Path, $Version)
+                        $v = ($Version -replace '^git version ', '') -replace '\.windows\.', '.'
+                        Write-GitShell -GitPath $Path -Version $v | Out-Null
+                    }
+        }
+    }
+}
+
 function Test-PortableApps {
     Write-Section "Install-NoAdmin"
 
@@ -685,7 +752,7 @@ function Test-UserPath {
         # OJO al anadir un runtime nuevo: si su carpeta raiz no esta en esta lista,
         # Doctor no reconocera sus rutas muertas como propias y las dejara para
         # siempre marcadas como "ajena". Paso con Node\ al anadirlo.
-        $roots = @($AngularRoot, $PythonRoot, $JavaRoot, $NodeRoot | ForEach-Object {
+        $roots = @($AngularRoot, $PythonRoot, $JavaRoot, $NodeRoot, $GitRoot | ForEach-Object {
             [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\')
         })
 
@@ -918,6 +985,10 @@ function Test-KitIntegrity {
         "scripts\Start-NodeEnv.ps1",
         "Update-Env.bat",
         "scripts\Update-Env.ps1",
+        "Setup-GitEnv.bat",
+        "Start-GitEnv.bat",
+        "scripts\Setup-GitEnv.ps1",
+        "scripts\Start-GitEnv.ps1",
         "tests\Common.Tests.ps1",
         "tests\Shells.Tests.ps1",
         "tests\UserPath.Tests.ps1",
@@ -952,6 +1023,7 @@ Test-AngularInstall
 Test-PythonInstall
 Test-JavaInstall
 Test-NodeInstall
+Test-GitInstall
 Test-PortableApps
 Test-UserPath
 Test-PathConflicts

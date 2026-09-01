@@ -22,7 +22,7 @@
 #>
 
 param(
-    [ValidateSet('Angular', 'Python', 'Java', 'Node')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git')]
     [string]$Runtime
 )
 
@@ -34,6 +34,7 @@ $AngularRoot = Join-Path $WorkspaceRoot "Angular"
 $PythonRoot  = Join-Path $WorkspaceRoot "Python"
 $JavaRoot    = Join-Path $WorkspaceRoot "Java"
 $NodeRoot    = Join-Path $WorkspaceRoot "Node"
+$GitRoot     = Join-Path $WorkspaceRoot "Git"
 
 # Cada fila: que es, que hay, que se publica, y como actualizarlo.
 $script:Filas = @()
@@ -154,6 +155,39 @@ function Test-NodeUpdates {
     }
 }
 
+function Test-GitUpdates {
+    if (-not (Test-Path $GitRoot)) { return }
+
+    $dirs = @(Get-ChildItem $GitRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^git-(\d+\.\d+)$' })
+    if ($dirs.Count -eq 0) { return }
+
+    Write-Host "  consultando las releases de Git for Windows..." -ForegroundColor DarkGray
+    $ultima = Get-GitPortableRelease
+
+    foreach ($d in $dirs) {
+        $null = $d.Name -match '^git-(\d+\.\d+)$'
+        $linea = $Matches[1]
+
+        # ConvertFrom-GitVersionOutput y no un patron propio: es la version tal
+        # como se llama el archivo publicado ("2.55.0.5"), que es lo que espera
+        # -GitVersion y lo que se compara mas abajo.
+        $bruta = Get-VersionDe -Exe (Join-Path $d.FullName "cmd\git.exe") -Patron '(git version .+)'
+        $instalada = ConvertFrom-GitVersionOutput -Output $bruta
+        if (-not $instalada) { continue }
+
+        # A diferencia de Node o Python, aqui NO se filtra por linea: Git no
+        # mantiene ramas en paralelo, solo avanza. La 2.56 es la sucesora de la
+        # 2.55, no una linea distinta que haya que elegir aparte.
+        $disponible = if ($ultima) { $ultima.Version } else { $null }
+
+        $cmd = if ($disponible) { ".\Setup-GitEnv.bat -GitVersion $disponible -Force" }
+               else             { ".\Setup-GitEnv.bat -Force" }
+
+        Add-Fila -Que "Git $linea" -Instalado $instalada -Disponible $disponible -Comando $cmd
+    }
+}
+
 function Test-AngularUpdates {
     if (-not (Test-Path $AngularRoot)) { return }
 
@@ -202,6 +236,7 @@ Write-Host ""
 if (Test-RuntimeSelected -Name 'Python'  -Selected $Runtime) { Test-PythonUpdates }
 if (Test-RuntimeSelected -Name 'Java'    -Selected $Runtime) { Test-JavaUpdates }
 if (Test-RuntimeSelected -Name 'Node'    -Selected $Runtime) { Test-NodeUpdates }
+if (Test-RuntimeSelected -Name 'Git'     -Selected $Runtime) { Test-GitUpdates }
 if (Test-RuntimeSelected -Name 'Angular' -Selected $Runtime) { Test-AngularUpdates }
 
 Write-Host ""

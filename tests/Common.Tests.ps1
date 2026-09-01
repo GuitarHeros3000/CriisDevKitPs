@@ -526,6 +526,160 @@ Describe "ConvertTo-SemverObject" {
     }
 }
 
+Describe "Git portable" {
+
+    Context "Get-Sha256FromReleaseBody" {
+
+        # Git for Windows publica los checksums en el CUERPO de la release, en
+        # una tabla de texto libre. No es un campo de la API, asi que hay que
+        # buscar la linea del archivo exacto.
+        $cuerpo = @"
+Please note that this is a maintenance release.
+
+Filename | SHA-256
+-------- | -------
+Git-2.55.0.5-64-bit.exe | d065a4e23c3d9a6b5073d609b5be0830227ec3ca053c083ba385061ddfaf94c6
+PortableGit-2.55.0.5-64-bit.7z.exe | 5aa8a20f6e9abb2c755f0e73c91c687701a46b309ad84a0ca6509380fa4ae290
+MinGit-2.55.0.5-64-bit.zip | 56d7b226b7693196cfc71fef26568f536c4a021ab6c37ff2db4287bed908e96e
+"@
+
+        It "encuentra el hash del archivo pedido" {
+            Get-Sha256FromReleaseBody -Body $cuerpo -FileName 'PortableGit-2.55.0.5-64-bit.7z.exe' |
+                Should Be '5aa8a20f6e9abb2c755f0e73c91c687701a46b309ad84a0ca6509380fa4ae290'
+        }
+
+        # Los nombres se parecen mucho entre si; coger el de al lado seria dar
+        # por bueno un archivo que no es.
+        It "no confunde un archivo con otro de nombre parecido" {
+            Get-Sha256FromReleaseBody -Body $cuerpo -FileName 'MinGit-2.55.0.5-64-bit.zip' |
+                Should Be '56d7b226b7693196cfc71fef26568f536c4a021ab6c37ff2db4287bed908e96e'
+        }
+
+        It "devuelve nulo si ese archivo no esta en la tabla" {
+            Get-Sha256FromReleaseBody -Body $cuerpo -FileName 'PortableGit-9.9.9-arm64.7z.exe' |
+                Should BeNullOrEmpty
+        }
+
+        It "ignora la fila de cabecera y la de guiones" {
+            Get-Sha256FromReleaseBody -Body $cuerpo -FileName 'Filename' | Should BeNullOrEmpty
+            Get-Sha256FromReleaseBody -Body $cuerpo -FileName '--------' | Should BeNullOrEmpty
+        }
+
+        It "descarta lo que no tenga forma de SHA-256" {
+            $malo = "PortableGit-1.0-64-bit.7z.exe | pendiente de publicar"
+            Get-Sha256FromReleaseBody -Body $malo -FileName 'PortableGit-1.0-64-bit.7z.exe' |
+                Should BeNullOrEmpty
+        }
+
+        It "tolera un cuerpo vacio o nulo" {
+            Get-Sha256FromReleaseBody -Body ''   -FileName 'x' | Should BeNullOrEmpty
+            Get-Sha256FromReleaseBody -Body $null -FileName 'x' | Should BeNullOrEmpty
+        }
+    }
+
+    Context "Get-GitPortableAsset" {
+
+        function ReleaseFalsa {
+            param([string[]]$Nombres)
+            return [PSCustomObject]@{
+                tag_name = 'v2.55.0.windows.5'
+                body     = "Filename | SHA-256`nPortableGit-2.55.0.5-64-bit.7z.exe | 5aa8a20f6e9abb2c755f0e73c91c687701a46b309ad84a0ca6509380fa4ae290"
+                assets   = @($Nombres | ForEach-Object {
+                    [PSCustomObject]@{ name = $_; browser_download_url = "https://ejemplo/$_" }
+                })
+            }
+        }
+
+        It "escoge el autoextraible de 64 bits y saca su version" {
+            $r = Get-GitPortableAsset -Release (ReleaseFalsa @(
+                'Git-2.55.0.5-64-bit.exe'
+                'PortableGit-2.55.0.5-64-bit.7z.exe'
+                'MinGit-2.55.0.5-64-bit.zip'))
+            $r.Version  | Should Be '2.55.0.5'
+            $r.FileName | Should Be 'PortableGit-2.55.0.5-64-bit.7z.exe'
+            $r.Sha256   | Should Be '5aa8a20f6e9abb2c755f0e73c91c687701a46b309ad84a0ca6509380fa4ae290'
+        }
+
+        # Las releases traen tambien el de arm64, que en este equipo no sirve.
+        It "no coge el de arm64" {
+            $r = Get-GitPortableAsset -Release (ReleaseFalsa @('PortableGit-2.55.0.5-arm64.7z.exe'))
+            $r | Should BeNullOrEmpty
+        }
+
+        It "devuelve nulo si la release no publica PortableGit" {
+            $r = Get-GitPortableAsset -Release (ReleaseFalsa @('Git-2.55.0.5-64-bit.exe'))
+            $r | Should BeNullOrEmpty
+        }
+
+        # Que falte el checksum no debe impedir instalar: se avisa y se sigue.
+        It "sin checksum en el cuerpo, devuelve el resto igualmente" {
+            $rel = ReleaseFalsa @('PortableGit-2.55.0.5-64-bit.7z.exe')
+            $rel.body = 'sin tabla de checksums'
+            $r = Get-GitPortableAsset -Release $rel
+            $r.Version | Should Be '2.55.0.5'
+            $r.Sha256  | Should BeNullOrEmpty
+        }
+    }
+
+    Context "ConvertFrom-GitVersionOutput" {
+
+        # Habia tres sitios parseando "git --version" cada uno a su manera, y
+        # uno lo hacia mal: con [\d.]+ el cuantificador voraz se comia tambien
+        # el punto de ".windows", asi que quedaba "2.55.0." y el sufijo ya no
+        # encajaba. Se veia como "Git 2.55.0." al listar lo instalado.
+        It "convierte la salida de Git for Windows al nombre del archivo publicado" {
+            ConvertFrom-GitVersionOutput -Output 'git version 2.55.0.windows.5' | Should Be '2.55.0.5'
+        }
+
+        It "no deja el punto colgando" {
+            (ConvertFrom-GitVersionOutput -Output 'git version 2.55.0.windows.5') |
+                Should Not Match '\.$'
+        }
+
+        It "admite un numero de windows de dos cifras" {
+            ConvertFrom-GitVersionOutput -Output 'git version 2.49.0.windows.12' | Should Be '2.49.0.12'
+        }
+
+        It "un Git que no sea el de Windows no lleva sufijo" {
+            ConvertFrom-GitVersionOutput -Output 'git version 2.44.1' | Should Be '2.44.1'
+        }
+
+        It "tolera espacios y saltos alrededor" {
+            ConvertFrom-GitVersionOutput -Output "`r`n  git version 2.55.0.windows.5  `r`n" | Should Be '2.55.0.5'
+        }
+
+        It "devuelve nulo con vacio o con algo que no es una version" {
+            ConvertFrom-GitVersionOutput -Output ''      | Should BeNullOrEmpty
+            ConvertFrom-GitVersionOutput -Output $null   | Should BeNullOrEmpty
+            ConvertFrom-GitVersionOutput -Output 'error' | Should BeNullOrEmpty
+        }
+
+        It "lo que devuelve sirve para nombrar la carpeta" {
+            $v = ConvertFrom-GitVersionOutput -Output 'git version 2.55.0.windows.5'
+            Get-GitLine -Version $v | Should Be '2.55'
+        }
+    }
+
+    Context "Get-GitLine" {
+
+        # La carpeta se llama por la linea (git-2.55), no por la version
+        # completa: si no, cada parche crearia una carpeta nueva y -Force
+        # instalaria al lado en vez de reemplazar. Misma leccion que con Node.
+        It "reduce la version a su linea" {
+            Get-GitLine -Version '2.55.0.5' | Should Be '2.55'
+            Get-GitLine -Version '2.56.1.1' | Should Be '2.56'
+        }
+
+        It "tolera la v inicial" {
+            Get-GitLine -Version 'v2.55.0.5' | Should Be '2.55'
+        }
+
+        It "dos parches de la misma linea dan la misma carpeta" {
+            (Get-GitLine -Version '2.55.0.1') | Should Be (Get-GitLine -Version '2.55.0.5')
+        }
+    }
+}
+
 Describe "Split-UserPath" {
 
     It "descarta entradas vacias y solo-espacios" {

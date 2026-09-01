@@ -18,9 +18,9 @@
     Los scripts generados viven en %LOCALAPPDATA%\AssassinSkipAdm, fuera del kit.
     Toman las rutas del shell que ya genera el setup, para no duplicar criterios.
 .PARAMETER Runtime
-    Angular o Python.
+    Angular, Python, Java, Node o Git.
 .PARAMETER Version
-    Version a activar (ej: 22 para Angular, 3.12 para Python).
+    Version a activar (ej: 22 para Angular, 3.12 para Python, 2.55 para Git).
 .PARAMETER Off
     Desactiva. Sin -Runtime desactiva todo y retira los enganches.
 .PARAMETER Force
@@ -34,7 +34,7 @@
 #>
 
 param(
-    [ValidateSet('Angular', 'Python', 'Java')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git')]
     [string]$Runtime,
 
     [string]$Version,
@@ -137,8 +137,26 @@ function Get-RuntimeShell {
     if ($Rt -eq 'Java') {
         return (Join-Path $WorkspaceRoot "Java\jdk-$Ver\java$Ver-shell.bat")
     }
+    if ($Rt -eq 'Node') {
+        return (Join-Path $WorkspaceRoot "Node\node-$Ver\node$Ver-shell.bat")
+    }
+    if ($Rt -eq 'Git') {
+        return (Join-Path $WorkspaceRoot "Git\git-$Ver\git$($Ver -replace '\.','')-shell.bat")
+    }
     $tag = $Ver -replace '\.', ''
     return (Join-Path $WorkspaceRoot "Python\python-$Ver\py$tag-shell.bat")
+}
+
+function Get-VersionEjemplo {
+    # Solo para el mensaje de ayuda cuando falta -Version.
+    param([string]$Rt)
+    switch ($Rt) {
+        'Angular' { return '22' }
+        'Java'    { return '21' }
+        'Node'    { return '22' }
+        'Git'     { return '2.55' }
+        default   { return '3.12' }
+    }
 }
 
 # --------------------------------------------------------------------------
@@ -154,7 +172,11 @@ function Write-ActivateScripts {
     $allPaths = @()
     $allVars  = @{}
 
-    foreach ($rt in @('Angular', 'Python', 'Java')) {
+    # Orden fijo y no el de las claves del estado: define QUE version gana
+    # cuando dos runtimes aportan un binario del mismo nombre. Angular va
+    # primero porque su carpeta trae su propia Node, que debe ganarle a la
+    # suelta si ambas estan activadas.
+    foreach ($rt in @('Angular', 'Python', 'Java', 'Node', 'Git')) {
         if (-not $State.ContainsKey($rt)) { continue }
 
         $shell = Get-RuntimeShell -Rt $rt -Ver $State[$rt]
@@ -458,7 +480,7 @@ if ($Off) {
 # --- Activar ---
 if ([string]::IsNullOrWhiteSpace($Version)) {
     Write-Log "Falta -Version." "ERROR"
-    Write-Log "  Ejemplo:  .\Use-Env.bat -Runtime $Runtime -Version $(if ($Runtime -eq 'Angular') { '22' } else { '3.12' })" "WARN"
+    Write-Log "  Ejemplo:  .\Use-Env.bat -Runtime $Runtime -Version $(Get-VersionEjemplo -Rt $Runtime)" "WARN"
     exit 1
 }
 

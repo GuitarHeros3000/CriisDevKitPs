@@ -1188,6 +1188,194 @@ function Write-NodeShell {
     return $file
 }
 
+# --------------------------------------------------------------------------
+# Git portable
+#
+# Git es el peor caso que se encontro probando Install-NoAdmin: su instalador
+# ignora /CURRENTUSER, pide admin y se instala para toda la maquina; y tampoco
+# se puede extraer, porque usa un Inno Setup mas nuevo del que sabe leer
+# innoextract (y 7-Zip no reconoce el formato).
+#
+# PortableGit es la salida, y es oficial: no es un instalador sino un 7-Zip
+# autoextraible que Git for Windows publica en cada release. No toca el
+# registro, no pide admin y trae Git Bash entero.
+# --------------------------------------------------------------------------
+
+$GitReleasesApi = "https://api.github.com/repos/git-for-windows/git/releases"
+
+function Get-Sha256FromReleaseBody {
+    <#
+        Saca el SHA-256 de un archivo de la tabla que Git for Windows publica en
+        el cuerpo de cada release:
+
+            Filename | SHA-256
+            -------- | -------
+            PortableGit-2.55.0.5-64-bit.7z.exe | 5aa8a20f6e9a...
+
+        Es texto libre escrito por quien publica la release, no un campo de la
+        API, asi que se busca la linea del archivo EXACTO en vez de fiarse de la
+        posicion, y se comprueba que lo hallado tenga forma de SHA-256.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyString()][AllowNull()][string]$Body,
+        [Parameter(Mandatory=$true)][string]$FileName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Body)) { return $null }
+
+    foreach ($linea in ($Body -split "`r?`n")) {
+        $partes = $linea -split '\|'
+        if ($partes.Count -lt 2) { continue }
+        if ($partes[0].Trim() -ne $FileName) { continue }
+
+        $hash = $partes[1].Trim().ToLowerInvariant()
+        if ($hash -match '^[0-9a-f]{64}$') { return $hash }
+    }
+    return $null
+}
+
+function Get-GitPortableAsset {
+    <#
+        De una release de la API de GitHub saca el autoextraible de PortableGit
+        de 64 bits, con su version y su checksum.
+
+        Separada de la llamada de red para poder probarla: recibe el objeto de
+        la release ya descargado. Devuelve $null si esa release no publica un
+        PortableGit de 64 bits, que pasa en algunas.
+    #>
+    param([Parameter(Mandatory=$true)]$Release)
+
+    $asset = @($Release.assets | Where-Object { $_.name -match '^PortableGit-([\d.]+)-64-bit\.7z\.exe$' })
+    if ($asset.Count -eq 0) { return $null }
+
+    $nombre = $asset[0].name
+    $null = $nombre -match '^PortableGit-([\d.]+)-64-bit\.7z\.exe$'
+
+    return [PSCustomObject]@{
+        Version  = $Matches[1]
+        FileName = $nombre
+        Url      = $asset[0].browser_download_url
+        Sha256   = (Get-Sha256FromReleaseBody -Body $Release.body -FileName $nombre)
+        Tag      = $Release.tag_name
+    }
+}
+
+function Get-GitPortableRelease {
+    <#
+        Devuelve el PortableGit a instalar. Sin -Version, el de la ultima
+        release; con -Version (ej: 2.55.0.5), se busca entre las ultimas
+        publicadas.
+
+        No se compone la etiqueta a mano a partir de la version: la etiqueta es
+        "v2.55.0.windows.5" y el archivo "PortableGit-2.55.0.5-64-bit.7z.exe",
+        dos formas distintas del mismo numero. Buscar por nombre de archivo
+        entre las releases evita esa traduccion.
+    #>
+    param([string]$Version)
+
+    $cabeceras = @{ 'User-Agent' = "AssassinSkipAdm/$KitVersion"; 'Accept' = 'application/vnd.github+json' }
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        $release = Invoke-JsonApi -Uri "$GitReleasesApi/latest" -Headers $cabeceras
+        if (-not $release) { return $null }
+        return Get-GitPortableAsset -Release $release
+    }
+
+    $buscada = $Version.Trim().TrimStart('v')
+    $releases = Invoke-JsonApi -Uri "$GitReleasesApi`?per_page=30" -Headers $cabeceras
+    if (-not $releases) { return $null }
+
+    foreach ($r in $releases) {
+        $a = Get-GitPortableAsset -Release $r
+        if ($a -and $a.Version -eq $buscada) { return $a }
+    }
+    return $null
+}
+
+function ConvertFrom-GitVersionOutput {
+    <#
+        Convierte lo que escupe "git --version" en la version tal como se llama
+        el archivo publicado:
+
+            "git version 2.55.0.windows.5"  ->  "2.55.0.5"
+
+        Existe porque tres sitios distintos parseaban esa cadena cada uno a su
+        manera, y uno lo hacia mal: con [\d.]+ el cuantificador voraz se comia
+        tambien el punto de ".windows", devolvia "2.55.0." y la parte
+        ".windows.5" ya no encajaba en el grupo opcional. Se veia como
+        "Git 2.55.0." en la lista de versiones instaladas.
+    #>
+    param([AllowNull()][AllowEmptyString()][string]$Output)
+
+    if ([string]::IsNullOrWhiteSpace($Output)) { return $null }
+
+    if ($Output -match 'git version (\d+\.\d+\.\d+)\.windows\.(\d+)') {
+        return "$($Matches[1]).$($Matches[2])"
+    }
+    # Un Git que no sea el de Windows no lleva el sufijo .windows.N.
+    if ($Output -match 'git version (\d+(?:\.\d+)*)') {
+        return $Matches[1]
+    }
+    return $null
+}
+
+function Get-GitLine {
+    <#
+        La "linea" de una version de Git: 2.55.0.5 -> 2.55. Es lo que da nombre
+        a la carpeta (git-2.55), igual que python-3.12 y jdk-21: una carpeta por
+        linea, y -Force actualiza el parche DENTRO en vez de dejar una carpeta
+        nueva por cada version.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Version)
+
+    $p = $Version.TrimStart('v').Split('.')
+    if ($p.Count -lt 2) { return $p[0] }
+    return "$($p[0]).$($p[1])"
+}
+
+function Write-GitShell {
+    <#
+        Shell de Git portable. Solo se pone cmd\ en el PATH, que es lo que hace
+        tambien el instalador oficial en su opcion por defecto: bin\ trae bash,
+        sh y otros que taparian los comandos del sistema con el mismo nombre.
+        Para el entorno Unix completo esta git-bash.exe, que se anuncia abajo.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$GitPath,
+        [Parameter(Mandatory=$true)][string]$Version
+    )
+
+    $cmdDir = ConvertTo-CmdLiteral (Join-Path $GitPath "cmd")
+    $bash   = ConvertTo-CmdEchoText (Join-Path $GitPath "git-bash.exe")
+    $linea  = (Get-GitLine -Version $Version) -replace '\.', ''
+
+    $lines = @(
+        "@echo off",
+        "set `"PATH=$cmdDir;%PATH%`"",
+        "title Git $Version Shell",
+        "echo.",
+        "echo ============================================",
+        "echo   Git $Version Shell",
+        "echo ============================================",
+        "echo.",
+        "git --version",
+        "echo.",
+        "echo Comandos:",
+        "echo   git clone <url>     - Clonar un repositorio",
+        "echo   git status          - Estado del repositorio",
+        "echo.",
+        "echo Para el entorno Unix completo (bash, ssh, grep):",
+        "echo   $bash",
+        "echo.",
+        "echo Escribe exit para cerrar",
+        "cmd /k"
+    )
+
+    $file = Join-Path $GitPath "git$linea-shell.bat"
+    Set-Content -Path $file -Value ($lines -join "`n") -Encoding ASCII
+    return $file
+}
+
 $PythonFtpIndexUrl = "https://www.python.org/ftp/python/"
 
 function Get-PythonArchiveInfo {

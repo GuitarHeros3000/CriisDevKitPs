@@ -9,17 +9,20 @@ AssassinSkipAdmPy/
 ├── *.bat                    Puntos de entrada (doble clic o linea de comandos)
 ├── lib/
 │   └── Common.ps1           Descargas, proxy, checksums, semver, PATH, log
-└── scripts/
-    ├── Setup-AngularEnv.ps1
-    ├── Setup-PythonEnv.ps1
-    ├── Setup-JavaEnv.ps1
-    ├── Start-AngularEnv.ps1
-    ├── Start-PythonEnv.ps1
-    ├── Start-JavaEnv.ps1
-    ├── Install-NoAdmin.ps1
-    ├── Doctor-Env.ps1
-    ├── Uninstall-Env.ps1
-    └── Use-Env.ps1
+├── scripts/
+│   ├── Setup-AngularEnv.ps1     Start-AngularEnv.ps1
+│   ├── Setup-PythonEnv.ps1      Start-PythonEnv.ps1
+│   ├── Setup-JavaEnv.ps1        Start-JavaEnv.ps1
+│   ├── Setup-NodeEnv.ps1        Start-NodeEnv.ps1
+│   ├── Setup-GitEnv.ps1         Start-GitEnv.ps1
+│   ├── Install-NoAdmin.ps1      Instalar software sin admin
+│   ├── Doctor-Env.ps1           Diagnostico y reparacion
+│   ├── Update-Env.ps1           Que hay desactualizado
+│   ├── Uninstall-Env.ps1        Retirar y limpiar el PATH
+│   ├── Use-Env.ps1              Ganarle a lo instalado con admin
+│   ├── Export-Env.ps1           Import-Env.ps1
+│   └── Run-Tests.ps1
+└── tests/                       Suite de Pester
 ```
 
 Los `.bat` de la raiz son la interfaz publica: siempre se ejecutan desde ahi.
@@ -43,13 +46,22 @@ Proyectos Individuales/
 ├── Java/
 │   ├── jdk-17/
 │   └── jdk-21/
+├── Node/                    (Node suelto, independiente del de Angular)
+│   └── node-22/
+├── Git/
+│   └── git-2.55/
 └── Apps/                    (software instalado en modo portable)
+    ├── tools/               (7z e innoextract, si el kit los necesito)
     └── <nombre-app>/
 ```
 
+Una carpeta por **linea**, no por version: `python-3.12`, `jdk-21`, `node-22`,
+`git-2.55`. Asi `-Force` actualiza el parche DENTRO en vez de dejar una carpeta nueva
+por cada version publicada.
+
 ## Ver el plan antes de descargar: `-WhatIf`
 
-Los tres `Setup-*Env` aceptan `-WhatIf`. Resuelven la version por red (solo lectura) y
+Todos los `Setup-*Env` aceptan `-WhatIf`. Resuelven la version por red (solo lectura) y
 te dicen exactamente que pasaria, **sin tocar nada**:
 
 ```powershell
@@ -347,9 +359,12 @@ compuesto**, y por eso si ganan. `.\Doctor-Env.bat` diagnostica esto en su secci
 ```powershell
 .\Use-Env.bat                                  Ver estado
 .\Use-Env.bat -Runtime Angular -Version 22     Activar
+.\Use-Env.bat -Runtime Git -Version 2.55       Vale para los cinco runtimes
 .\Use-Env.bat -Off -Runtime Angular            Desactivar una
 .\Use-Env.bat -Off                             Desactivar todo
 ```
+
+Admite `Angular`, `Python`, `Java`, `Node` y `Git`.
 
 No se puede reordenar el PATH de maquina, pero **si se puede ejecutar codigo al abrir
 cada terminal**, y eso ocurre despues de que Windows lo componga. Ahi la version del
@@ -587,6 +602,62 @@ La API vive en `api.adoptium.net` pero los binarios se sirven desde `github.com`
 Son dos permisos distintos en un cortafuegos corporativo, asi que `Doctor` los
 comprueba por separado.
 
+## Git (portable)
+
+### Por que existe
+
+Git es el caso que dejo **sin salida** a `Install-NoAdmin`, y esta comprobado con el
+instalador de Git 2.55:
+
+- Su instalador **ignora `/CURRENTUSER`**: pide administrador y se instala para toda
+  la maquina.
+- Y **tampoco se puede extraer**: usa un Inno Setup mas nuevo del que sabe leer
+  `innoextract` 1.9 (la ultima que existe, solo llega a Inno Setup 6.0.5), y 7-Zip no
+  reconoce el formato.
+
+La salida es oficial y se llama **PortableGit**: no es un instalador, es un 7-Zip
+autoextraible que Git for Windows publica en cada release. No toca el registro, no
+pide administrador, y trae Git Bash entero.
+
+### Instalacion
+
+```powershell
+.\Setup-GitEnv.bat                             Ultima publicada
+.\Setup-GitEnv.bat -GitVersion 2.55.0.5        Version concreta
+.\Setup-GitEnv.bat -Force                      Reinstalar / actualizar
+```
+
+Verifica el **SHA-256** contra el que la propia release publica en su tabla
+`Filename | SHA-256`. Ocupa unos 385 MB ya extraido y tarda medio minuto.
+
+Al terminar ejecuta el `post-install.bat` que trae PortableGit, que es lo que deja
+listo el entorno de Git Bash (`/dev`, `/etc/mtab`). `Doctor` avisa si quedo sin
+ejecutar: Git funcionaria igual, pero Git Bash iria justo.
+
+### Uso
+
+```powershell
+.\Start-GitEnv.bat              Shell de cmd con git en el PATH
+.\Start-GitEnv.bat -Bash        Abre Git Bash
+```
+
+### Si ya hay un Git instalado por administrador
+
+Es el caso normal en un equipo corporativo, y **el PATH de usuario no puede ganarle**:
+Windows compone MAQUINA + USUARIO, en ese orden. Para que responda el del kit:
+
+```powershell
+.\Use-Env.bat -Runtime Git -Version 2.55
+```
+
+Comprobado en un equipo con Git 2.55.0.3 instalado en `C:\Program Files\Git`: tras
+activarlo, tanto PowerShell como cmd responden con el **2.55.0.5 del kit**, instalado
+sin admin. Se revierte con `.\Use-Env.bat -Off -Runtime Git`.
+
+Solo se pone `cmd\` en el PATH, que es lo que hace el instalador oficial en su opcion
+por defecto: `bin\` trae `bash`, `sh` y otros que taparian comandos del sistema con el
+mismo nombre. Para el entorno Unix completo esta `git-bash.exe`.
+
 ## Install-NoAdmin
 
 Instala software en tu perfil de usuario **sin permisos de administrador**, usando el
@@ -747,11 +818,14 @@ empresa. Entonces las descargas fallan con un error de canal seguro, y el kit lo
 traduce: hay que pedirle a IT ese certificado raiz e importarlo en **Certificados -
 Usuario actual > Entidades de certificacion raiz de confianza**.
 
-Eso **no necesita admin** -el almacen del usuario se abre para escritura sin
-elevacion, comprobado-, pero Windows saca una **confirmacion de seguridad** al dar de
-alta una raiz. No hay forma de saltarsela ni con `certutil -f`. Es importante saberlo:
-quien no lo espera la confunde con el aviso de administrador y responde que no,
-justo al reves de lo que toca aqui.
+Eso **no necesita admin**, y esta comprobado de punta a punta: levantando un HTTPS
+firmado por una CA desconocida, el kit falla culpando al certificado; con esa CA
+importada en el almacen del usuario, la misma descarga pasa, sin elevar nada.
+
+Pero Windows saca una **confirmacion de seguridad** al dar de alta una raiz, y no hay
+forma de saltarsela ni con `certutil -f`. Es importante saberlo: quien no lo espera la
+confunde con el aviso de administrador y responde que no, justo al reves de lo que
+toca aqui.
 
 ### Autenticacion integrada (NTLM)
 

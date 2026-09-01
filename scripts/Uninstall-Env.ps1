@@ -33,7 +33,7 @@
 
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Angular', 'Python', 'Java', 'Node')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git')]
     [string]$Runtime,
 
     [string]$Version,
@@ -86,6 +86,11 @@ function Get-InstalledItems {
             # -Runtime Angular: son instalaciones independientes.
             if ($dir.Name -match '^node-(\d+)$') {
                 $items += [PSCustomObject]@{ Kind = 'Node'; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
+            }
+        }
+        elseif ($Runtime -eq 'Git') {
+            if ($dir.Name -match '^git-(\d+\.\d+)$') {
+                $items += [PSCustomObject]@{ Kind = 'Git'; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
             }
         }
         else {
