@@ -1720,6 +1720,184 @@ function Get-ToolLine {
     return "$($p[0]).$($p[1])"
 }
 
+# --------------------------------------------------------------------------
+# .NET SDK
+#
+# Es el caso mas facil de todos: Microsoft publica dotnet-install.ps1, un script
+# pensado EXPRESAMENTE para instalar sin admin y en la carpeta que le digas. No
+# hay nada que esquivar; solo hay que llamarlo bien y pasarle el proxy.
+# --------------------------------------------------------------------------
+
+$DotnetIndexUrl   = "https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json"
+$DotnetInstallUrl = "https://dot.net/v1/dotnet-install.ps1"
+
+function Get-DotnetRelease {
+    <#
+        Devuelve el canal de .NET a instalar y la version exacta de su SDK.
+
+        Sin -Channel se coge el LTS activo mas alto: es lo que quiere quien no
+        tiene una preferencia. Los canales fuera de soporte se descartan, para no
+        instalar algo que ya no recibe parches de seguridad.
+    #>
+    param([string]$Channel)
+
+    $idx = Invoke-JsonApi -Uri $DotnetIndexUrl -Quiet
+    if (-not $idx -or -not $idx.'releases-index') { return $null }
+
+    $todos = @($idx.'releases-index' | Where-Object { $_.'latest-sdk' })
+
+    if (-not [string]::IsNullOrWhiteSpace($Channel)) {
+        $c = @($todos | Where-Object { $_.'channel-version' -eq $Channel.Trim() })
+        if ($c.Count -eq 0) { return $null }
+        $elegido = $c[0]
+    }
+    else {
+        $vivos = @($todos | Where-Object { $_.'support-phase' -in @('active', 'maintenance') })
+        $lts   = @($vivos | Where-Object { $_.'release-type' -eq 'lts' } |
+                   Sort-Object { [version]$_.'channel-version' } -Descending)
+        if ($lts.Count -gt 0) { $elegido = $lts[0] }
+        elseif ($vivos.Count -gt 0) {
+            $elegido = @($vivos | Sort-Object { [version]$_.'channel-version' } -Descending)[0]
+        }
+        else { return $null }
+    }
+
+    return [PSCustomObject]@{
+        Channel    = $elegido.'channel-version'
+        SdkVersion = $elegido.'latest-sdk'
+        Tipo       = $elegido.'release-type'
+        Soporte    = $elegido.'support-phase'
+        Eol        = $elegido.'eol-date'
+    }
+}
+
+function Write-DotnetShell {
+    <#
+        Shell del SDK de .NET. Ademas del PATH define DOTNET_ROOT.
+
+        Comprobado: dotnet.exe SI localiza su propio SDK por la ubicacion del
+        ejecutable, asi que compilar y ejecutar funciona sin esa variable. Lo que
+        DOTNET_ROOT resuelve es lo otro: las herramientas globales y las
+        aplicaciones ya publicadas la leen para saber que runtime usar, y en un
+        equipo con un .NET instalado por admin en Program Files -lo normal- sin
+        ella pueden acabar resolviendo al del sistema en vez de a este. Se pone
+        para que el shell no deje esa ambiguedad.
+
+        DOTNET_CLI_TELEMETRY_OPTOUT se pone a 1 porque este kit existe para
+        equipos corporativos vigilados, donde una herramienta que llama a casa
+        sin avisar es justo lo que no se quiere.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$DotnetPath,
+        [Parameter(Mandatory=$true)][string]$Version,
+        [Parameter(Mandatory=$true)][string]$Channel
+    )
+
+    $raiz  = ConvertTo-CmdLiteral $DotnetPath
+    $linea = $Channel -replace '\.', ''
+
+    $lines = @(
+        "@echo off",
+        "set `"PATH=$raiz;%PATH%`"",
+        "set `"DOTNET_ROOT=$raiz`"",
+        "set `"DOTNET_CLI_TELEMETRY_OPTOUT=1`"",
+        "title .NET $Version Shell",
+        "echo.",
+        "echo ============================================",
+        "echo   .NET SDK $Version Shell",
+        "echo ============================================",
+        "echo.",
+        "dotnet --version",
+        "echo.",
+        "echo Comandos:",
+        "echo   dotnet new console  - Crear un proyecto",
+        "echo   dotnet build        - Compilar",
+        "echo   dotnet run          - Ejecutar",
+        "echo.",
+        "echo Escribe exit para cerrar",
+        "cmd /k"
+    )
+
+    $file = Join-Path $DotnetPath "dotnet$linea-shell.bat"
+    Set-Content -Path $file -Value ($lines -join "`n") -Encoding ASCII
+    return $file
+}
+
+# --------------------------------------------------------------------------
+# Visual Studio Code portable
+#
+# El instalador normal de VS Code -el "System Installer"- pide admin. Pero
+# Microsoft publica ademas el .zip, y ese admite MODO PORTABLE oficial: basta
+# con crear una carpeta "data" junto al ejecutable y VS Code guarda ahi sus
+# ajustes y extensiones en vez de en %APPDATA%. Sin registro y sin admin.
+# --------------------------------------------------------------------------
+
+$VSCodeUpdateApi = "https://update.code.visualstudio.com/api/update/win32-x64-archive/stable/latest"
+
+function Get-VSCodeRelease {
+    <#
+        Devuelve la version, el zip y su SHA-256, que la API de actualizacion de
+        VS Code da los tres de una vez. Se pide el canal "archive": el otro es el
+        instalador, que es justo el que pide admin.
+    #>
+    $api = Invoke-JsonApi -Uri $VSCodeUpdateApi -Quiet
+    if (-not $api -or [string]::IsNullOrWhiteSpace($api.url)) { return $null }
+
+    $version = if ($api.productVersion) { $api.productVersion } else { $api.name }
+
+    return [PSCustomObject]@{
+        Version  = $version
+        Url      = $api.url
+        Sha256   = $api.sha256hash
+        FileName = "VSCode-win32-x64-$version.zip"
+    }
+}
+
+function Write-VSCodeShell {
+    <#
+        Shell de VS Code. Pone bin\ en el PATH, que es donde vive code.cmd, el
+        lanzador de linea de comandos.
+
+        VSCODE_PORTABLE se fija ademas de crear la carpeta data\: la carpeta sola
+        ya activa el modo portable al arrancar desde ahi, pero la variable lo
+        deja explicito para cualquier proceso que se lance desde este shell.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$VSCodePath,
+        [Parameter(Mandatory=$true)][string]$Version
+    )
+
+    $binCmd  = ConvertTo-CmdLiteral (Join-Path $VSCodePath "bin")
+    $dataCmd = ConvertTo-CmdLiteral (Join-Path $VSCodePath "data")
+    $exeTxt  = ConvertTo-CmdEchoText (Join-Path $VSCodePath "Code.exe")
+    $linea   = (Get-ToolLine -Version $Version) -replace '\.', ''
+
+    $lines = @(
+        "@echo off",
+        "set `"PATH=$binCmd;%PATH%`"",
+        "set `"VSCODE_PORTABLE=$dataCmd`"",
+        "title VS Code $Version Shell",
+        "echo.",
+        "echo ============================================",
+        "echo   VS Code $Version (portable)",
+        "echo ============================================",
+        "echo.",
+        "echo Ajustes y extensiones viven en data\, no en tu perfil.",
+        "echo.",
+        "echo Comandos:",
+        "echo   code .              - Abrir la carpeta actual",
+        "echo   code archivo.txt    - Abrir un archivo",
+        "echo   $exeTxt",
+        "echo.",
+        "echo Escribe exit para cerrar",
+        "cmd /k"
+    )
+
+    $file = Join-Path $VSCodePath "code$linea-shell.bat"
+    Set-Content -Path $file -Value ($lines -join "`n") -Encoding ASCII
+    return $file
+}
+
 $PythonFtpIndexUrl = "https://www.python.org/ftp/python/"
 
 function Get-PythonArchiveInfo {

@@ -33,7 +33,7 @@
 
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')]
     [string]$Runtime,
 
     [string]$Version,
@@ -88,8 +88,8 @@ function Get-InstalledItems {
                 $items += [PSCustomObject]@{ Kind = 'Node'; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
             }
         }
-        elseif ($Runtime -in @('Git', 'Maven', 'Gradle')) {
-            # Los tres siguen el mismo patron: <nombre en minuscula>-<linea>.
+        elseif ($Runtime -in @('Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')) {
+            # Todos siguen el mismo patron: <nombre en minuscula>-<linea>.
             if ($dir.Name -match ('^' + $Runtime.ToLowerInvariant() + '-(\d+\.\d+)$')) {
                 $items += [PSCustomObject]@{ Kind = $Runtime; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
             }
@@ -211,6 +211,22 @@ else {
     Write-Host "  (ninguna entrada de PATH apunta ahi)" -ForegroundColor DarkGray
 }
 Write-Host ""
+
+# Aviso aparte para lo que NO es del kit: la carpeta data\ de un VS Code
+# portable son los ajustes y las extensiones del usuario. Se va con el resto y
+# no hay forma de recuperarla, asi que no puede pasar desapercibido entre las
+# lineas de "[carpeta]".
+foreach ($t in @($targets | Where-Object { $_.Kind -eq 'VSCode' })) {
+    $data = Join-Path $t.Path "data"
+    if (-not (Test-Path -LiteralPath $data)) { continue }
+
+    $ext = @(Get-ChildItem -LiteralPath (Join-Path $data "extensions") -Directory -ErrorAction SilentlyContinue)
+    Write-Host "  ATENCION: se borran tambien TUS AJUSTES Y EXTENSIONES" -ForegroundColor Red
+    Write-Host "            $data" -ForegroundColor Red
+    if ($ext.Count -gt 0) { Write-Host "            $($ext.Count) extension(es) instalada(s)" -ForegroundColor Red }
+    Write-Host "            Copia esa carpeta antes si quieres conservarla." -ForegroundColor Yellow
+    Write-Host ""
+}
 
 if ($WhatIf) {
     Write-Host "-WhatIf: no se ha tocado nada." -ForegroundColor Cyan

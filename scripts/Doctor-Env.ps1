@@ -81,6 +81,8 @@ $NodeRoot    = Join-Path $WorkspaceRoot "Node"
 $GitRoot     = Join-Path $WorkspaceRoot "Git"
 $MavenRoot   = Join-Path $WorkspaceRoot "Maven"
 $GradleRoot  = Join-Path $WorkspaceRoot "Gradle"
+$DotnetRoot  = Join-Path $WorkspaceRoot "Dotnet"
+$VSCodeRoot  = Join-Path $WorkspaceRoot "VSCode"
 $AppsRoot    = Join-Path $WorkspaceRoot "Apps"
 
 # Contadores para el resumen final.
@@ -748,6 +750,108 @@ function Test-BuildToolInstall {
     }
 }
 
+function Test-DotnetInstall {
+    Write-Section ".NET SDK"
+
+    if (-not (Test-Path $DotnetRoot)) {
+        Write-Check "Instalado" "no ($DotnetRoot no existe)" 'info'
+        Write-Detail "Instala con:  .\Setup-DotnetEnv.bat"
+        return
+    }
+
+    $dirs = @(Get-ChildItem $DotnetRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^dotnet-(\d+\.\d+)$' })
+    if ($dirs.Count -eq 0) {
+        Write-Check "Instalado" "ninguna version en $DotnetRoot" 'info'
+        return
+    }
+
+    foreach ($d in $dirs) {
+        $null = $d.Name -match '^dotnet-(\d+\.\d+)$'
+        $canal = $Matches[1]
+
+        if (-not (Test-Path (Join-Path $d.FullName "dotnet.exe"))) {
+            Write-Check ".NET $($d.Name)" "falta dotnet.exe" 'fail'
+            Write-Detail "Instalacion corrupta; reejecuta .\Setup-DotnetEnv.bat -Force"
+            continue
+        }
+
+        # De la carpeta sdk\ y no ejecutando dotnet: es mas rapido y no depende
+        # de que variables de entorno haya puestas.
+        $sdks = @(Get-ChildItem -LiteralPath (Join-Path $d.FullName "sdk") -Directory -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -match '^\d+\.\d+\.\d+' })
+        if ($sdks.Count -gt 0) {
+            Write-Check ".NET $canal" (@($sdks | Sort-Object Name -Descending)[0].Name) 'ok'
+        }
+        else {
+            Write-Check ".NET $canal" "hay dotnet.exe pero ningun SDK en sdk\" 'fail'
+        }
+
+        $shell = Join-Path $d.FullName "dotnet$($canal -replace '\.','')-shell.bat"
+        if (-not (Test-Path $shell)) {
+            Write-Check "  $(Split-Path -Leaf $shell)" "falta" 'warn'
+            Write-Detail "Regeneralo con:  .\Setup-DotnetEnv.bat -Channel $canal -Force"
+        }
+    }
+}
+
+function Test-VSCodeInstall {
+    Write-Section "VS Code (portable)"
+
+    if (-not (Test-Path $VSCodeRoot)) {
+        Write-Check "Instalado" "no ($VSCodeRoot no existe)" 'info'
+        Write-Detail "Instala con:  .\Setup-VSCodeEnv.bat"
+        return
+    }
+
+    $dirs = @(Get-ChildItem $VSCodeRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^vscode-(\d+\.\d+)$' })
+    if ($dirs.Count -eq 0) {
+        Write-Check "Instalado" "ninguna version en $VSCodeRoot" 'info'
+        return
+    }
+
+    foreach ($d in $dirs) {
+        $null = $d.Name -match '^vscode-(\d+\.\d+)$'
+        $linea = $Matches[1]
+        $exe = Join-Path $d.FullName "Code.exe"
+
+        if (-not (Test-Path $exe)) {
+            Write-Check "VS Code $($d.Name)" "falta Code.exe" 'fail'
+            Write-Detail "Instalacion corrupta; reejecuta .\Setup-VSCodeEnv.bat -Force"
+            continue
+        }
+
+        $v = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion
+        Write-Check "VS Code $linea" $v 'ok'
+
+        # Sin data\ deja de ser portable EN SILENCIO: escribiria los ajustes y
+        # las extensiones en el perfil, mezclandose con los de otro VS Code que
+        # hubiera instalado. Es el fallo mas facil de no notar aqui.
+        $data = Join-Path $d.FullName "data"
+        if (-not (Test-Path -LiteralPath $data)) {
+            Write-Check "  modo portable" "NO activo: falta data\" 'fail'
+            Write-Detail "Escribira en tu perfil en vez de en su carpeta."
+            Add-Fix -Description "activar el modo portable (crear data\)" `
+                    -Arguments @{ Path = $d.FullName } `
+                    -Action {
+                        param($Path)
+                        New-Item -ItemType Directory -Path (Join-Path $Path "data") -Force | Out-Null
+                    }
+        }
+        else {
+            $ext = @(Get-ChildItem -LiteralPath (Join-Path $data "extensions") -Directory -ErrorAction SilentlyContinue)
+            Write-Check "  modo portable" "activo ($($ext.Count) extension(es) en data\)" 'ok'
+        }
+
+        $shell = Join-Path $d.FullName "code$($linea -replace '\.','')-shell.bat"
+        if (-not (Test-Path $shell)) {
+            Write-Check "  $(Split-Path -Leaf $shell)" "falta" 'warn'
+            Write-Detail "Regeneralo con:  .\Setup-VSCodeEnv.bat -Force -KeepData"
+        }
+    }
+}
+
 function Test-PortableApps {
     Write-Section "Install-NoAdmin"
 
@@ -838,7 +942,7 @@ function Test-UserPath {
         # Doctor no reconocera sus rutas muertas como propias y las dejara para
         # siempre marcadas como "ajena". Paso con Node\ al anadirlo.
         $roots = @($AngularRoot, $PythonRoot, $JavaRoot, $NodeRoot, $GitRoot,
-                   $MavenRoot, $GradleRoot | ForEach-Object {
+                   $MavenRoot, $GradleRoot, $DotnetRoot, $VSCodeRoot | ForEach-Object {
             [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\')
         })
 
@@ -1084,6 +1188,14 @@ function Test-KitIntegrity {
         "Start-GradleEnv.bat",
         "scripts\Setup-GradleEnv.ps1",
         "scripts\Start-GradleEnv.ps1",
+        "Setup-DotnetEnv.bat",
+        "Start-DotnetEnv.bat",
+        "scripts\Setup-DotnetEnv.ps1",
+        "scripts\Start-DotnetEnv.ps1",
+        "Setup-VSCodeEnv.bat",
+        "Start-VSCodeEnv.bat",
+        "scripts\Setup-VSCodeEnv.ps1",
+        "scripts\Start-VSCodeEnv.ps1",
         "tests\Common.Tests.ps1",
         "tests\Shells.Tests.ps1",
         "tests\UserPath.Tests.ps1",
@@ -1127,6 +1239,8 @@ Test-BuildToolInstall -Titulo "Gradle" -Root $GradleRoot -Prefijo 'gradle' `
                       -ExeRel 'bin\gradle.bat' -ShellPrefijo 'gradle' `
                       -JarGlob 'lib\gradle-launcher-*.jar' -JarRegex 'gradle-launcher-([\d.]+)\.jar' `
                       -SetupBat '.\Setup-GradleEnv.bat'
+Test-DotnetInstall
+Test-VSCodeInstall
 Test-PortableApps
 Test-UserPath
 Test-PathConflicts

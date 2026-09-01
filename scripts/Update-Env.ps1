@@ -22,7 +22,7 @@
 #>
 
 param(
-    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')]
     [string]$Runtime
 )
 
@@ -37,6 +37,8 @@ $NodeRoot    = Join-Path $WorkspaceRoot "Node"
 $GitRoot     = Join-Path $WorkspaceRoot "Git"
 $MavenRoot   = Join-Path $WorkspaceRoot "Maven"
 $GradleRoot  = Join-Path $WorkspaceRoot "Gradle"
+$DotnetRoot  = Join-Path $WorkspaceRoot "Dotnet"
+$VSCodeRoot  = Join-Path $WorkspaceRoot "VSCode"
 
 # Cada fila: que es, que hay, que se publica, y como actualizarlo.
 $script:Filas = @()
@@ -228,6 +230,62 @@ function Test-BuildToolUpdates {
     }
 }
 
+function Test-DotnetUpdates {
+    if (-not (Test-Path $DotnetRoot)) { return }
+
+    $dirs = @(Get-ChildItem $DotnetRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^dotnet-(\d+\.\d+)$' })
+    if ($dirs.Count -eq 0) { return }
+
+    Write-Host "  consultando los canales de .NET..." -ForegroundColor DarkGray
+
+    foreach ($d in $dirs) {
+        $null = $d.Name -match '^dotnet-(\d+\.\d+)$'
+        $canal = $Matches[1]
+
+        $sdks = @(Get-ChildItem -LiteralPath (Join-Path $d.FullName "sdk") -Directory -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -match '^\d+\.\d+\.\d+' })
+        if ($sdks.Count -eq 0) { continue }
+        $instalada = @($sdks | Sort-Object Name -Descending)[0].Name
+
+        # Se compara contra SU MISMO canal: saltar de canal es una decision
+        # distinta, no una actualizacion.
+        $rel = Get-DotnetRelease -Channel $canal
+        $disponible = if ($rel) { $rel.SdkVersion } else { $null }
+
+        Add-Fila -Que ".NET $canal" -Instalado $instalada -Disponible $disponible `
+                 -Comando ".\Setup-DotnetEnv.bat -Channel $canal -Force"
+    }
+}
+
+function Test-VSCodeUpdates {
+    if (-not (Test-Path $VSCodeRoot)) { return }
+
+    $dirs = @(Get-ChildItem $VSCodeRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^vscode-(\d+\.\d+)$' })
+    if ($dirs.Count -eq 0) { return }
+
+    Write-Host "  consultando la version estable de VS Code..." -ForegroundColor DarkGray
+    $ultima = Get-VSCodeRelease
+
+    foreach ($d in $dirs) {
+        $null = $d.Name -match '^vscode-(\d+\.\d+)$'
+        $linea = $Matches[1]
+
+        $exe = Join-Path $d.FullName "Code.exe"
+        if (-not (Test-Path $exe)) { continue }
+        $instalada = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion
+        if ($instalada -match '(\d+\.\d+\.\d+)') { $instalada = $Matches[1] }
+
+        $disponible = if ($ultima) { $ultima.Version } else { $null }
+
+        # -KeepData en el comando sugerido: sin el, actualizar borraria los
+        # ajustes y las extensiones del usuario.
+        Add-Fila -Que "VS Code $linea" -Instalado $instalada -Disponible $disponible `
+                 -Comando ".\Setup-VSCodeEnv.bat -Force -KeepData"
+    }
+}
+
 function Test-AngularUpdates {
     if (-not (Test-Path $AngularRoot)) { return }
 
@@ -289,6 +347,8 @@ if (Test-RuntimeSelected -Name 'Gradle'  -Selected $Runtime) {
                           -Consultar { Get-GradleRelease } `
                           -SetupBat '.\Setup-GradleEnv.bat' -Parametro '-GradleVersion'
 }
+if (Test-RuntimeSelected -Name 'Dotnet'  -Selected $Runtime) { Test-DotnetUpdates }
+if (Test-RuntimeSelected -Name 'VSCode'  -Selected $Runtime) { Test-VSCodeUpdates }
 if (Test-RuntimeSelected -Name 'Angular' -Selected $Runtime) { Test-AngularUpdates }
 
 Write-Host ""
