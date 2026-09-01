@@ -158,7 +158,7 @@ function Invoke-VersionProbe {
 
         # Lo que un .exe escribe en stderr llega envuelto en un ErrorRecord cuyo
         # texto empieza por "<programa> : ". Pasa con "java -version", que usa
-        # stderr por diseño historico.
+        # stderr por decision historica de sus autores.
         $leaf = Split-Path -Leaf $Exe
         if ($first.StartsWith("$leaf : ")) {
             $first = $first.Substring("$leaf : ".Length).Trim()
@@ -274,10 +274,11 @@ function Test-Network {
             TimeoutSec      = 25
             Method          = 'Head'
         }
-        if ($proxy) {
-            $params.Proxy = $proxy
-            $params.ProxyUseDefaultCredentials = $true
-        }
+        # Add-ProxyToRequest y no las dos lineas de siempre: si el proxy lleva
+        # usuario y clave en la URL hay que enviarlos aparte. Poniendo la URL
+        # entera en -Proxy se descartan, el proxy responde 407 a todo, y este
+        # diagnostico acusaba al cortafuegos de bloquear los seis dominios.
+        Add-ProxyToRequest -Params $params -Uri ([Uri]$t.Url)
 
         $sw = [Diagnostics.Stopwatch]::StartNew()
         try {

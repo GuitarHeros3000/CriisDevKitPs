@@ -231,6 +231,105 @@ function Resolve-DownloadProxy {
     return $null
 }
 
+function Split-ProxyCredential {
+    <#
+    .SYNOPSIS
+        Separa una URL de proxy en direccion limpia y credenciales.
+    .DESCRIPTION
+        La forma documentada de atravesar un proxy corporativo -y la que este
+        mismo kit aconseja cuando recibe un 407- es:
+
+            $env:HTTPS_PROXY = "http://usuario:clave@proxy.empresa:8080"
+
+        Esas credenciales hay que sacarlas de la URL y pasarlas aparte.
+        Invoke-WebRequest -Proxy acepta la URL entera sin protestar pero DESCARTA
+        la parte de usuario y clave, asi que el proxy responde 407 igual que si
+        no se hubiera puesto nada.
+
+        No es una suposicion: comprobado contra un proxy Basic de verdad. Con la
+        clave CORRECTA en la URL fallaba con el mismo 407, byte por byte, que con
+        la clave equivocada; en el registro del proxy se veian los dos CONNECT
+        rechazados. Y el consejo que daba el kit al fallar era exactamente lo que
+        el usuario ya habia hecho, asi que no habia salida.
+
+        Usuario y clave se desescapan, porque una cuenta de dominio se escribe
+        "dominio%5Cusuario" -una barra invertida cruda invalida la URI entera- y
+        lo que hay que enviarle al proxy es "dominio\usuario".
+
+        Devuelve Direccion (sin credenciales) y Credencial (PSCredential o $null).
+    #>
+    param([Parameter(Mandatory=$true)][string]$Proxy)
+
+    $sinCredenciales = [PSCustomObject]@{ Direccion = $Proxy; Credencial = $null }
+
+    try { $u = [Uri]$Proxy } catch { return $sinCredenciales }
+    if ([string]::IsNullOrEmpty($u.UserInfo)) { return $sinCredenciales }
+
+    $i = $u.UserInfo.IndexOf(':')
+    if ($i -lt 0) {
+        $usuario = [Uri]::UnescapeDataString($u.UserInfo)
+        $clave   = ''
+    }
+    else {
+        $usuario = [Uri]::UnescapeDataString($u.UserInfo.Substring(0, $i))
+        $clave   = [Uri]::UnescapeDataString($u.UserInfo.Substring($i + 1))
+    }
+
+    # Sin usuario no hay credencial que construir: PSCredential rechaza el vacio.
+    if ([string]::IsNullOrEmpty($usuario)) { return $sinCredenciales }
+
+    # SecureString a mano y no ConvertTo-SecureString: ese cmdlet rechaza la
+    # cadena vacia, y "usuario:@proxy" (clave vacia) es una entrada posible.
+    $sec = New-Object System.Security.SecureString
+    foreach ($c in $clave.ToCharArray()) { $sec.AppendChar($c) }
+    $sec.MakeReadOnly()
+
+    # Authority es host:puerto SIN la parte de credenciales, que es justo lo que
+    # hay que pasarle a -Proxy. Se conserva la ruta si la hubiera.
+    $resto = $u.PathAndQuery
+    if ($resto -eq '/') { $resto = '' }
+
+    return [PSCustomObject]@{
+        Direccion  = ('{0}://{1}{2}' -f $u.Scheme, $u.Authority, $resto)
+        Credencial = (New-Object System.Management.Automation.PSCredential($usuario, $sec))
+    }
+}
+
+function Add-ProxyToRequest {
+    <#
+        Rellena en la tabla de parametros de Invoke-WebRequest / Invoke-RestMethod
+        lo que haga falta para salir por el proxy.
+
+        Es una funcion compartida y no cuatro copias porque eso fue justo el
+        problema: el mismo bloque de tres lineas estaba repetido en los cuatro
+        sitios que hacen peticiones, con el mismo fallo en los cuatro.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$Params,
+        [Parameter(Mandatory=$true)][Uri]$Uri,
+        [switch]$Announce
+    )
+
+    $proxy = Resolve-DownloadProxy -Uri $Uri
+    if (-not $proxy) { return }
+
+    if ($Announce) { Write-Log "  Proxy detectado: $(Format-ProxyForDisplay $proxy)" }
+
+    $partes = Split-ProxyCredential -Proxy $proxy
+    $Params.Proxy = $partes.Direccion
+
+    if ($partes.Credencial) {
+        # Credenciales explicitas en la URL. No se pueden combinar con
+        # ProxyUseDefaultCredentials: PowerShell rechaza los dos a la vez.
+        $Params.ProxyCredential = $partes.Credencial
+    }
+    else {
+        # Sin credenciales escritas: se prueba con la identidad de Windows, que
+        # es como estan montados los proxies con autenticacion integrada.
+        $Params.ProxyUseDefaultCredentials = $true
+    }
+}
+
 function Format-ProxyForDisplay {
     <#
         Oculta la contrasena de una URL de proxy antes de mostrarla.
@@ -325,6 +424,15 @@ function Get-DownloadErrorHint {
     $text   = Get-WebErrorText -ErrorRecord $ErrorRecord
 
     if ($status -eq 407) {
+        # Dos consejos distintos segun si ya habia credenciales puestas. Antes
+        # habia uno solo -"pon tus credenciales en HTTPS_PROXY"- y a quien ya las
+        # tenia puestas le decia que hiciera lo que acababa de hacer.
+        $puesto = @($env:HTTPS_PROXY, $env:HTTP_PROXY, $env:ALL_PROXY | Where-Object { $_ })
+        $conCredenciales = @($puesto | Where-Object { $_ -match '^[A-Za-z][A-Za-z0-9+.-]*://[^/@]+@' })
+
+        if ($conCredenciales.Count -gt 0) {
+            return 'El proxy rechazo tus credenciales (407). El usuario o la clave no son los que espera. Si es una cuenta de dominio escribela como dominio%5Cusuario, y escapa los caracteres especiales de la clave (@ es %40, : es %3A).'
+        }
         return 'El proxy corporativo pide autenticacion (407). Define el proxy con tus credenciales antes de reintentar:  $env:HTTPS_PROXY = "http://usuario:clave@proxy.empresa:8080"'
     }
     if ($status -eq 404) {
@@ -411,12 +519,7 @@ function Invoke-Download {
         TimeoutSec      = 300
     }
 
-    $proxy = Resolve-DownloadProxy -Uri ([Uri]$Uri)
-    if ($proxy) {
-        Write-Log "  Proxy detectado: $(Format-ProxyForDisplay $proxy)"
-        $params.Proxy = $proxy
-        $params.ProxyUseDefaultCredentials = $true
-    }
+    Add-ProxyToRequest -Params $params -Uri ([Uri]$Uri) -Announce
 
     $attempt = 0
     while ($true) {
@@ -569,11 +672,7 @@ function Invoke-JsonApi {
     }
     if ($Headers) { $params.Headers = $Headers }
 
-    $proxy = Resolve-DownloadProxy -Uri ([Uri]$Uri)
-    if ($proxy) {
-        $params.Proxy = $proxy
-        $params.ProxyUseDefaultCredentials = $true
-    }
+    Add-ProxyToRequest -Params $params -Uri ([Uri]$Uri)
 
     try {
         return Invoke-RestMethod @params
@@ -1196,11 +1295,7 @@ function Get-WebText {
         TimeoutSec      = $TimeoutSec
     }
 
-    $proxy = Resolve-DownloadProxy -Uri ([Uri]$Uri)
-    if ($proxy) {
-        $params.Proxy = $proxy
-        $params.ProxyUseDefaultCredentials = $true
-    }
+    Add-ProxyToRequest -Params $params -Uri ([Uri]$Uri)
 
     try {
         return (Invoke-WebRequest @params).Content
@@ -1232,11 +1327,7 @@ function Test-UrlExists {
         TimeoutSec      = $TimeoutSec
     }
 
-    $proxy = Resolve-DownloadProxy -Uri ([Uri]$Uri)
-    if ($proxy) {
-        $params.Proxy = $proxy
-        $params.ProxyUseDefaultCredentials = $true
-    }
+    Add-ProxyToRequest -Params $params -Uri ([Uri]$Uri)
 
     try {
         Invoke-WebRequest @params | Out-Null

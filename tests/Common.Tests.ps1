@@ -88,6 +88,159 @@ Describe "Protect-ProxySecrets" {
     }
 }
 
+Describe "Split-ProxyCredential" {
+
+    # Existe por un fallo comprobado contra un proxy Basic de verdad: el kit
+    # ponia "http://usuario:clave@proxy:8080" entero en -Proxy, Invoke-WebRequest
+    # descartaba usuario y clave, y el proxy devolvia 407 exactamente igual que
+    # con la clave equivocada. Lo peor era el consejo que daba entonces: poner
+    # las credenciales en HTTPS_PROXY, que es lo que el usuario ya habia hecho.
+
+    It "separa usuario y clave de la direccion" {
+        $r = Split-ProxyCredential -Proxy "http://kituser:cl4ve@proxy.empresa:8080"
+        $r.Direccion | Should Be "http://proxy.empresa:8080"
+        $r.Credencial.UserName | Should Be "kituser"
+        $r.Credencial.GetNetworkCredential().Password | Should Be "cl4ve"
+    }
+
+    It "devuelve la direccion tal cual cuando no hay credenciales" {
+        $r = Split-ProxyCredential -Proxy "http://proxy.empresa:8080"
+        $r.Direccion  | Should Be "http://proxy.empresa:8080"
+        $r.Credencial | Should BeNullOrEmpty
+    }
+
+    # Una cuenta de dominio se escribe con %5C porque la barra invertida cruda
+    # invalida la URI entera; al proxy hay que enviarle la barra de verdad.
+    It "desescapa una cuenta de dominio escrita con %5C" {
+        $r = Split-ProxyCredential -Proxy "http://dominio%5Cusuario:cl4ve@proxy:8080"
+        $r.Credencial.UserName | Should Be "dominio\usuario"
+    }
+
+    It "desescapa los caracteres especiales de la clave" {
+        # Una clave con arroba obliga a escribirla como %40; si no se desescapa,
+        # al proxy le llega la clave equivocada y responde 407 sin mas.
+        $r = Split-ProxyCredential -Proxy "http://u:P%40ssw0rd%3A1@proxy:8080"
+        $r.Credencial.GetNetworkCredential().Password | Should Be 'P@ssw0rd:1'
+    }
+
+    It "admite clave vacia sin reventar" {
+        $r = Split-ProxyCredential -Proxy "http://soloUsuario:@proxy:8080"
+        $r.Credencial.UserName | Should Be "soloUsuario"
+        $r.Credencial.GetNetworkCredential().Password | Should Be ""
+    }
+
+    It "admite usuario sin dos puntos" {
+        $r = Split-ProxyCredential -Proxy "http://soloUsuario@proxy:8080"
+        $r.Credencial.UserName | Should Be "soloUsuario"
+    }
+
+    It "una URL invalida no revienta: se devuelve sin credenciales" {
+        $r = Split-ProxyCredential -Proxy "proxy.empresa:8080"
+        $r.Credencial | Should BeNullOrEmpty
+    }
+
+    It "conserva la ruta si el proxy la lleva" {
+        $r = Split-ProxyCredential -Proxy "http://u:c@proxy:8080/salida"
+        $r.Direccion | Should Be "http://proxy:8080/salida"
+    }
+
+    It "la direccion limpia ya no contiene la clave" {
+        $r = Split-ProxyCredential -Proxy "http://kituser:cl4veSecreta@proxy:8080"
+        $r.Direccion | Should Not Match 'cl4veSecreta'
+    }
+}
+
+Describe "Add-ProxyToRequest" {
+
+    # Lo que importa aqui es la combinacion de parametros: ProxyCredential y
+    # ProxyUseDefaultCredentials son mutuamente excluyentes, PowerShell rechaza
+    # la llamada si van los dos.
+
+    $guardado = @{ H = $env:HTTPS_PROXY; A = $env:ALL_PROXY }
+
+    It "con credenciales en la URL usa ProxyCredential y NO el modo integrado" {
+        $env:HTTPS_PROXY = "http://kituser:cl4ve@127.0.0.1:8899"
+        try {
+            $p = @{}
+            Add-ProxyToRequest -Params $p -Uri ([Uri]"https://nodejs.org/x")
+            $p.Proxy | Should Be "http://127.0.0.1:8899"
+            $p.ProxyCredential.UserName | Should Be "kituser"
+            $p.ContainsKey('ProxyUseDefaultCredentials') | Should Be $false
+        }
+        finally { $env:HTTPS_PROXY = $guardado.H }
+    }
+
+    It "sin credenciales recurre a la identidad de Windows" {
+        $env:HTTPS_PROXY = "http://127.0.0.1:8899"
+        try {
+            $p = @{}
+            Add-ProxyToRequest -Params $p -Uri ([Uri]"https://nodejs.org/x")
+            $p.ProxyUseDefaultCredentials | Should Be $true
+            $p.ContainsKey('ProxyCredential') | Should Be $false
+        }
+        finally { $env:HTTPS_PROXY = $guardado.H }
+    }
+
+    It "con un proxy invalido no toca los parametros" {
+        $env:HTTPS_PROXY = "proxy-sin-esquema:8080"
+        try {
+            $p = @{}
+            Add-ProxyToRequest -Params $p -Uri ([Uri]"https://nodejs.org/x") 3>$null 6>$null
+            $p.ContainsKey('Proxy') | Should Be $false
+        }
+        finally { $env:HTTPS_PROXY = $guardado.H }
+    }
+}
+
+Describe "Get-DownloadErrorHint con un 407" {
+
+    # El consejo tiene que depender de si ya habia credenciales puestas. Antes
+    # era siempre el mismo y, a quien ya las tenia puestas, le pedia hacer lo
+    # que acababa de hacer.
+    # Un ErrorRecord de verdad: el parametro esta tipado y no acepta un
+    # PSCustomObject cualquiera. La propiedad Response se cuelga de la excepcion
+    # con Add-Member, que es exactamente como la busca Get-WebErrorStatus.
+    function Error407 {
+        $exc = New-Object System.Exception("proxy auth")
+        $exc | Add-Member -NotePropertyName Response `
+                          -NotePropertyValue (New-Object PSObject -Property @{ StatusCode = 407 }) -Force
+        return (New-Object System.Management.Automation.ErrorRecord(
+            $exc, 'prueba407', [System.Management.Automation.ErrorCategory]::NotSpecified, $null))
+    }
+
+    $guardado = @{ H = $env:HTTPS_PROXY; P = $env:HTTP_PROXY; A = $env:ALL_PROXY }
+    function LimpiarProxy { $env:HTTPS_PROXY = $null; $env:HTTP_PROXY = $null; $env:ALL_PROXY = $null }
+
+    It "sin credenciales puestas, dice como ponerlas" {
+        LimpiarProxy
+        try {
+            $h = Get-DownloadErrorHint -ErrorRecord (Error407)
+            $h | Should Match 'Define el proxy con tus credenciales'
+        }
+        finally { $env:HTTPS_PROXY = $guardado.H; $env:HTTP_PROXY = $guardado.P; $env:ALL_PROXY = $guardado.A }
+    }
+
+    It "con credenciales puestas, dice que las rechazo" {
+        LimpiarProxy
+        $env:HTTPS_PROXY = "http://kituser:cl4ve@proxy.empresa:8080"
+        try {
+            $h = Get-DownloadErrorHint -ErrorRecord (Error407)
+            $h | Should Match 'rechazo tus credenciales'
+            $h | Should Not Match 'Define el proxy con tus credenciales'
+        }
+        finally { $env:HTTPS_PROXY = $guardado.H; $env:HTTP_PROXY = $guardado.P; $env:ALL_PROXY = $guardado.A }
+    }
+
+    It "un proxy sin credenciales no cuenta como credenciales puestas" {
+        LimpiarProxy
+        $env:HTTPS_PROXY = "http://proxy.empresa:8080"
+        try {
+            (Get-DownloadErrorHint -ErrorRecord (Error407)) | Should Match 'Define el proxy con tus credenciales'
+        }
+        finally { $env:HTTPS_PROXY = $guardado.H; $env:HTTP_PROXY = $guardado.P; $env:ALL_PROXY = $guardado.A }
+    }
+}
+
 Describe "Test-ProxyUsable" {
 
     BeforeEach { Mock Write-Log { } }
