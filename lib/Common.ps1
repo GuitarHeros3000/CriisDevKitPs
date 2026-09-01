@@ -424,7 +424,17 @@ function Get-DownloadErrorHint {
     $text   = Get-WebErrorText -ErrorRecord $ErrorRecord
 
     if ($status -eq 407) {
-        # Dos consejos distintos segun si ya habia credenciales puestas. Antes
+        # Caso mas concreto primero: el proxy pide autenticacion integrada de
+        # Windows y la sesion no tiene identidad de red que ofrecer. SSPI
+        # responde SEC_E_NO_CREDENTIALS, que .NET traduce por "no hay
+        # credenciales disponibles en el paquete de seguridad": un mensaje que
+        # no le dice nada a quien lo lee. Pasa en cualquier equipo que no este
+        # unido al dominio, donde DefaultNetworkCredentials viene vacio.
+        if ($text -match 'paquete de seguridad|security package') {
+            return 'El proxy pide autenticacion integrada de Windows, y tu sesion no tiene ninguna identidad de red que ofrecerle (pasa en los equipos que no estan unidos al dominio). Escribe las credenciales a mano:  $env:HTTPS_PROXY = "http://dominio%5Cusuario:clave@proxy.empresa:8080"'
+        }
+
+        # Y despues, dos consejos segun si ya habia credenciales puestas. Antes
         # habia uno solo -"pon tus credenciales en HTTPS_PROXY"- y a quien ya las
         # tenia puestas le decia que hiciera lo que acababa de hacer.
         $puesto = @($env:HTTPS_PROXY, $env:HTTP_PROXY, $env:ALL_PROXY | Where-Object { $_ })
@@ -443,7 +453,13 @@ function Get-DownloadErrorHint {
     }
 
     if ($text -match 'SSL|secure channel|trust relationship|certificat|certificad') {
-        return 'Fallo la validacion del certificado TLS. Es lo tipico con proxies que inspeccionan HTTPS: pide a IT el certificado raiz e importalo en "Certificados - Usuario actual" > "Entidades de certificacion raiz de confianza" (no necesita admin).'
+        # Lo de la confirmacion no es un detalle menor: comprobado montando un
+        # HTTPS con una CA desconocida, Windows saca un cuadro de seguridad al
+        # dar de alta una raiz de confianza, y no hay forma de evitarlo (ni
+        # siquiera con "certutil -f"). Quien no lo espera lo confunde con el
+        # aviso de administrador y responde que no, que es justo lo contrario
+        # de lo que hay que hacer aqui.
+        return 'Fallo la validacion del certificado TLS. Es lo tipico con proxies que inspeccionan HTTPS: pide a IT el certificado raiz e importalo en "Certificados - Usuario actual" > "Entidades de certificacion raiz de confianza". No necesita admin, pero Windows te pedira una confirmacion: NO es el aviso de administrador, y a esta hay que decirle que si.'
     }
     if ($text -match 'remote name could not be resolved|No such host|nombre remoto') {
         return 'No se pudo resolver el dominio. Revisa la conexion de red o si necesitas la VPN.'

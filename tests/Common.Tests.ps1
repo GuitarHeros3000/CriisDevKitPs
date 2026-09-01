@@ -201,7 +201,8 @@ Describe "Get-DownloadErrorHint con un 407" {
     # PSCustomObject cualquiera. La propiedad Response se cuelga de la excepcion
     # con Add-Member, que es exactamente como la busca Get-WebErrorStatus.
     function Error407 {
-        $exc = New-Object System.Exception("proxy auth")
+        param([string]$Mensaje = "proxy auth")
+        $exc = New-Object System.Exception($Mensaje)
         $exc | Add-Member -NotePropertyName Response `
                           -NotePropertyValue (New-Object PSObject -Property @{ StatusCode = 407 }) -Force
         return (New-Object System.Management.Automation.ErrorRecord(
@@ -236,6 +237,44 @@ Describe "Get-DownloadErrorHint con un 407" {
         $env:HTTPS_PROXY = "http://proxy.empresa:8080"
         try {
             (Get-DownloadErrorHint -ErrorRecord (Error407)) | Should Match 'Define el proxy con tus credenciales'
+        }
+        finally { $env:HTTPS_PROXY = $guardado.H; $env:HTTP_PROXY = $guardado.P; $env:ALL_PROXY = $guardado.A }
+    }
+
+    # Comprobado contra un proxy que exige NTLM: en un equipo que no esta unido
+    # al dominio, DefaultNetworkCredentials viene vacio y SSPI corta el dialogo
+    # tras el primer mensaje. El texto de .NET habla de "paquetes de seguridad",
+    # que no le dice nada a nadie.
+    It "distingue la autenticacion integrada sin identidad que ofrecer" {
+        LimpiarProxy
+        $env:HTTPS_PROXY = "http://proxy.empresa:8080"
+        try {
+            $h = Get-DownloadErrorHint -ErrorRecord (Error407 'Error en el servidor remoto: (407). No hay credenciales disponibles en el paquete de seguridad')
+            $h | Should Match 'autenticacion integrada'
+            $h | Should Match 'no estan unidos al dominio'
+        }
+        finally { $env:HTTPS_PROXY = $guardado.H; $env:HTTP_PROXY = $guardado.P; $env:ALL_PROXY = $guardado.A }
+    }
+
+    # Comprobado montando un HTTPS con una CA que el equipo no conoce, que es
+    # lo que ve el kit tras un proxy que inspecciona HTTPS.
+    It "un fallo de certificado apunta al almacen del usuario y avisa de la confirmacion" {
+        $exc = New-Object System.Exception('Se ha terminado la conexion: No se puede establecer una relacion de confianza para el canal seguro SSL/TLS.')
+        $er = New-Object System.Management.Automation.ErrorRecord(
+            $exc, 'tls', [System.Management.Automation.ErrorCategory]::NotSpecified, $null)
+        $h = Get-DownloadErrorHint -ErrorRecord $er
+        $h | Should Match 'Usuario actual'
+        $h | Should Match 'No necesita admin'
+        # Sin esto, la confirmacion de Windows se confunde con el aviso de
+        # administrador y se responde que no.
+        $h | Should Match 'NO es el aviso de administrador'
+    }
+
+    It "el mismo caso en ingles tambien se reconoce" {
+        LimpiarProxy
+        try {
+            $h = Get-DownloadErrorHint -ErrorRecord (Error407 'The remote server returned an error: (407). No credentials are available in the security package')
+            $h | Should Match 'autenticacion integrada'
         }
         finally { $env:HTTPS_PROXY = $guardado.H; $env:HTTP_PROXY = $guardado.P; $env:ALL_PROXY = $guardado.A }
     }

@@ -740,6 +740,29 @@ nada. `Split-ProxyCredential` las separa y `Add-ProxyToRequest` las pasa por
 autenticacion integrada. Comprobado contra un proxy Basic de verdad: antes, con la
 clave correcta en la URL, fallaba con el mismo 407 que con la clave equivocada.
 
+### Si el proxy inspecciona HTTPS
+
+Muchos proxies corporativos abren el HTTPS y lo vuelven a firmar con la CA de la
+empresa. Entonces las descargas fallan con un error de canal seguro, y el kit lo
+traduce: hay que pedirle a IT ese certificado raiz e importarlo en **Certificados -
+Usuario actual > Entidades de certificacion raiz de confianza**.
+
+Eso **no necesita admin** -el almacen del usuario se abre para escritura sin
+elevacion, comprobado-, pero Windows saca una **confirmacion de seguridad** al dar de
+alta una raiz. No hay forma de saltarsela ni con `certutil -f`. Es importante saberlo:
+quien no lo espera la confunde con el aviso de administrador y responde que no,
+justo al reves de lo que toca aqui.
+
+### Autenticacion integrada (NTLM)
+
+Si el proxy pide NTLM en vez de usuario y clave, el kit ofrece la identidad de
+Windows. En un equipo **que no esta unido al dominio** esa identidad viene vacia,
+SSPI corta el dialogo y .NET responde "no hay credenciales disponibles en el paquete
+de seguridad", que no le dice nada a nadie. El kit lo traduce y te dice que escribas
+las credenciales a mano. Con una cuenta de dominio escrita en la URL el dialogo NTLM
+se completa bien: comprobado contra un proxy que exige NTLM, al que llego
+`ACME\jperez` tal cual.
+
 **La clave nunca se imprime.** Todo lo que muestra un proxy pasa por
 `Format-ProxyForDisplay`, que la sustituye por `***` y conserva el usuario (que si
 hace falta para diagnosticar). Importa sobre todo en `Doctor`, cuya salida es justo
