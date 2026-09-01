@@ -231,6 +231,122 @@ function Resolve-DownloadProxy {
     return $null
 }
 
+function Resolve-SourceUrl {
+    <#
+    .SYNOPSIS
+        Reescribe una URL segun las reglas de espejo configuradas.
+    .DESCRIPTION
+        En muchas empresas los dominios publicos (nodejs.org, pypi.org...) estan
+        bloqueados pero hay un espejo interno -Nexus, Artifactory- que sirve lo
+        mismo. Sin esto, el kit no puede hacer nada en esa red; con esto, se le
+        dice de donde sacar cada cosa y todo lo demas sigue igual.
+
+        Las reglas sustituyen el PRINCIPIO de la URL, que es como funcionan los
+        repositorios proxy de verdad: cuelgan el arbol entero del original bajo
+        una ruta suya.
+
+        Se aplica la regla mas ESPECIFICA (el prefijo mas largo) para poder
+        tener una regla general y excepciones debajo.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Uri,
+        [array]$Rules
+    )
+
+    if (-not $Rules -or $Rules.Count -eq 0) { return $Uri }
+
+    foreach ($r in ($Rules | Sort-Object { $_.De.Length } -Descending)) {
+        if ([string]::IsNullOrWhiteSpace($r.De) -or [string]::IsNullOrWhiteSpace($r.A)) { continue }
+        if ($Uri.StartsWith($r.De, [StringComparison]::OrdinalIgnoreCase)) {
+            return $r.A + $Uri.Substring($r.De.Length)
+        }
+    }
+    return $Uri
+}
+
+function Read-SourceRules {
+    <#
+        Lee y valida las reglas de un sources.json ya cargado como objeto.
+        Separada de la lectura del archivo para poder probarla.
+
+        Una regla mal escrita se descarta con aviso en vez de tumbar el kit: si
+        alguien se equivoca en el espejo, lo peor que debe pasar es que se salga
+        por la fuente oficial.
+    #>
+    param([AllowNull()]$Config)
+
+    if (-not $Config -or -not $Config.reglas) { return @() }
+
+    $ok = @()
+    foreach ($r in @($Config.reglas)) {
+        if ([string]::IsNullOrWhiteSpace($r.de) -or [string]::IsNullOrWhiteSpace($r.a)) {
+            Write-Log "sources.json: regla sin 'de' o sin 'a'; se ignora" "WARN"
+            continue
+        }
+        if ($r.de -notmatch '^https?://') {
+            Write-Log "sources.json: 'de' debe empezar por http:// o https:// ($($r.de)); se ignora" "WARN"
+            continue
+        }
+        if ($r.a -notmatch '^https?://') {
+            Write-Log "sources.json: 'a' debe empezar por http:// o https:// ($($r.a)); se ignora" "WARN"
+            continue
+        }
+        $ok += [PSCustomObject]@{ De = $r.de; A = $r.a }
+    }
+    return $ok
+}
+
+$SourcesFile = Join-Path $DevKitRoot "sources.json"
+$script:SourceRulesCache = $null
+
+function Get-SourceRules {
+    <#
+        Devuelve las reglas de sources.json, leyendolo una sola vez por
+        ejecucion. Sin archivo no hay reglas y todo va a las fuentes oficiales,
+        que es el comportamiento de siempre.
+    #>
+    param([switch]$Reload)
+
+    if ($null -ne $script:SourceRulesCache -and -not $Reload) { return $script:SourceRulesCache }
+
+    if (-not (Test-Path -LiteralPath $SourcesFile)) {
+        $script:SourceRulesCache = @()
+        return $script:SourceRulesCache
+    }
+
+    try {
+        $cfg = Get-Content -LiteralPath $SourcesFile -Raw | ConvertFrom-Json
+    }
+    catch {
+        Write-Log "sources.json no se pudo leer: $($_.Exception.Message)" "ERROR"
+        Write-Log "  Se usaran las fuentes oficiales." "WARN"
+        $script:SourceRulesCache = @()
+        return $script:SourceRulesCache
+    }
+
+    $script:SourceRulesCache = @(Read-SourceRules -Config $cfg)
+    return $script:SourceRulesCache
+}
+
+function Resolve-KitUrl {
+    <#
+        La URL por la que el kit debe salir de verdad: la oficial, o la del
+        espejo si hay una regla que la cubra. Avisa cuando reescribe, porque una
+        descarga que viene de otro sitio del que dice el codigo no puede ser
+        invisible.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Uri,
+        [switch]$Quiet
+    )
+
+    $final = Resolve-SourceUrl -Uri $Uri -Rules (Get-SourceRules)
+    if ($final -ne $Uri -and -not $Quiet) {
+        Write-Log "  Espejo: $final" "INFO"
+    }
+    return $final
+}
+
 function Split-ProxyCredential {
     <#
     .SYNOPSIS
@@ -528,6 +644,10 @@ function Invoke-Download {
         Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
     }
 
+    # El espejo interno, si lo hay, antes que nada: todo lo de abajo -incluido
+    # el mensaje de error- debe hablar de la URL por la que se salio de verdad.
+    $Uri = Resolve-KitUrl -Uri $Uri
+
     $params = @{
         Uri             = $Uri
         OutFile         = $temp
@@ -680,6 +800,8 @@ function Invoke-JsonApi {
         [int]$TimeoutSec = 60,
         [switch]$Quiet
     )
+
+    $Uri = Resolve-KitUrl -Uri $Uri -Quiet:$Quiet
 
     $params = @{
         Uri             = $Uri
@@ -1493,6 +1615,8 @@ function Get-WebText {
         [switch]$Quiet
     )
 
+    $Uri = Resolve-KitUrl -Uri $Uri -Quiet:$Quiet
+
     $params = @{
         Uri             = $Uri
         UseBasicParsing = $true
@@ -1523,6 +1647,10 @@ function Test-UrlExists {
         [Parameter(Mandatory=$true)][string]$Uri,
         [int]$TimeoutSec = 30
     )
+
+    # -Quiet: Test-UrlExists se usa en bucle para tantear versiones candidatas,
+    # y anunciar el espejo en cada intento llenaria la pantalla de ruido.
+    $Uri = Resolve-KitUrl -Uri $Uri -Quiet
 
     $params = @{
         Uri             = $Uri

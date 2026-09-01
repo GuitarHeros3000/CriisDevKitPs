@@ -1,0 +1,30 @@
+{
+  "_comentario_1": "Copia este archivo como sources.json (sin .ejemplo) para que el kit",
+  "_comentario_2": "descargue de un espejo interno en vez de los dominios publicos.",
+  "_comentario_3": "Sin sources.json, todo va a las fuentes oficiales: es lo normal.",
+  "_comentario_4": "Cada regla sustituye el PRINCIPIO de la URL. Gana la mas especifica.",
+  "_comentario_5": "OJO: un espejo sustituye a la fuente oficial en TODO, incluido el",
+  "_comentario_6": "archivo de checksums. La verificacion sigue detectando una descarga",
+  "_comentario_7": "corrupta, pero ya no puede detectar un espejo alterado: confias en el",
+  "_comentario_8": "espejo de tu empresa igual que confias en su proxy.",
+  "_comentario_9": "Comprueba que reglas estan activas con:  .\\Doctor-Env.bat",
+
+  "reglas": [
+    {
+      "de": "https://nodejs.org/dist/",
+      "a": "https://nexus.empresa.com/repository/nodejs-dist/"
+    },
+    {
+      "de": "https://www.python.org/ftp/python/",
+      "a": "https://nexus.empresa.com/repository/python-ftp/"
+    },
+    {
+      "de": "https://github.com/adoptium/",
+      "a": "https://nexus.empresa.com/repository/adoptium/"
+    },
+    {
+      "de": "https://github.com/git-for-windows/git/releases/download/",
+      "a": "https://nexus.empresa.com/repository/git-windows/"
+    }
+  ]
+}

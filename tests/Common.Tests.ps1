@@ -88,6 +88,93 @@ Describe "Protect-ProxySecrets" {
     }
 }
 
+Describe "Fuentes configurables (espejo interno)" {
+
+    # Sirven para una red donde IT bloquea nodejs.org o pypi.org pero mantiene un
+    # espejo interno. Sin esto el kit no puede hacer nada en esa red.
+
+    Context "Resolve-SourceUrl" {
+
+        $reglas = @(
+            [PSCustomObject]@{ De = 'https://nodejs.org/dist/'; A = 'https://nexus.empresa.com/nodejs/' }
+            [PSCustomObject]@{ De = 'https://www.python.org/ftp/python/'; A = 'https://nexus.empresa.com/python/' }
+        )
+
+        It "reescribe el principio y conserva el resto de la ruta" {
+            Resolve-SourceUrl -Uri 'https://nodejs.org/dist/v22.23.2/node-v22.23.2-win-x64.zip' -Rules $reglas |
+                Should Be 'https://nexus.empresa.com/nodejs/v22.23.2/node-v22.23.2-win-x64.zip'
+        }
+
+        It "no toca una URL que ninguna regla cubre" {
+            Resolve-SourceUrl -Uri 'https://api.adoptium.net/v3/info' -Rules $reglas |
+                Should Be 'https://api.adoptium.net/v3/info'
+        }
+
+        It "sin reglas devuelve la URL tal cual" {
+            Resolve-SourceUrl -Uri 'https://nodejs.org/dist/x.zip' -Rules @() |
+                Should Be 'https://nodejs.org/dist/x.zip'
+            Resolve-SourceUrl -Uri 'https://nodejs.org/dist/x.zip' -Rules $null |
+                Should Be 'https://nodejs.org/dist/x.zip'
+        }
+
+        # Poder tener una regla general y excepciones debajo depende de esto.
+        It "gana la regla mas especifica, no la primera" {
+            $conExcepcion = @(
+                [PSCustomObject]@{ De = 'https://github.com/'; A = 'https://espejo/general/' }
+                [PSCustomObject]@{ De = 'https://github.com/adoptium/'; A = 'https://espejo/jdk/' }
+            )
+            Resolve-SourceUrl -Uri 'https://github.com/adoptium/temurin21/x.zip' -Rules $conExcepcion |
+                Should Be 'https://espejo/jdk/temurin21/x.zip'
+            Resolve-SourceUrl -Uri 'https://github.com/otro/y.zip' -Rules $conExcepcion |
+                Should Be 'https://espejo/general/otro/y.zip'
+        }
+
+        It "compara sin distinguir mayusculas en el dominio" {
+            Resolve-SourceUrl -Uri 'https://NodeJS.org/dist/x.zip' -Rules $reglas |
+                Should Be 'https://nexus.empresa.com/nodejs/x.zip'
+        }
+
+        It "una regla a medias se salta sin romper las demas" {
+            $rotas = @(
+                [PSCustomObject]@{ De = 'https://nodejs.org/dist/'; A = '' }
+                [PSCustomObject]@{ De = 'https://www.python.org/ftp/python/'; A = 'https://espejo/py/' }
+            )
+            Resolve-SourceUrl -Uri 'https://nodejs.org/dist/x.zip' -Rules $rotas |
+                Should Be 'https://nodejs.org/dist/x.zip'
+            Resolve-SourceUrl -Uri 'https://www.python.org/ftp/python/3.12.10/x.zip' -Rules $rotas |
+                Should Be 'https://espejo/py/3.12.10/x.zip'
+        }
+    }
+
+    Context "Read-SourceRules" {
+
+        # Un espejo mal escrito no debe tumbar el kit: lo peor que puede pasar es
+        # que se salga por la fuente oficial.
+        It "acepta una configuracion correcta" {
+            $cfg = ConvertFrom-Json '{ "reglas": [ { "de": "https://a/", "a": "https://b/" } ] }'
+            $r = @(Read-SourceRules -Config $cfg)
+            $r.Count | Should Be 1
+            $r[0].De | Should Be 'https://a/'
+            $r[0].A  | Should Be 'https://b/'
+        }
+
+        It "descarta las reglas sin de o sin a" {
+            $cfg = ConvertFrom-Json '{ "reglas": [ { "de": "https://a/" }, { "a": "https://b/" }, { "de": "https://c/", "a": "https://d/" } ] }'
+            @(Read-SourceRules -Config $cfg 3>$null 6>$null).Count | Should Be 1
+        }
+
+        It "descarta las que no son http ni https" {
+            $cfg = ConvertFrom-Json '{ "reglas": [ { "de": "ftp://a/", "a": "https://b/" }, { "de": "https://c/", "a": "carpeta\\local" } ] }'
+            @(Read-SourceRules -Config $cfg 3>$null 6>$null).Count | Should Be 0
+        }
+
+        It "sin reglas y con configuracion nula devuelve vacio" {
+            @(Read-SourceRules -Config $null).Count | Should Be 0
+            @(Read-SourceRules -Config (ConvertFrom-Json '{}')).Count | Should Be 0
+        }
+    }
+}
+
 Describe "Split-ProxyCredential" {
 
     # Existe por un fallo comprobado contra un proxy Basic de verdad: el kit

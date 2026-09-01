@@ -239,6 +239,21 @@ function Test-Host {
 function Test-Network {
     Write-Section "Red"
 
+    # Las reglas de espejo se anuncian SIEMPRE, incluso con -SkipNetwork: no son
+    # una prueba de red sino configuracion, y de donde descarga el kit no puede
+    # quedar invisible en un informe. Ademas cambian como se lee todo lo demas
+    # de esta seccion.
+    $reglas = @(Get-SourceRules)
+    if ($reglas.Count -gt 0) {
+        Write-Check "Fuentes" "$($reglas.Count) regla(s) de espejo activas" 'warn'
+        foreach ($r in $reglas) { Write-Detail "$($r.De)  ->  $($r.A)" }
+        Write-Detail "Definidas en $SourcesFile"
+        Write-Detail "El checksum tambien viene del espejo: se confia en el como en el proxy."
+    }
+    else {
+        Write-Check "Fuentes" "oficiales (sin sources.json)" 'ok'
+    }
+
     if ($SkipNetwork) {
         Write-Check "Pruebas de red" "omitidas (-SkipNetwork)" 'info'
         return
@@ -269,6 +284,11 @@ function Test-Network {
     )
 
     foreach ($t in $targets) {
+        # Se comprueba la URL por la que el kit saldria de verdad. Con un espejo
+        # configurado, decir que nodejs.org es alcanzable no significaria nada:
+        # el kit no va a ir ahi.
+        $t.Url = Resolve-KitUrl -Uri $t.Url -Quiet
+
         $params = @{
             Uri             = $t.Url
             UseBasicParsing = $true
@@ -989,6 +1009,7 @@ function Test-KitIntegrity {
         "Start-GitEnv.bat",
         "scripts\Setup-GitEnv.ps1",
         "scripts\Start-GitEnv.ps1",
+        "sources.json.ejemplo",
         "tests\Common.Tests.ps1",
         "tests\Shells.Tests.ps1",
         "tests\UserPath.Tests.ps1",
