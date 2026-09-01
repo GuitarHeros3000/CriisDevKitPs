@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
     Pruebas de las funciones puras de lib\Common.ps1: las que solo transforman
     un valor de entrada en uno de salida, sin tocar red, disco ni registro.
@@ -926,6 +926,96 @@ Describe "Get-RuntimeCatalog" {
     It "las claves van en minuscula, que es como se escriben en el JSON" {
         foreach ($e in $catalogo) {
             $e.Clave | Should Be $e.Clave.ToLowerInvariant()
+        }
+    }
+
+    # Uninstall-Env -Everything compone las carpetas a barrer con
+    # Join-Path $WorkspaceRoot $e.Carpeta. Una Carpeta vacia daria la RAIZ DEL
+    # WORKSPACE, o sea la carpeta que contiene el kit y todos los proyectos del
+    # usuario, y esa se borraria por "estar vacia". Es la propiedad mas critica
+    # del catalogo entero.
+    It "ninguna Carpeta esta vacia: compondrian la raiz del workspace" {
+        foreach ($e in $catalogo) {
+            [string]::IsNullOrWhiteSpace($e.Carpeta) | Should Be $false
+        }
+    }
+
+    It "ninguna Carpeta escapa hacia arriba" {
+        foreach ($e in $catalogo) {
+            $e.Carpeta | Should Not Match '\.\.'
+            $e.Carpeta | Should Not Match '^[A-Za-z]:'
+            $e.Carpeta | Should Not Match '^[\\/]'
+        }
+    }
+
+    It "no hay dos runtimes compartiendo carpeta" {
+        ($catalogo.Carpeta | Sort-Object -Unique).Count | Should Be $catalogo.Count
+    }
+}
+
+Describe "Version de un JDK" {
+
+    Context "Get-JavaMajor" {
+
+        # Sin normalizar el esquema antiguo, comparar versiones daria que un
+        # Java 8 ("1.8.0_202") es MAS NUEVO que un Java 25, y el aviso de
+        # JAVA_HOME obsoleto no saltaria nunca. Es el caso real que lo motivo.
+        It "entiende el esquema antiguo: 1.8.0_202 es Java 8" {
+            Get-JavaMajor -Version '1.8.0_202' | Should Be 8
+        }
+
+        It "entiende el esquema moderno" {
+            Get-JavaMajor -Version '25.0.4.1' | Should Be 25
+            Get-JavaMajor -Version '24.0.2'   | Should Be 24
+        }
+
+        It "un Java 8 es MENOR que un Java 25, que es lo que hay que detectar" {
+            (Get-JavaMajor -Version '1.8.0_202') -lt (Get-JavaMajor -Version '25.0.4.1') | Should Be $true
+        }
+
+        It "1.7.0 es Java 7 y no Java 1" {
+            Get-JavaMajor -Version '1.7.0_80' | Should Be 7
+        }
+
+        It "tolera vacio, nulo y basura" {
+            Get-JavaMajor -Version ''      | Should BeNullOrEmpty
+            Get-JavaMajor -Version $null   | Should BeNullOrEmpty
+            Get-JavaMajor -Version 'nada'  | Should BeNullOrEmpty
+        }
+    }
+
+    Context "Get-JdkVersionAt" {
+
+        # Se lee del archivo "release" que todo JDK trae en su raiz: es
+        # instantaneo y funciona aunque ese JDK este roto.
+        It "lee la version del archivo release" {
+            $d = Join-Path ([System.IO.Path]::GetTempPath()) ("jdk-" + [Guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            try {
+                Set-Content -LiteralPath (Join-Path $d "release") -Value @(
+                    'IMPLEMENTOR="Eclipse Adoptium"'
+                    'JAVA_VERSION="25.0.4.1"'
+                    'OS_ARCH="x86_64"'
+                )
+                Get-JdkVersionAt -JavaHome $d | Should Be '25.0.4.1'
+            }
+            finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It "devuelve nulo si la carpeta no existe" {
+            Get-JdkVersionAt -JavaHome 'C:\no-existe-este-jdk' | Should BeNullOrEmpty
+        }
+
+        It "tolera vacio y nulo" {
+            Get-JdkVersionAt -JavaHome ''    | Should BeNullOrEmpty
+            Get-JdkVersionAt -JavaHome $null | Should BeNullOrEmpty
+        }
+
+        It "devuelve nulo si hay carpeta pero no es un JDK" {
+            $d = Join-Path ([System.IO.Path]::GetTempPath()) ("nojdk-" + [Guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            try { Get-JdkVersionAt -JavaHome $d | Should BeNullOrEmpty }
+            finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
 }

@@ -498,21 +498,37 @@ function Test-PythonInstall {
 function Test-JavaInstall {
     Write-Section "Java"
 
-    if (-not (Test-Path $JavaRoot)) {
-        Write-Check "Instalado" "no ($JavaRoot no existe)" 'info'
-        Write-Detail "Instala con:  .\Setup-JavaEnv.bat -JavaVersion 21"
-        return
+    # El estado de JAVA_HOME se revisa SIEMPRE, aunque el kit no haya instalado
+    # ningun JDK: es una propiedad de la maquina, no del kit. Antes vivia dentro
+    # de este bloque y los "return" de aqui abajo lo saltaban, justo en el caso
+    # en que mas falta hace: un equipo sin nada del kit y con un JAVA_HOME
+    # heredado apuntando a un JDK antiguo.
+    try {
+        if (-not (Test-Path $JavaRoot)) {
+            Write-Check "Instalado" "no ($JavaRoot no existe)" 'info'
+            Write-Detail "Instala con:  .\Setup-JavaEnv.bat -JavaVersion 21"
+            return
+        }
+
+        $versions = @(Get-ChildItem $JavaRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^jdk-(\d+)$' })
+
+        if ($versions.Count -eq 0) {
+            Write-Check "Instalado" "ninguna version en $JavaRoot" 'info'
+            return
+        }
+
+        Show-JavaVersions -Versions $versions
     }
-
-    $versions = @(Get-ChildItem $JavaRoot -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^jdk-(\d+)$' })
-
-    if ($versions.Count -eq 0) {
-        Write-Check "Instalado" "ninguna version en $JavaRoot" 'info'
-        return
+    finally {
+        Test-JavaHome
     }
+}
 
-    foreach ($v in ($versions | Sort-Object { [int]($_.Name -replace 'jdk-', '') })) {
+function Show-JavaVersions {
+    param($Versions)
+
+    foreach ($v in ($Versions | Sort-Object { [int]($_.Name -replace 'jdk-', '') })) {
         $num = $v.Name -replace 'jdk-', ''
         $exe = Join-Path $v.FullName "bin\java.exe"
 
@@ -545,6 +561,9 @@ function Test-JavaInstall {
         }
     }
 
+}
+
+function Test-JavaHome {
     # JAVA_HOME decide con que JDK compilan Maven, Gradle y los IDE, asi que
     # importa mas que el PATH y conviene decir cual manda y de donde sale.
     $userHome    = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')
@@ -567,6 +586,38 @@ function Test-JavaInstall {
     }
     else {
         Write-Check "JAVA_HOME" "sin definir" 'info'
+    }
+
+    # JAVA_HOME OBSOLETO. Es un fallo silencioso y muy comun: 'java' en consola
+    # responde una version y Maven, Gradle o un IDE compilan con OTRA, porque
+    # ellos leen JAVA_HOME y no el PATH. Visto en un equipo real donde 'java'
+    # daba 24 y JAVA_HOME apuntaba a un jdk1.8.0_202 de 2019: todo se compilaba
+    # contra Java 8 y nada lo decia.
+    $homeEfectivo = if ($userHome) { $userHome } else { $machineHome }
+    if ($homeEfectivo) {
+        $verHome = Get-JdkVersionAt -JavaHome $homeEfectivo
+        $mayHome = Get-JavaMajor -Version $verHome
+        if ($verHome) { Write-Detail "el JDK de JAVA_HOME es $verHome" }
+
+        $verPath = $null
+        $javaPath = Get-Command java -ErrorAction SilentlyContinue
+        if ($javaPath) {
+            $run = Invoke-NativeCommand -FilePath $javaPath.Source -Arguments @('-version') -Quiet
+            if ($run.Output -match 'version "([^"]+)"') { $verPath = $Matches[1] }
+        }
+        $mayPath = Get-JavaMajor -Version $verPath
+
+        if ($mayHome -and $mayPath -and $mayHome -lt $mayPath) {
+            Write-Check "JAVA_HOME vs java" "descuadrados: $verHome frente a $verPath" 'warn'
+            Write-Detail "'java' en consola responde $verPath, pero Maven, Gradle y los IDE"
+            Write-Detail "leen JAVA_HOME: compilarian con Java $mayHome."
+            Write-Detail "Alinearlo NO necesita admin, el JAVA_HOME de usuario gana al de maquina:"
+            Write-Detail "  .\Setup-JavaEnv.bat -SetJavaHome"
+            Write-Detail "OJO: cambia con que JDK compilan TODOS tus proyectos."
+        }
+        elseif ($mayHome -and $mayPath) {
+            Write-Check "JAVA_HOME vs java" "coinciden (Java $mayHome)" 'ok'
+        }
     }
 }
 

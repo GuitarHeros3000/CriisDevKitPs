@@ -19,6 +19,9 @@
     Solo Angular: retira ademas una version concreta de Node (ej: 24.19.0).
 .PARAMETER All
     Retira TODO lo que el kit instalo de ese runtime, incluidas todas las Node.
+.PARAMETER Everything
+    Retira TODO lo que el kit instalo, de TODOS los runtimes. Sustituye a tener
+    que ejecutar el comando una vez por cada uno.
 .PARAMETER WhatIf
     Muestra lo que haria sin tocar nada.
 .PARAMETER Force
@@ -28,11 +31,10 @@
 .EXAMPLE
     .\Uninstall-Env.ps1 -Runtime Angular -Version 20 -WhatIf
 .EXAMPLE
-    .\Uninstall-Env.ps1 -Runtime Angular -All -Force
+    .\Uninstall-Env.ps1 -Everything -WhatIf
 #>
 
 param(
-    [Parameter(Mandatory=$true)]
     [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')]
     [string]$Runtime,
 
@@ -41,6 +43,8 @@ param(
     [string]$Node,
 
     [switch]$All,
+
+    [switch]$Everything,
 
     [switch]$WhatIf,
 
@@ -52,14 +56,30 @@ $ProgressPreference = "SilentlyContinue"
 
 . (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\Common.ps1")
 
-$RuntimeRoot = Join-Path $WorkspaceRoot $Runtime
+# -Runtime deja de ser obligatorio para que quepa -Everything, asi que se
+# comprueba a mano: sin uno de los dos no hay nada que hacer.
+if (-not $Everything -and [string]::IsNullOrWhiteSpace($Runtime)) {
+    Write-Log "Falta -Runtime." "ERROR"
+    Write-Log "  Un runtime concreto:  .\Uninstall-Env.bat -Runtime Python -All" "WARN"
+    Write-Log "  O todos de una vez :  .\Uninstall-Env.bat -Everything" "WARN"
+    exit 1
+}
+if ($Everything -and -not [string]::IsNullOrWhiteSpace($Runtime)) {
+    Write-Log "-Everything ya cubre todos los runtimes: sobra -Runtime." "ERROR"
+    exit 1
+}
 
-function Get-InstalledItems {
+$RuntimeRoot = if ($Everything) { $WorkspaceRoot } else { Join-Path $WorkspaceRoot $Runtime }
+
+function Get-ItemsDe {
     <#
-        Devuelve las carpetas que el kit creo para este runtime, con su tipo.
+        Devuelve las carpetas que el kit creo para UN runtime, con su tipo.
         Se identifican por el patron de nombre que usan los scripts de setup:
         cualquier otra carpeta que el usuario haya puesto ahi se ignora.
     #>
+    param([string]$Runtime)
+
+    $RuntimeRoot = Join-Path $WorkspaceRoot $Runtime
     if (-not (Test-Path $RuntimeRoot)) { return @() }
 
     $items = @()
@@ -103,6 +123,52 @@ function Get-InstalledItems {
     return $items
 }
 
+function Remove-CarpetasMadreVacias {
+    <#
+        Retira las carpetas de runtime que hayan quedado sin contenido.
+
+        Se recorren UNA A UNA y nunca $RuntimeRoot a secas: con -Everything esa
+        variable es la raiz del workspace, o sea la carpeta que contiene el kit
+        y los proyectos del usuario. Borrarla "por estar vacia" seria
+        catastrofico, y que hoy nunca lo este es suerte, no diseno.
+    #>
+    $madres = if ($Everything) {
+        @((Get-RuntimeCatalog).Carpeta | ForEach-Object { Join-Path $WorkspaceRoot $_ })
+    } else {
+        @($RuntimeRoot)
+    }
+
+    foreach ($m in $madres) {
+        if (-not (Test-Path -LiteralPath $m)) { continue }
+        if ((Resolve-Path -LiteralPath $m).Path.TrimEnd('\') -ieq $WorkspaceRoot.TrimEnd('\')) { continue }
+
+        $left = @(Get-ChildItem -LiteralPath $m -Force -ErrorAction SilentlyContinue)
+        if ($left.Count -eq 0) {
+            Remove-Item -LiteralPath $m -Force -Recurse -ErrorAction SilentlyContinue
+            Write-Log "Carpeta $(Split-Path -Leaf $m) vacia: tambien retirada" "SUCCESS"
+        }
+    }
+}
+
+function Get-InstalledItems {
+    <#
+        Lo instalado por el kit: de un runtime, o de todos con -Everything.
+
+        Con -Everything se recorre el catalogo en vez de una lista escrita a
+        mano: asi un runtime nuevo queda cubierto por el simple hecho de estar
+        en el catalogo, sin tener que acordarse de tocar tambien este archivo.
+    #>
+    if (-not $Everything) { return @(Get-ItemsDe -Runtime $Runtime) }
+
+    $todos = @()
+    foreach ($e in (Get-RuntimeCatalog)) {
+        $todos += @(Get-ItemsDe -Runtime $e.Carpeta)
+    }
+    # Angular guarda ademas su propia Node y la cache de npm dentro de Angular\,
+    # que no son entradas del catalogo pero si las creo el kit.
+    return $todos
+}
+
 function Get-FolderSize {
     param([string]$Path)
     try {
@@ -116,9 +182,11 @@ function Get-FolderSize {
 
 # --------------------------------------------------------------------------
 
+$titulo = if ($Everything) { "TODO lo instalado por el kit" } else { $Runtime }
+
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  Uninstall-Env - $Runtime" -ForegroundColor Cyan
+Write-Host "  Uninstall-Env - $titulo" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -130,10 +198,14 @@ if (-not (Test-Path $RuntimeRoot)) {
 $installed = @(Get-InstalledItems)
 if ($installed.Count -eq 0) {
     Write-Log "No se encontro nada instalado por el kit en $RuntimeRoot" "WARN"
+    # Aunque no quede nada que desinstalar, puede haber carpetas de runtime
+    # vacias de una limpieza anterior. Se barren igual.
+    if (-not $WhatIf) { Remove-CarpetasMadreVacias }
     exit 0
 }
 
-if (-not $All -and [string]::IsNullOrWhiteSpace($Version) -and [string]::IsNullOrWhiteSpace($Node)) {
+if (-not $Everything -and -not $All -and
+    [string]::IsNullOrWhiteSpace($Version) -and [string]::IsNullOrWhiteSpace($Node)) {
     Write-Host "Instalado actualmente:" -ForegroundColor Yellow
     Write-Host ""
     foreach ($i in $installed) {
@@ -153,7 +225,7 @@ if (-not $All -and [string]::IsNullOrWhiteSpace($Version) -and [string]::IsNullO
 # --- Seleccion de lo que se va a retirar ---
 $targets = @()
 
-if ($All) {
+if ($Everything -or $All) {
     $targets = $installed
 }
 else {
@@ -289,13 +361,16 @@ if ($Runtime -eq 'Java') {
     }
 }
 
-# --- Si la carpeta madre queda vacia, tambien se retira ---
-$left = @(Get-ChildItem $RuntimeRoot -Force -ErrorAction SilentlyContinue)
-if ($left.Count -eq 0) {
-    Remove-Item -LiteralPath $RuntimeRoot -Force -Recurse -ErrorAction SilentlyContinue
-    Write-Log "Carpeta $Runtime vacia: tambien retirada" "SUCCESS"
-}
-elseif ($Runtime -eq 'Angular') {
+# --- Si alguna carpeta madre queda vacia, tambien se retira ---
+#
+# Se recorren las carpetas de runtime UNA A UNA y nunca $RuntimeRoot a secas.
+# Con -Everything, $RuntimeRoot es la raiz del workspace: la carpeta que
+# contiene el kit y los proyectos del usuario. Borrarla "por estar vacia" seria
+# catastrofico, y que hoy no lo este es suerte, no diseno.
+Remove-CarpetasMadreVacias
+
+$left = if ($Everything) { @() } else { @(Get-ChildItem -LiteralPath $RuntimeRoot -Force -ErrorAction SilentlyContinue) }
+if ($left.Count -gt 0 -and $Runtime -eq 'Angular') {
     # Cada Angular trae su propia Node, pero pueden compartirla. Al quitar solo
     # el Angular, su Node se queda: hay que decirlo, o el usuario se deja
     # gigabytes ocupados sin saberlo.

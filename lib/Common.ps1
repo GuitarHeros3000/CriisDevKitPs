@@ -1626,6 +1626,53 @@ function Get-GradleRelease {
     }
 }
 
+function Get-JdkVersionAt {
+    <#
+        Devuelve la version del JDK que hay en una carpeta, o $null.
+
+        Se lee del archivo "release" que todo JDK trae en su raiz, en vez de
+        ejecutar java.exe: es instantaneo, no arranca una JVM y funciona aunque
+        ese JDK este roto. Solo se recurre al binario si no hay release.
+
+        El parametro se llama JavaHome y no Home: $Home es una variable
+        automatica de PowerShell -la carpeta del usuario- y declararla como
+        parametro rompe la funcion entera.
+    #>
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][AllowNull()][string]$JavaHome)
+
+    if ([string]::IsNullOrWhiteSpace($JavaHome)) { return $null }
+    $raiz = [Environment]::ExpandEnvironmentVariables($JavaHome)
+    if (-not (Test-Path -LiteralPath $raiz)) { return $null }
+
+    $release = Join-Path $raiz "release"
+    if (Test-Path -LiteralPath $release) {
+        foreach ($l in (Get-Content -LiteralPath $release -ErrorAction SilentlyContinue)) {
+            if ($l -match '^JAVA_VERSION\s*=\s*"?([^"]+)"?') { return $Matches[1].Trim() }
+        }
+    }
+
+    $exe = Join-Path $raiz "bin\java.exe"
+    if (Test-Path -LiteralPath $exe) {
+        $run = Invoke-NativeCommand -FilePath $exe -Arguments @('-version') -Quiet
+        if ($run.Output -match 'version "([^"]+)"') { return $Matches[1] }
+    }
+    return $null
+}
+
+function Get-JavaMajor {
+    <#
+        La version mayor de un Java, normalizando el esquema antiguo: "1.8.0_202"
+        es Java 8, no Java 1. Sin esto, comparar versiones daria que Java 8 es
+        mas nuevo que Java 25.
+    #>
+    param([AllowNull()][AllowEmptyString()][string]$Version)
+
+    if ([string]::IsNullOrWhiteSpace($Version)) { return $null }
+    if ($Version -match '^1\.(\d+)') { return [int]$Matches[1] }
+    if ($Version -match '^(\d+)')    { return [int]$Matches[1] }
+    return $null
+}
+
 function Get-KitJavaHome {
     <#
         Devuelve el JDK del kit que deben usar Maven y Gradle, o $null.
