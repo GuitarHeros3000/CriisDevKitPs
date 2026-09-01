@@ -747,6 +747,63 @@ MinGit-2.55.0.5-64-bit.zip | 56d7b226b7693196cfc71fef26568f536c4a021ab6c37ff2db4
         }
     }
 
+    Context "Get-HashFromChecksumText" {
+
+        # No hay un formato unico para los archivos de checksum sueltos. Apache
+        # publica el hash a secas, sha256sum pone "hash  archivo", y algun mirror
+        # invierte el orden.
+        It "acepta el hash a secas, como lo publica Apache" {
+            $h = 'a' * 128
+            Get-HashFromChecksumText -Text $h -Algorithm SHA512 | Should Be $h
+        }
+
+        It "acepta el formato de sha256sum" {
+            $h = 'b' * 64
+            Get-HashFromChecksumText -Text "$h  gradle-9.7.1-bin.zip" | Should Be $h
+        }
+
+        It "acepta el formato con el nombre delante" {
+            $h = 'c' * 64
+            Get-HashFromChecksumText -Text "gradle-9.7.1-bin.zip: $h" | Should Be $h
+        }
+
+        It "normaliza a minusculas" {
+            Get-HashFromChecksumText -Text ('AB' * 32) | Should Be ('ab' * 32)
+        }
+
+        # Si el servidor devuelve una pagina de error en vez del checksum, dar
+        # por bueno cualquier trozo hexadecimal seria peor que no verificar.
+        It "no da por bueno un hash de longitud equivocada" {
+            Get-HashFromChecksumText -Text ('a' * 64) -Algorithm SHA512 | Should BeNullOrEmpty
+            Get-HashFromChecksumText -Text ('a' * 128) -Algorithm SHA256 | Should BeNullOrEmpty
+        }
+
+        It "no encuentra nada en una pagina de error" {
+            Get-HashFromChecksumText -Text '<html><body>404 Not Found</body></html>' | Should BeNullOrEmpty
+        }
+
+        It "tolera vacio y nulo" {
+            Get-HashFromChecksumText -Text ''    | Should BeNullOrEmpty
+            Get-HashFromChecksumText -Text $null | Should BeNullOrEmpty
+        }
+    }
+
+    Context "Get-ToolLine" {
+
+        It "reduce a linea las versiones de Maven y Gradle" {
+            Get-ToolLine -Version '3.9.16' | Should Be '3.9'
+            Get-ToolLine -Version '9.7.1'  | Should Be '9.7'
+        }
+
+        It "dos parches de la misma linea dan la misma carpeta" {
+            (Get-ToolLine -Version '3.9.6') | Should Be (Get-ToolLine -Version '3.9.16')
+        }
+
+        It "Get-GitLine delega en el, asi que dan lo mismo" {
+            Get-GitLine -Version '2.55.0.5' | Should Be (Get-ToolLine -Version '2.55.0.5')
+        }
+    }
+
     Context "Get-GitLine" {
 
         # La carpeta se llama por la linea (git-2.55), no por la version

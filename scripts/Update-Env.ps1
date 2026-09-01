@@ -22,7 +22,7 @@
 #>
 
 param(
-    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle')]
     [string]$Runtime
 )
 
@@ -35,6 +35,8 @@ $PythonRoot  = Join-Path $WorkspaceRoot "Python"
 $JavaRoot    = Join-Path $WorkspaceRoot "Java"
 $NodeRoot    = Join-Path $WorkspaceRoot "Node"
 $GitRoot     = Join-Path $WorkspaceRoot "Git"
+$MavenRoot   = Join-Path $WorkspaceRoot "Maven"
+$GradleRoot  = Join-Path $WorkspaceRoot "Gradle"
 
 # Cada fila: que es, que hay, que se publica, y como actualizarlo.
 $script:Filas = @()
@@ -188,6 +190,44 @@ function Test-GitUpdates {
     }
 }
 
+function Test-BuildToolUpdates {
+    <#
+        Maven y Gradle comparten forma: carpeta por linea, version leida de un
+        jar, y una sola version "actual" publicada rio arriba. Igual que Git y a
+        diferencia de Node o Python, no se filtra por linea: no mantienen ramas
+        en paralelo, solo avanzan.
+    #>
+    param(
+        [string]$Titulo, [string]$Root, [string]$Prefijo,
+        [string]$JarGlob, [string]$JarRegex,
+        [scriptblock]$Consultar, [string]$SetupBat, [string]$Parametro
+    )
+
+    if (-not (Test-Path $Root)) { return }
+
+    $dirs = @(Get-ChildItem $Root -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match "^$Prefijo-(\d+\.\d+)$" })
+    if ($dirs.Count -eq 0) { return }
+
+    Write-Host "  consultando la version actual de $Titulo..." -ForegroundColor DarkGray
+    $ultima = & $Consultar
+
+    foreach ($d in $dirs) {
+        $null = $d.Name -match "^$Prefijo-(\d+\.\d+)$"
+        $linea = $Matches[1]
+
+        $instalada = $null
+        $jar = @(Get-ChildItem -Path (Join-Path $d.FullName $JarGlob) -ErrorAction SilentlyContinue)
+        if ($jar.Count -gt 0 -and $jar[0].Name -match $JarRegex) { $instalada = $Matches[1] }
+        if (-not $instalada) { continue }
+
+        $disponible = if ($ultima) { $ultima.Version } else { $null }
+        $cmd = if ($disponible) { "$SetupBat $Parametro $disponible -Force" } else { "$SetupBat -Force" }
+
+        Add-Fila -Que "$Titulo $linea" -Instalado $instalada -Disponible $disponible -Comando $cmd
+    }
+}
+
 function Test-AngularUpdates {
     if (-not (Test-Path $AngularRoot)) { return }
 
@@ -237,6 +277,18 @@ if (Test-RuntimeSelected -Name 'Python'  -Selected $Runtime) { Test-PythonUpdate
 if (Test-RuntimeSelected -Name 'Java'    -Selected $Runtime) { Test-JavaUpdates }
 if (Test-RuntimeSelected -Name 'Node'    -Selected $Runtime) { Test-NodeUpdates }
 if (Test-RuntimeSelected -Name 'Git'     -Selected $Runtime) { Test-GitUpdates }
+if (Test-RuntimeSelected -Name 'Maven'   -Selected $Runtime) {
+    Test-BuildToolUpdates -Titulo 'Maven' -Root $MavenRoot -Prefijo 'maven' `
+                          -JarGlob 'lib\maven-core-*.jar' -JarRegex 'maven-core-([\d.]+)\.jar' `
+                          -Consultar { Get-MavenRelease } `
+                          -SetupBat '.\Setup-MavenEnv.bat' -Parametro '-MavenVersion'
+}
+if (Test-RuntimeSelected -Name 'Gradle'  -Selected $Runtime) {
+    Test-BuildToolUpdates -Titulo 'Gradle' -Root $GradleRoot -Prefijo 'gradle' `
+                          -JarGlob 'lib\gradle-launcher-*.jar' -JarRegex 'gradle-launcher-([\d.]+)\.jar' `
+                          -Consultar { Get-GradleRelease } `
+                          -SetupBat '.\Setup-GradleEnv.bat' -Parametro '-GradleVersion'
+}
 if (Test-RuntimeSelected -Name 'Angular' -Selected $Runtime) { Test-AngularUpdates }
 
 Write-Host ""

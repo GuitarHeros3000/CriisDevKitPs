@@ -33,7 +33,7 @@
 
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle')]
     [string]$Runtime,
 
     [string]$Version,
@@ -88,9 +88,10 @@ function Get-InstalledItems {
                 $items += [PSCustomObject]@{ Kind = 'Node'; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
             }
         }
-        elseif ($Runtime -eq 'Git') {
-            if ($dir.Name -match '^git-(\d+\.\d+)$') {
-                $items += [PSCustomObject]@{ Kind = 'Git'; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
+        elseif ($Runtime -in @('Git', 'Maven', 'Gradle')) {
+            # Los tres siguen el mismo patron: <nombre en minuscula>-<linea>.
+            if ($dir.Name -match ('^' + $Runtime.ToLowerInvariant() + '-(\d+\.\d+)$')) {
+                $items += [PSCustomObject]@{ Kind = $Runtime; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
             }
         }
         else {

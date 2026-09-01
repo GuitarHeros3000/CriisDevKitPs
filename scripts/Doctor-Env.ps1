@@ -79,6 +79,8 @@ $PythonRoot  = Join-Path $WorkspaceRoot "Python"
 $JavaRoot    = Join-Path $WorkspaceRoot "Java"
 $NodeRoot    = Join-Path $WorkspaceRoot "Node"
 $GitRoot     = Join-Path $WorkspaceRoot "Git"
+$MavenRoot   = Join-Path $WorkspaceRoot "Maven"
+$GradleRoot  = Join-Path $WorkspaceRoot "Gradle"
 $AppsRoot    = Join-Path $WorkspaceRoot "Apps"
 
 # Contadores para el resumen final.
@@ -683,6 +685,69 @@ function Test-GitInstall {
     }
 }
 
+function Test-BuildToolInstall {
+    <#
+        Maven y Gradle se comprueban igual: una carpeta por linea, un ejecutable
+        en bin\, un shell generado, y la version leida de un jar en vez de
+        ejecutando la herramienta -las dos necesitan JAVA_HOME y ninguna arranca
+        rapido-. Por eso es una sola funcion con parametros y no dos copias.
+    #>
+    param(
+        [string]$Titulo,
+        [string]$Root,
+        [string]$Prefijo,        # 'maven'  /  'gradle'
+        [string]$ExeRel,         # 'bin\mvn.cmd'
+        [string]$ShellPrefijo,   # 'mvn'  /  'gradle'
+        [string]$JarGlob,        # 'lib\maven-core-*.jar'
+        [string]$JarRegex,
+        [string]$SetupBat
+    )
+
+    Write-Section $Titulo
+
+    if (-not (Test-Path $Root)) {
+        Write-Check "Instalado" "no ($Root no existe)" 'info'
+        Write-Detail "Instala con:  $SetupBat"
+        return
+    }
+
+    $dirs = @(Get-ChildItem $Root -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match "^$Prefijo-(\d+\.\d+)$" })
+
+    if ($dirs.Count -eq 0) {
+        Write-Check "Instalado" "ninguna version en $Root" 'info'
+        return
+    }
+
+    foreach ($d in $dirs) {
+        $null = $d.Name -match "^$Prefijo-(\d+\.\d+)$"
+        $linea = $Matches[1]
+
+        if (-not (Test-Path (Join-Path $d.FullName $ExeRel))) {
+            Write-Check "$Titulo $($d.Name)" "falta $ExeRel" 'fail'
+            Write-Detail "Instalacion corrupta; reejecuta $SetupBat -Force"
+            continue
+        }
+
+        $ver = $linea
+        $jar = @(Get-ChildItem -Path (Join-Path $d.FullName $JarGlob) -ErrorAction SilentlyContinue)
+        if ($jar.Count -gt 0 -and $jar[0].Name -match $JarRegex) { $ver = $Matches[1] }
+        Write-Check "$Titulo $linea" $ver 'ok'
+
+        $shell = Join-Path $d.FullName "$ShellPrefijo$($linea -replace '\.','')-shell.bat"
+        if (-not (Test-Path $shell)) {
+            Write-Check "  $(Split-Path -Leaf $shell)" "falta" 'warn'
+            Write-Detail "Regeneralo con:  $SetupBat -Force"
+        }
+        elseif (-not ((Get-Content -LiteralPath $shell -Raw) -match 'JAVA_HOME')) {
+            # El shell se genero cuando no habia ningun JDK del kit. La
+            # herramienta esta bien, pero no arrancara.
+            Write-Check "  JAVA_HOME en el shell" "sin definir" 'warn'
+            Write-Detail "Se genero sin JDK del kit. Instala uno y reejecuta $SetupBat -Force"
+        }
+    }
+}
+
 function Test-PortableApps {
     Write-Section "Install-NoAdmin"
 
@@ -772,7 +837,8 @@ function Test-UserPath {
         # OJO al anadir un runtime nuevo: si su carpeta raiz no esta en esta lista,
         # Doctor no reconocera sus rutas muertas como propias y las dejara para
         # siempre marcadas como "ajena". Paso con Node\ al anadirlo.
-        $roots = @($AngularRoot, $PythonRoot, $JavaRoot, $NodeRoot, $GitRoot | ForEach-Object {
+        $roots = @($AngularRoot, $PythonRoot, $JavaRoot, $NodeRoot, $GitRoot,
+                   $MavenRoot, $GradleRoot | ForEach-Object {
             [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\')
         })
 
@@ -1010,6 +1076,14 @@ function Test-KitIntegrity {
         "scripts\Setup-GitEnv.ps1",
         "scripts\Start-GitEnv.ps1",
         "sources.json.ejemplo",
+        "Setup-MavenEnv.bat",
+        "Start-MavenEnv.bat",
+        "scripts\Setup-MavenEnv.ps1",
+        "scripts\Start-MavenEnv.ps1",
+        "Setup-GradleEnv.bat",
+        "Start-GradleEnv.bat",
+        "scripts\Setup-GradleEnv.ps1",
+        "scripts\Start-GradleEnv.ps1",
         "tests\Common.Tests.ps1",
         "tests\Shells.Tests.ps1",
         "tests\UserPath.Tests.ps1",
@@ -1045,6 +1119,14 @@ Test-PythonInstall
 Test-JavaInstall
 Test-NodeInstall
 Test-GitInstall
+Test-BuildToolInstall -Titulo "Maven" -Root $MavenRoot -Prefijo 'maven' `
+                      -ExeRel 'bin\mvn.cmd' -ShellPrefijo 'mvn' `
+                      -JarGlob 'lib\maven-core-*.jar' -JarRegex 'maven-core-([\d.]+)\.jar' `
+                      -SetupBat '.\Setup-MavenEnv.bat'
+Test-BuildToolInstall -Titulo "Gradle" -Root $GradleRoot -Prefijo 'gradle' `
+                      -ExeRel 'bin\gradle.bat' -ShellPrefijo 'gradle' `
+                      -JarGlob 'lib\gradle-launcher-*.jar' -JarRegex 'gradle-launcher-([\d.]+)\.jar' `
+                      -SetupBat '.\Setup-GradleEnv.bat'
 Test-PortableApps
 Test-UserPath
 Test-PathConflicts

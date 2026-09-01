@@ -609,6 +609,47 @@ function Get-FileSha256 {
     return (Get-FileHash -LiteralPath $FilePath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-FileSha512 {
+    <#
+        Hace falta porque no todo el mundo publica SHA-256: Apache firma sus
+        distribuciones (Maven, entre otras) con SHA-512.
+    #>
+    param([Parameter(Mandatory=$true)][string]$FilePath)
+    return (Get-FileHash -LiteralPath $FilePath -Algorithm SHA512).Hash.ToLowerInvariant()
+}
+
+function Get-HashFromChecksumText {
+    <#
+    .SYNOPSIS
+        Saca el hash del contenido de un archivo de checksum suelto.
+    .DESCRIPTION
+        No hay un formato unico. Los tres que se encuentran en la practica:
+
+            <hash>                      (Apache Maven)
+            <hash>  nombre-archivo      (formato de sha256sum)
+            nombre-archivo: <hash>      (algun mirror de BSD)
+
+        Se acepta cualquiera de los tres y se comprueba que lo hallado tenga la
+        longitud que corresponde al algoritmo, para no dar por bueno el trozo de
+        una pagina de error HTML.
+    #>
+    param(
+        [AllowNull()][AllowEmptyString()][string]$Text,
+        [ValidateSet('SHA256', 'SHA512')][string]$Algorithm = 'SHA256'
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+
+    $largo = if ($Algorithm -eq 'SHA512') { 128 } else { 64 }
+
+    foreach ($linea in ($Text -split "`r?`n")) {
+        if ([string]::IsNullOrWhiteSpace($linea)) { continue }
+        $m = [regex]::Match($linea, "\b([0-9a-fA-F]{$largo})\b")
+        if ($m.Success) { return $m.Groups[1].Value.ToLowerInvariant() }
+    }
+    return $null
+}
+
 function Invoke-Download {
     <#
     .SYNOPSIS
@@ -626,6 +667,8 @@ function Invoke-Download {
         [Parameter(Mandatory=$true)][string]$Uri,
         [Parameter(Mandatory=$true)][string]$OutFile,
         [string]$Sha256,
+        # Apache publica SHA-512 en vez de SHA-256, asi que no basta con uno.
+        [string]$Sha512,
         [string]$Description,
         [int]$Retries = 2
     )
@@ -686,20 +729,28 @@ function Invoke-Download {
         }
     }
 
+    $esperado = $null
+    $algoritmo = $null
     if (-not [string]::IsNullOrWhiteSpace($Sha256)) {
-        $expected = $Sha256.Trim().ToLowerInvariant()
-        $actual   = Get-FileSha256 -FilePath $temp
+        $esperado = $Sha256.Trim().ToLowerInvariant(); $algoritmo = 'SHA-256'
+        $obtenido = Get-FileSha256 -FilePath $temp
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($Sha512)) {
+        $esperado = $Sha512.Trim().ToLowerInvariant(); $algoritmo = 'SHA-512'
+        $obtenido = Get-FileSha512 -FilePath $temp
+    }
 
-        if ($actual -ne $expected) {
+    if ($esperado) {
+        if ($obtenido -ne $esperado) {
             Write-Log "El archivo descargado no coincide con el hash oficial." "ERROR"
-            Write-Log "  esperado: $expected" "ERROR"
-            Write-Log "  obtenido: $actual" "ERROR"
+            Write-Log "  esperado: $esperado" "ERROR"
+            Write-Log "  obtenido: $obtenido" "ERROR"
             Write-Log "  -> Descarga corrupta o alterada en transito. No se va a usar." "WARN"
             Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
             return $false
         }
 
-        Write-Log "  SHA-256 verificado" "SUCCESS"
+        Write-Log "  $algoritmo verificado" "SUCCESS"
     }
 
     if (Test-Path -LiteralPath $OutFile) {
@@ -1443,16 +1494,13 @@ function ConvertFrom-GitVersionOutput {
 
 function Get-GitLine {
     <#
-        La "linea" de una version de Git: 2.55.0.5 -> 2.55. Es lo que da nombre
-        a la carpeta (git-2.55), igual que python-3.12 y jdk-21: una carpeta por
-        linea, y -Force actualiza el parche DENTRO en vez de dejar una carpeta
-        nueva por cada version.
+        La "linea" de una version de Git: 2.55.0.5 -> 2.55, que es lo que da
+        nombre a la carpeta git-2.55. Es la misma regla que para Maven y Gradle,
+        asi que delega en Get-ToolLine en vez de repetirla; se conserva el
+        nombre propio porque es como se lee en Setup-GitEnv.
     #>
     param([Parameter(Mandatory=$true)][string]$Version)
-
-    $p = $Version.TrimStart('v').Split('.')
-    if ($p.Count -lt 2) { return $p[0] }
-    return "$($p[0]).$($p[1])"
+    return (Get-ToolLine -Version $Version)
 }
 
 function Write-GitShell {
@@ -1496,6 +1544,180 @@ function Write-GitShell {
     $file = Join-Path $GitPath "git$linea-shell.bat"
     Set-Content -Path $file -Value ($lines -join "`n") -Encoding ASCII
     return $file
+}
+
+# --------------------------------------------------------------------------
+# Maven y Gradle
+#
+# Los dos son lo mismo desde el punto de vista del kit: un zip que se
+# descomprime, se pone su bin\ en el PATH y necesita un JDK para funcionar. Ni
+# uno ni otro traen instalador, asi que aqui no hay nada que esquivar: es el
+# camino oficial y no pide admin.
+# --------------------------------------------------------------------------
+
+$MavenBaseUrl  = "https://dlcdn.apache.org/maven/maven-3/"
+$GradleVersionApi = "https://services.gradle.org/versions/current"
+
+function Get-MavenRelease {
+    <#
+        Devuelve la version de Maven a instalar, su zip y su SHA-512.
+
+        Apache no tiene una API: se lee el listado de directorio de dlcdn y se
+        coge la version mas alta. Y publica SHA-512, no SHA-256, que es la razon
+        de que Invoke-Download admita los dos.
+    #>
+    param([string]$Version)
+
+    $elegida = $Version
+    if ([string]::IsNullOrWhiteSpace($elegida)) {
+        $html = Get-WebText -Uri $MavenBaseUrl -Quiet
+        if (-not $html) { return $null }
+
+        $vs = @([regex]::Matches($html, 'href="(\d+\.\d+\.\d+)/"') |
+                ForEach-Object { $_.Groups[1].Value } |
+                Sort-Object { [version]$_ } -Descending)
+        if ($vs.Count -eq 0) { return $null }
+        $elegida = $vs[0]
+    }
+
+    $zip = "apache-maven-$elegida-bin.zip"
+    $url = "$MavenBaseUrl$elegida/binaries/$zip"
+
+    $sha = Get-HashFromChecksumText -Text (Get-WebText -Uri "$url.sha512" -Quiet) -Algorithm SHA512
+
+    return [PSCustomObject]@{
+        Version  = $elegida
+        FileName = $zip
+        Url      = $url
+        Sha512   = $sha
+        # La carpeta que el zip trae dentro.
+        Inner    = "apache-maven-$elegida"
+    }
+}
+
+function Get-GradleRelease {
+    <#
+        Gradle si publica una API con la version actual, su zip y su checksum.
+        Para una version concreta se componen las URL, que siguen un patron fijo.
+    #>
+    param([string]$Version)
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        $api = Invoke-JsonApi -Uri $GradleVersionApi -Quiet
+        if (-not $api -or [string]::IsNullOrWhiteSpace($api.version)) { return $null }
+        $elegida = $api.version
+        $url     = $api.downloadUrl
+        $shaUrl  = $api.checksumUrl
+    }
+    else {
+        $elegida = $Version.Trim()
+        $url     = "https://services.gradle.org/distributions/gradle-$elegida-bin.zip"
+        $shaUrl  = "$url.sha256"
+    }
+
+    $sha = Get-HashFromChecksumText -Text (Get-WebText -Uri $shaUrl -Quiet) -Algorithm SHA256
+
+    return [PSCustomObject]@{
+        Version  = $elegida
+        FileName = "gradle-$elegida-bin.zip"
+        Url      = $url
+        Sha256   = $sha
+        Inner    = "gradle-$elegida"
+    }
+}
+
+function Get-KitJavaHome {
+    <#
+        Devuelve el JDK del kit que deben usar Maven y Gradle, o $null.
+
+        Se prefiere el JDK del kit al JAVA_HOME del sistema a proposito: si hay
+        uno instalado por el kit es el que el usuario controla, y es el que va a
+        seguir ahi. Se coge el de version mas alta.
+    #>
+    $javaRoot = Join-Path $WorkspaceRoot "Java"
+    if (-not (Test-Path -LiteralPath $javaRoot)) { return $null }
+
+    $dirs = @(Get-ChildItem -LiteralPath $javaRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^jdk-(\d+)$' -and (Test-Path (Join-Path $_.FullName "bin\java.exe")) } |
+        Sort-Object { [int]($_.Name -replace '^jdk-', '') } -Descending)
+
+    if ($dirs.Count -eq 0) { return $null }
+    return $dirs[0].FullName
+}
+
+function Write-BuildToolShell {
+    <#
+        Shell de Maven o de Gradle. Los dos necesitan lo mismo: su bin\ en el
+        PATH y un JAVA_HOME que apunte a un JDK, porque ninguno de los dos trae
+        Java dentro y sin esa variable no arrancan.
+
+        Si hay un JDK del kit se usa ese; si no, se deja el JAVA_HOME que ya
+        hubiera y el shell avisa cuando no hay ninguno, en vez de fallar con un
+        error de Java que no dice de que va.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][ValidateSet('Maven', 'Gradle')][string]$Tool,
+        [Parameter(Mandatory=$true)][string]$ToolPath,
+        [Parameter(Mandatory=$true)][string]$Version,
+        [string]$JavaHome
+    )
+
+    $binCmd = ConvertTo-CmdLiteral (Join-Path $ToolPath "bin")
+    $exe    = if ($Tool -eq 'Maven') { 'mvn' } else { 'gradle' }
+    $linea  = (Get-ToolLine -Version $Version) -replace '\.', ''
+
+    $lines = @(
+        "@echo off",
+        "set `"PATH=$binCmd;%PATH%`""
+    )
+
+    if ($JavaHome) {
+        $lines += "set `"JAVA_HOME=$(ConvertTo-CmdLiteral $JavaHome)`""
+        $lines += "set `"PATH=$(ConvertTo-CmdLiteral (Join-Path $JavaHome 'bin'));%PATH%`""
+    }
+
+    $lines += @(
+        "title $Tool $Version Shell",
+        "echo.",
+        "echo ============================================",
+        "echo   $Tool $Version Shell",
+        "echo ============================================",
+        "echo."
+    )
+
+    if (-not $JavaHome) {
+        $lines += @(
+            "if not defined JAVA_HOME (",
+            "    echo AVISO: no hay JAVA_HOME y $exe no arranca sin un JDK.",
+            "    echo   Instala uno con:  Setup-JavaEnv.bat",
+            "    echo.",
+            ")"
+        )
+    }
+
+    $lines += @(
+        "$exe -version",
+        "echo.",
+        "echo Escribe exit para cerrar",
+        "cmd /k"
+    )
+
+    $file = Join-Path $ToolPath "$($exe)$linea-shell.bat"
+    Set-Content -Path $file -Value ($lines -join "`n") -Encoding ASCII
+    return $file
+}
+
+function Get-ToolLine {
+    <#
+        La "linea" de una version: 3.9.16 -> 3.9, 9.7.1 -> 9.7. Da nombre a la
+        carpeta, igual que en python-3.12 y git-2.55: una carpeta por linea, y
+        -Force actualiza el parche dentro.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Version)
+
+    $p = $Version.TrimStart('v').Split('.')
+    if ($p.Count -lt 2) { return $p[0] }
+    return "$($p[0]).$($p[1])"
 }
 
 $PythonFtpIndexUrl = "https://www.python.org/ftp/python/"
@@ -1626,7 +1848,16 @@ function Get-WebText {
     Add-ProxyToRequest -Params $params -Uri ([Uri]$Uri)
 
     try {
-        return (Invoke-WebRequest @params).Content
+        $contenido = (Invoke-WebRequest @params).Content
+
+        # Cuando el servidor no declara charset, PowerShell 5.1 no decodifica y
+        # devuelve un ARRAY DE BYTES en vez de texto. Pasa con archivos sueltos
+        # de checksum como el .sha256 de Gradle, y quien llama recibia
+        # System.Object[] donde esperaba una cadena.
+        if ($contenido -is [byte[]] -or $contenido -is [System.Array]) {
+            return [System.Text.Encoding]::UTF8.GetString([byte[]]$contenido)
+        }
+        return $contenido
     }
     catch {
         if (-not $Quiet) {

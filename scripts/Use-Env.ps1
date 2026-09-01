@@ -34,7 +34,7 @@
 #>
 
 param(
-    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle')]
     [string]$Runtime,
 
     [string]$Version,
@@ -143,6 +143,12 @@ function Get-RuntimeShell {
     if ($Rt -eq 'Git') {
         return (Join-Path $WorkspaceRoot "Git\git-$Ver\git$($Ver -replace '\.','')-shell.bat")
     }
+    if ($Rt -eq 'Maven') {
+        return (Join-Path $WorkspaceRoot "Maven\maven-$Ver\mvn$($Ver -replace '\.','')-shell.bat")
+    }
+    if ($Rt -eq 'Gradle') {
+        return (Join-Path $WorkspaceRoot "Gradle\gradle-$Ver\gradle$($Ver -replace '\.','')-shell.bat")
+    }
     $tag = $Ver -replace '\.', ''
     return (Join-Path $WorkspaceRoot "Python\python-$Ver\py$tag-shell.bat")
 }
@@ -155,6 +161,8 @@ function Get-VersionEjemplo {
         'Java'    { return '21' }
         'Node'    { return '22' }
         'Git'     { return '2.55' }
+        'Maven'   { return '3.9' }
+        'Gradle'  { return '9.7' }
         default   { return '3.12' }
     }
 }
@@ -176,7 +184,7 @@ function Write-ActivateScripts {
     # cuando dos runtimes aportan un binario del mismo nombre. Angular va
     # primero porque su carpeta trae su propia Node, que debe ganarle a la
     # suelta si ambas estan activadas.
-    foreach ($rt in @('Angular', 'Python', 'Java', 'Node', 'Git')) {
+    foreach ($rt in @('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle')) {
         if (-not $State.ContainsKey($rt)) { continue }
 
         $shell = Get-RuntimeShell -Rt $rt -Ver $State[$rt]
