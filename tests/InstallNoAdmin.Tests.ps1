@@ -23,7 +23,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 $funciones = $ast.FindAll({
         param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst]
     }, $true)
-foreach ($nombre in @('Get-InstallScope', 'Show-InstallResult')) {
+foreach ($nombre in @('Get-InstallScope', 'Show-InstallResult', 'Test-LayoutUseful')) {
     Invoke-Expression (($funciones | Where-Object { $_.Name -eq $nombre }).Extent.Text)
 }
 
@@ -158,5 +158,67 @@ Describe "Show-InstallResult" {
     It "sin informacion de ambito, tampoco afirma que fuera per-user" {
         (Codigo $null) | Should Be 0
         (Texto $null)  | Should Not Match 'Se instalo en tu perfil de usuario'
+    }
+}
+
+Describe "Test-LayoutUseful" {
+
+    # Un bundle WiX Burn responde 0 a /layout aunque no externalice nada. Con
+    # windowsdesktop-runtime-10.0.10 lo comprobado fue exactamente eso: 0, y en
+    # la carpeta destino una unica copia de 57 MB del propio instalador. El kit
+    # lo anunciaba como "Archivos extraidos" y salia con 0.
+    #
+    # Se prueba con carpetas de verdad y no con dobles: la funcion solo mira el
+    # sistema de archivos, asi que montar el caso cuesta menos que simularlo.
+
+    $bundle = 'windowsdesktop-runtime-10.0.10-win-x64.exe'
+
+    function NuevaCarpeta {
+        $d = Join-Path ([System.IO.Path]::GetTempPath()) ("layout-" + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $d -Force | Out-Null
+        return $d
+    }
+    function Tocar($dir, $nombre) {
+        $p = Join-Path $dir $nombre
+        $padre = Split-Path -Parent $p
+        if (-not (Test-Path -LiteralPath $padre)) { New-Item -ItemType Directory -Path $padre -Force | Out-Null }
+        Set-Content -LiteralPath $p -Value 'x'
+    }
+
+    It "solo la copia del propio bundle NO es un resultado util" {
+        $d = NuevaCarpeta
+        try {
+            Tocar $d $bundle
+            Test-LayoutUseful -DestDir $d -InstallerPath "C:\descargas\$bundle" | Should Be $false
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "una carga externalizada junto al bundle SI es util" {
+        $d = NuevaCarpeta
+        try {
+            Tocar $d $bundle
+            Tocar $d 'windowsdesktop-runtime.msi'
+            Test-LayoutUseful -DestDir $d -InstallerPath "C:\descargas\$bundle" | Should Be $true
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "encuentra las cargas aunque queden en subcarpetas" {
+        $d = NuevaCarpeta
+        try {
+            Tocar $d $bundle
+            Tocar $d 'packages\dotnet\dotnet.msi'
+            Test-LayoutUseful -DestDir $d -InstallerPath "C:\descargas\$bundle" | Should Be $true
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "una carpeta vacia tampoco es un resultado util" {
+        $d = NuevaCarpeta
+        try {
+            Test-LayoutUseful -DestDir $d -InstallerPath "C:\descargas\$bundle" | Should Be $false
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }

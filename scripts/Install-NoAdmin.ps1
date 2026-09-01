@@ -313,7 +313,7 @@ function Show-NewApps {
     $newKeys = $After.Keys | Where-Object { -not $Before.ContainsKey($_) }
 
     if (-not $newKeys) {
-        # Señal debil, no un fallo: hay paquetes que se instalan per-user
+        # Indicio debil, no un fallo: hay paquetes que se instalan per-user
         # correctamente y no dejan entrada en HKCU. Verificado con 7-Zip.
         Write-Log "  (sin entrada nueva en HKCU; no todos los paquetes la crean)"
         return $false
@@ -640,6 +640,30 @@ function Get-InnoExtractor {
     }
 }
 
+function Test-LayoutUseful {
+    <#
+    .SYNOPSIS
+        Dice si un /layout de bundle Burn produjo algo aprovechable.
+    .DESCRIPTION
+        /layout externaliza las cargas que el bundle traiga SEPARADAS. Cuando van
+        embebidas -lo habitual en los instaladores de un solo archivo- devuelve 0
+        igualmente y lo unico que deja es una copia del propio bundle.
+
+        Es una funcion aparte para poder probarla sin ejecutar ningun instalador,
+        igual que Get-InstallScope: la comprobacion vive dentro de un camino que
+        solo se recorre lanzando un .exe de 57 MB.
+    #>
+    param(
+        [string]$DestDir,
+        [string]$InstallerPath
+    )
+
+    $propio = Split-Path -Leaf $InstallerPath
+    $otros = @(Get-ChildItem -LiteralPath $DestDir -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne $propio })
+    return ($otros.Count -gt 0)
+}
+
 function Expand-Installer {
     param(
         [string]$InstallerPath,
@@ -687,19 +711,22 @@ function Expand-Installer {
                 if (-not $ok) {
                     Write-Log "El bundle rechazo /layout (codigo $($proc.ExitCode))" "ERROR"
                 }
-                else {
-                    # Un /layout solo externaliza las cargas que el bundle traiga
-                    # SEPARADAS. Si van embebidas (lo habitual en los instaladores
-                    # de un solo archivo), lo unico que aparece es una copia del
-                    # propio bundle, que no sirve como version portable.
-                    $soloElBundle = @(Get-ChildItem -LiteralPath $DestDir -Recurse -File -ErrorAction SilentlyContinue |
-                        Where-Object { $_.Name -ne (Split-Path -Leaf $InstallerPath) })
+                elseif (-not (Test-LayoutUseful -DestDir $DestDir -InstallerPath $InstallerPath)) {
+                    Write-Log "El bundle lleva sus cargas embebidas." "WARN"
+                    Write-Log "  /layout solo ha copiado el propio instalador: no hay nada portable." "WARN"
+                    Write-Log "  Para sacar los MSI de dentro haria falta 'dark.exe' del WiX Toolset." "WARN"
 
-                    if ($soloElBundle.Count -eq 0) {
-                        Write-Log "El bundle lleva sus cargas embebidas." "WARN"
-                        Write-Log "  /layout solo ha copiado el propio instalador: no hay nada portable." "WARN"
-                        Write-Log "  Para sacar los MSI de dentro haria falta 'dark.exe' del WiX Toolset." "WARN"
-                    }
+                    # /layout devolvio 0, pero no ha producido nada aprovechable.
+                    # Se trata como fallo. Antes esto seguia como exito y el kit
+                    # remataba con "SUCCESS Archivos extraidos" y codigo 0,
+                    # dejando una copia de 57 MB del instalador que el usuario ya
+                    # tenia, presentada como una extraccion completada. Es el
+                    # mismo error que anunciar per-user una instalacion que se
+                    # elevo: dar por cumplido lo que no se cumplio.
+                    Get-ChildItem -LiteralPath $DestDir -Recurse -File `
+                                  -Filter (Split-Path -Leaf $InstallerPath) -ErrorAction SilentlyContinue |
+                        Remove-Item -Force -ErrorAction SilentlyContinue
+                    $ok = $false
                 }
             }
             'NSIS' {
