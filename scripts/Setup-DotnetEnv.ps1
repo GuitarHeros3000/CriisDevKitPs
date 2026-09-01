@@ -12,8 +12,10 @@
     corporativo, dejarlo en el PATH y generar un shell con DOTNET_ROOT, que es
     imprescindible cuando el SDK no vive en su carpeta por defecto.
 
-    Se usa -NoPath a proposito: del PATH se encarga el kit, con copia de
-    seguridad, y no un script de terceros.
+    Se usa -NoPath a proposito: de anadir la carpeta al PATH se encarga el kit,
+    con copia de seguridad, y no un script de terceros. Ademas se compara el
+    PATH antes y despues, para no tener que fiarse de que ese modificador se
+    respete.
 .PARAMETER Channel
     Canal a instalar (ej: 10.0, 8.0). Si se omite, el LTS con soporte mas alto.
 .PARAMETER Force
@@ -135,8 +137,33 @@ function Install-DotnetSdk {
 
         Write-Log "Instalando .NET SDK $($Release.SdkVersion) (canal $($Release.Channel))..."
         Write-Log "  (unos 200 MB, tarda un poco)"
+
+        # Foto del PATH antes y despues, para poder afirmar que el instalador no
+        # lo toca en vez de suponerlo. Comprobado que -NoPath se respeta: al
+        # reinstalar no anade nada.
+        #
+        # Quien SI anade %USERPROFILE%\.dotnet\tools es la "primera ejecucion"
+        # del SDK, la que dispara el primer 'dotnet new'. Ocurre una sola vez en
+        # la vida del perfil y no la controla este kit, asi que si aparece
+        # despues no sera aqui. Esta comprobacion se queda igualmente: es barata
+        # y convierte "el kit es el unico que toca tu PATH" en algo que se
+        # verifica en cada instalacion en vez de una promesa.
+        $pathAntes = [Environment]::GetEnvironmentVariable('PATH', 'User')
+
         & $script @argumentos
         $rc = $LASTEXITCODE
+
+        $pathDespues = [Environment]::GetEnvironmentVariable('PATH', 'User')
+        if ($pathDespues -ne $pathAntes) {
+            $antes  = @(Split-UserPath -Value $pathAntes)
+            $nuevas = @(Split-UserPath -Value $pathDespues | Where-Object { $antes -notcontains $_ })
+            foreach ($n in $nuevas) {
+                Write-Log "  El instalador de Microsoft anadio al PATH: $n" "WARN"
+            }
+            if ($nuevas.Count -gt 0) {
+                Write-Log "  No lo ha hecho el kit. Revisalo si no lo esperabas." "WARN"
+            }
+        }
     }
     finally {
         Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue

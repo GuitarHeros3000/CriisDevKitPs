@@ -9,12 +9,19 @@ AssassinSkipAdmPy/
 ├── *.bat                    Puntos de entrada (doble clic o linea de comandos)
 ├── lib/
 │   └── Common.ps1           Descargas, proxy, checksums, semver, PATH, log
+├── sources.json.ejemplo         Espejo interno (opcional)
+├── devenv.json.ejemplo          Manifiesto de entorno (para tus proyectos)
 ├── scripts/
 │   ├── Setup-AngularEnv.ps1     Start-AngularEnv.ps1
 │   ├── Setup-PythonEnv.ps1      Start-PythonEnv.ps1
 │   ├── Setup-JavaEnv.ps1        Start-JavaEnv.ps1
 │   ├── Setup-NodeEnv.ps1        Start-NodeEnv.ps1
 │   ├── Setup-GitEnv.ps1         Start-GitEnv.ps1
+│   ├── Setup-MavenEnv.ps1       Start-MavenEnv.ps1
+│   ├── Setup-GradleEnv.ps1      Start-GradleEnv.ps1
+│   ├── Setup-DotnetEnv.ps1      Start-DotnetEnv.ps1
+│   ├── Setup-VSCodeEnv.ps1      Start-VSCodeEnv.ps1
+│   ├── Restore-Env.ps1          Entorno entero desde devenv.json
 │   ├── Install-NoAdmin.ps1      Instalar software sin admin
 │   ├── Doctor-Env.ps1           Diagnostico y reparacion
 │   ├── Update-Env.ps1           Que hay desactualizado
@@ -24,6 +31,21 @@ AssassinSkipAdmPy/
 │   └── Run-Tests.ps1
 └── tests/                       Suite de Pester
 ```
+
+### Que instala cada uno, y que esquiva
+
+| Runtime | Como se distribuye | Necesitaba admin? |
+|---|---|---|
+| Node, Python, Java | zip oficial | no |
+| Angular | npm sobre su propia Node | no |
+| **Git** | **PortableGit** (7z autoextraible) | **si: su instalador lo exige** |
+| Maven, Gradle | zip oficial | no |
+| .NET SDK | `dotnet-install.ps1` de Microsoft | no, es per-user de fabrica |
+| **VS Code** | **zip en modo portable** | **si: su instalador lo exige** |
+
+Los dos en negrita son los que de verdad esquivan algo. El resto ya tenian un
+camino limpio; lo que aporta el kit ahi es colocarlos, resolverles las versiones,
+el PATH, los checksums y el proxy.
 
 Los `.bat` de la raiz son la interfaz publica: siempre se ejecutan desde ahi.
 La logica vive en `scripts\`, y lo compartido en `lib\Common.ps1`.
@@ -50,6 +72,15 @@ Proyectos Individuales/
 │   └── node-22/
 ├── Git/
 │   └── git-2.55/
+├── Maven/
+│   └── maven-3.9/
+├── Gradle/
+│   └── gradle-9.7/
+├── Dotnet/
+│   └── dotnet-10.0/
+├── VSCode/
+│   └── vscode-1.135/
+│       └── data/            (tus ajustes y extensiones: esto lo hace portable)
 └── Apps/                    (software instalado en modo portable)
     ├── tools/               (7z e innoextract, si el kit los necesito)
     └── <nombre-app>/
@@ -364,7 +395,8 @@ compuesto**, y por eso si ganan. `.\Doctor-Env.bat` diagnostica esto en su secci
 .\Use-Env.bat -Off                             Desactivar todo
 ```
 
-Admite `Angular`, `Python`, `Java`, `Node` y `Git`.
+Admite los nueve: `Angular`, `Python`, `Java`, `Node`, `Git`, `Maven`, `Gradle`,
+`Dotnet` y `VSCode`.
 
 No se puede reordenar el PATH de maquina, pero **si se puede ejecutar codigo al abrir
 cada terminal**, y eso ocurre despues de que Windows lo componga. Ahi la version del
@@ -657,6 +689,115 @@ sin admin. Se revierte con `.\Use-Env.bat -Off -Runtime Git`.
 Solo se pone `cmd\` en el PATH, que es lo que hace el instalador oficial en su opcion
 por defecto: `bin\` trae `bash`, `sh` y otros que taparian comandos del sistema con el
 mismo nombre. Para el entorno Unix completo esta `git-bash.exe`.
+
+## Maven y Gradle
+
+```powershell
+.\Setup-MavenEnv.bat                        Ultima publicada
+.\Setup-GradleEnv.bat -GradleVersion 8.14   Version concreta
+```
+
+Los dos son zip sin instalador: nunca han pedido admin. Lo que aporta el kit es
+colocarlos, ponerlos en el PATH y **resolverles el JDK**, que es donde tropieza
+todo el mundo: ninguno de los dos trae Java dentro y sin `JAVA_HOME` no arrancan.
+
+El shell generado apunta al JDK del kit si lo hay. Si no, te lo dice por su nombre
+en vez de dejar que fallen con un error de Java que no explica nada, y `Doctor`
+detecta el caso de un shell generado cuando aun no habia ningun JDK.
+
+Maven publica **SHA-512** y no SHA-256, que es la razon de que `Invoke-Download`
+admita los dos.
+
+## .NET SDK
+
+```powershell
+.\Setup-DotnetEnv.bat                Ultimo canal LTS con soporte
+.\Setup-DotnetEnv.bat -Channel 8.0   Canal concreto
+```
+
+El caso mas facil de todos: Microsoft publica `dotnet-install.ps1`, un script
+pensado **expresamente** para instalar por usuario y en la carpeta que le digas.
+Aqui no hay nada que esquivar.
+
+El kit elige el canal LTS con soporte (descarta los que ya no reciben parches), lo
+coloca en la estructura del resto, **le pasa el proxy** -el script no lee
+`HTTPS_PROXY` por su cuenta, hay que darselo por parametro- y se encarga del PATH
+con `-NoPath`, porque de eso se ocupa el kit con copia previa y no un script ajeno.
+
+Ademas compara el PATH antes y despues de llamarlo, para no tener que *fiarse* de
+que `-NoPath` se respete: si algun dia el instalador anadiera algo, lo dirias.
+Comprobado que hoy lo respeta.
+
+> Aparte de eso, la **primera ejecucion** del SDK -la que dispara el primer
+> `dotnet new`- anade `%USERPROFILE%\.dotnet\tools`, que es donde van las
+> herramientas globales de `dotnet`. Ocurre una sola vez por perfil y no la
+> controla el kit. Si no la quieres, quitala con `Doctor` o a mano; `dotnet` te
+> avisara si algun dia instalas una herramienta global y le falta.
+
+El shell fija `DOTNET_ROOT`. No hace falta para compilar -`dotnet.exe` encuentra su
+SDK por su ubicacion, comprobado- pero si para lo demas: las herramientas globales
+y las apps publicadas la leen para elegir runtime, y con un .NET de maquina en
+Program Files sin ella pueden acabar usando el del sistema.
+
+## VS Code (portable)
+
+```powershell
+.\Setup-VSCodeEnv.bat                 Instalar o comprobar
+.\Setup-VSCodeEnv.bat -Force -KeepData  Actualizar CONSERVANDO tus extensiones
+.\Start-VSCodeEnv.bat                 Abrir el editor
+.\Start-VSCodeEnv.bat -Shell          Consola con 'code' en el PATH
+```
+
+Su instalador normal pide admin. Pero Microsoft publica tambien el **.zip**, y ese
+admite **modo portable oficial**: basta crear una carpeta `data` junto al
+ejecutable y VS Code guarda ahi sus ajustes y extensiones en vez de en tu perfil.
+
+Comprobado en un equipo que ya tenia otro VS Code instalado: se instalo una
+extension desde el shell del kit y aterrizo en `data\`, con las del perfil
+intactas. De propina, el entorno se lo puedes llevar entero en una carpeta.
+
+> **Sin la carpeta `data\` deja de ser portable EN SILENCIO** y escribe en tu
+> perfil. `Doctor` lo detecta y lo repara con `-Fix`. Y `Uninstall-Env` avisa
+> aparte antes de borrarlo, porque `data\` son tus ajustes y extensiones, no algo
+> del kit.
+
+## Reproducir un entorno: `Restore-Env` y `devenv.json`
+
+```powershell
+.\Restore-Env.bat -Save     Escribe devenv.json con lo que YA tienes instalado
+.\Restore-Env.bat -WhatIf   Ensena que haria
+.\Restore-Env.bat           Instala todo lo que pide el manifiesto
+```
+
+Un `devenv.json` describe que necesita un proyecto:
+
+```json
+{
+  "version": 1,
+  "descripcion": "Backend Java con utilidades en Python",
+  "runtimes": { "java": "21", "maven": "3.9", "python": "3.12", "git": "latest" },
+  "paquetes": { "python": ["requests", "pytest"] }
+}
+```
+
+**Para que sirve.** Hoy montar el entorno es acordarse de que comandos y que
+versiones. Con el `devenv.json` **dentro del repositorio del proyecto**, la receta
+viaja con el: en un portatil nuevo, tras una reinstalacion, o para otra persona, es
+un comando. Y como es texto, se versiona: cuando subes de version queda registrado
+y al resto le llega solo.
+
+No descarga nada por su cuenta: llama a los mismos `Setup-*Env` que usarias a mano,
+asi que hereda el proxy, el espejo, los checksums y las copias del PATH. Lo que ya
+esta instalado no se vuelve a descargar.
+
+El orden lo fija el kit y no el archivo: **Java se instala antes que Maven y
+Gradle**, que lo necesitan.
+
+Una errata **no se ignora**: si escribes `phyton`, el comando se niega a instalar
+nada y te dice cuales reconoce. Dejar el entorno a medias sin decir por que seria
+justo lo contrario de para lo que existe.
+
+Si algo falla a mitad, sigue con el resto y al final te dice que entro y que no.
 
 ## Install-NoAdmin
 
@@ -1036,6 +1177,11 @@ por una version anterior del kit siguen en disco y tienen que seguir entendiendo
 | `Resolve-DownloadProxy` | Devuelve el proxy a usar para una URL |
 | `Split-ProxyCredential` | Separa la URL del proxy en direccion limpia y credenciales |
 | `Add-ProxyToRequest` | Rellena proxy y credenciales en los parametros de una peticion |
+| `Resolve-SourceUrl` | Reescribe una URL segun las reglas de espejo de `sources.json` |
+| `Resolve-KitUrl` | La URL por la que se sale de verdad (oficial o espejo) |
+| `Get-HashFromChecksumText` | Saca el hash de un archivo de checksum suelto |
+| `Get-RuntimeCatalog` | Que runtimes hay, con que script se instala cada uno |
+| `Read-DevEnvManifest` | Valida un `devenv.json` y devuelve el plan de instalacion |
 | `Format-ProxyForDisplay` | Oculta la clave de una URL de proxy antes de mostrarla |
 | `Protect-ProxySecrets` | Igual, pero en cualquier punto de un texto (errores de .NET) |
 | `Test-ProxyUsable` | Valida la URL del proxy y explica el `%5C` de las cuentas de dominio |

@@ -824,6 +824,112 @@ MinGit-2.55.0.5-64-bit.zip | 56d7b226b7693196cfc71fef26568f536c4a021ab6c37ff2db4
     }
 }
 
+Describe "devenv.json (Read-DevEnvManifest)" {
+
+    function Manifiesto($json) { return (ConvertFrom-Json $json) }
+
+    It "devuelve los runtimes pedidos con su version" {
+        $p = Read-DevEnvManifest -Config (Manifiesto '{ "version": 1, "runtimes": { "python": "3.12", "java": "21" } }')
+        $p.Errores.Count  | Should Be 0
+        $p.Runtimes.Count | Should Be 2
+        ($p.Runtimes | Where-Object { $_.Clave -eq 'python' }).Version | Should Be '3.12'
+    }
+
+    # El orden lo fija el catalogo, no el archivo: Maven y Gradle necesitan un
+    # JDK, asi que Java tiene que instalarse antes aunque en el JSON vaya despues.
+    It "instala Java antes que Maven aunque el manifiesto los ponga al reves" {
+        $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "maven": "3.9", "java": "21" } }')
+        $p.Runtimes[0].Clave | Should Be 'java'
+        $p.Runtimes[1].Clave | Should Be 'maven'
+    }
+
+    # Una errata no puede pasar en silencio: dejaria el entorno a medias sin
+    # decir por que, que es lo contrario de para lo que sirve el comando.
+    It "senala un runtime desconocido en vez de ignorarlo" {
+        $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "phyton": "3.12" } }')
+        $p.Errores.Count | Should BeGreaterThan 0
+        ($p.Errores -join ' ') | Should Match 'phyton'
+    }
+
+    It "el error de runtime desconocido dice cuales si valen" {
+        $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "rust": "1.0" } }')
+        ($p.Errores -join ' ') | Should Match 'python'
+        ($p.Errores -join ' ') | Should Match 'dotnet'
+    }
+
+    It "acepta las claves en mayusculas" {
+        $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "PYTHON": "3.12" } }')
+        $p.Errores.Count  | Should Be 0
+        $p.Runtimes.Count | Should Be 1
+    }
+
+    It "recoge los paquetes de pip para Python" {
+        $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "python": "3.12" }, "paquetes": { "python": ["django", "flask"] } }')
+        ($p.Runtimes | Where-Object { $_.Clave -eq 'python' }).Paquetes | Should Be 'django,flask'
+    }
+
+    It "sin paquetes, deja el campo vacio" {
+        $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "python": "3.12" } }')
+        $p.Runtimes[0].Paquetes | Should BeNullOrEmpty
+    }
+
+    # Mejor negarse que instalar mal algo escrito para una version futura.
+    It "rechaza un manifiesto de una version mas nueva que el kit" {
+        $p = Read-DevEnvManifest -Config (Manifiesto '{ "version": 99, "runtimes": { "python": "3.12" } }')
+        ($p.Errores -join ' ') | Should Match 'version 99'
+    }
+
+    It "avisa si no hay seccion runtimes" {
+        $p = Read-DevEnvManifest -Config (Manifiesto '{ "version": 1 }')
+        ($p.Errores -join ' ') | Should Match 'runtimes'
+    }
+
+    It "tolera un manifiesto nulo" {
+        $p = Read-DevEnvManifest -Config $null
+        $p.Errores.Count  | Should BeGreaterThan 0
+        $p.Runtimes.Count | Should Be 0
+    }
+
+    It "todos los runtimes del catalogo se pueden pedir" {
+        $claves = (Get-RuntimeCatalog).Clave
+        $json = '{ "runtimes": { ' + (($claves | ForEach-Object { "`"$_`": `"latest`"" }) -join ', ') + ' } }'
+        $p = Read-DevEnvManifest -Config (Manifiesto $json)
+        $p.Errores.Count  | Should Be 0
+        $p.Runtimes.Count | Should Be $claves.Count
+    }
+}
+
+Describe "Get-RuntimeCatalog" {
+
+    # El catalogo es el unico sitio que sabe como se instala cada runtime. Si
+    # una entrada esta mal, Restore-Env falla en tiempo de ejecucion y no al
+    # leerse, asi que conviene comprobar la forma aqui.
+    $catalogo = Get-RuntimeCatalog
+
+    It "no repite claves" {
+        ($catalogo.Clave | Sort-Object -Unique).Count | Should Be $catalogo.Count
+    }
+
+    It "cada entrada apunta a un script que existe" {
+        $scripts = Join-Path (Split-Path -Parent $PSScriptRoot) "scripts"
+        foreach ($e in $catalogo) {
+            Test-Path (Join-Path $scripts $e.Script) | Should Be $true
+        }
+    }
+
+    It "cada patron de carpeta captura un grupo" {
+        foreach ($e in $catalogo) {
+            $e.Patron | Should Match '\('
+        }
+    }
+
+    It "las claves van en minuscula, que es como se escriben en el JSON" {
+        foreach ($e in $catalogo) {
+            $e.Clave | Should Be $e.Clave.ToLowerInvariant()
+        }
+    }
+}
+
 Describe "Split-UserPath" {
 
     It "descarta entradas vacias y solo-espacios" {

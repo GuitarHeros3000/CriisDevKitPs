@@ -1,0 +1,33 @@
+{
+  "_comentario_1": "Copia esto como devenv.json DENTRO DEL REPOSITORIO DE TU PROYECTO",
+  "_comentario_2": "(no del kit). Describe que necesita ese proyecto para compilar.",
+  "_comentario_3": "",
+  "_comentario_4": "Reproducirlo en otra maquina, con el kit al lado:",
+  "_comentario_5": "    Restore-Env.bat -Path C:\\ruta\\a\\tu\\proyecto\\devenv.json",
+  "_comentario_6": "o, desde la carpeta del proyecto, simplemente:  Restore-Env.bat",
+  "_comentario_7": "",
+  "_comentario_8": "Para crearlo a partir de lo que YA tienes instalado:",
+  "_comentario_9": "    Restore-Env.bat -Save",
+  "_comentario_10": "",
+  "_comentario_11": "La version es la LINEA, no el parche: 3.12 y no 3.12.10. El parche",
+  "_comentario_12": "lo elige el kit, que coge el mas reciente de esa linea.",
+  "_comentario_13": "Pon \"latest\" para dejar que el kit decida tambien la linea.",
+  "_comentario_14": "",
+  "_comentario_15": "Runtimes admitidos: python, java, node, angular, git, maven,",
+  "_comentario_16": "gradle, dotnet, vscode. Una errata NO se ignora: el comando se",
+  "_comentario_17": "niega a instalar nada y te dice cual no reconoce.",
+
+  "version": 1,
+  "descripcion": "Backend Java con utilidades en Python",
+
+  "runtimes": {
+    "java": "21",
+    "maven": "3.9",
+    "python": "3.12",
+    "git": "latest"
+  },
+
+  "paquetes": {
+    "python": ["requests", "pytest"]
+  }
+}

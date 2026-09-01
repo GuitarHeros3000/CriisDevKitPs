@@ -1898,6 +1898,146 @@ function Write-VSCodeShell {
     return $file
 }
 
+# --------------------------------------------------------------------------
+# Catalogo de runtimes
+#
+# Un solo sitio que sepa, para cada runtime: como se llama en un devenv.json,
+# que script lo instala, con que parametro se le pasa la version, donde
+# aterriza y como se llama su carpeta. Antes cada comando llevaba su propia
+# lista y cada runtime nuevo obligaba a tocarlas todas.
+# --------------------------------------------------------------------------
+
+function Get-RuntimeCatalog {
+    return @(
+        [PSCustomObject]@{
+            Clave = 'python'; Nombre = 'Python'; Script = 'Setup-PythonEnv.ps1'
+            ParamVersion = 'PythonVersion'; ParamPaquetes = 'InstallPackages'
+            Carpeta = 'Python'; Patron = '^python-(\d+\.\d+)$'; AdmiteForce = $true
+        }
+        [PSCustomObject]@{
+            Clave = 'java'; Nombre = 'Java'; Script = 'Setup-JavaEnv.ps1'
+            ParamVersion = 'JavaVersion'; ParamPaquetes = $null
+            Carpeta = 'Java'; Patron = '^jdk-(\d+)$'; AdmiteForce = $true
+        }
+        [PSCustomObject]@{
+            Clave = 'node'; Nombre = 'Node'; Script = 'Setup-NodeEnv.ps1'
+            ParamVersion = 'NodeVersion'; ParamPaquetes = $null
+            Carpeta = 'Node'; Patron = '^node-(\d+)$'; AdmiteForce = $true
+        }
+        [PSCustomObject]@{
+            Clave = 'angular'; Nombre = 'Angular'; Script = 'Setup-AngularEnv.ps1'
+            ParamVersion = 'AngularVersion'; ParamPaquetes = $null
+            Carpeta = 'Angular'; Patron = '^angular-v(\d+)$'; AdmiteForce = $false
+        }
+        [PSCustomObject]@{
+            Clave = 'git'; Nombre = 'Git'; Script = 'Setup-GitEnv.ps1'
+            ParamVersion = 'GitVersion'; ParamPaquetes = $null
+            Carpeta = 'Git'; Patron = '^git-(\d+\.\d+)$'; AdmiteForce = $true
+        }
+        [PSCustomObject]@{
+            Clave = 'maven'; Nombre = 'Maven'; Script = 'Setup-MavenEnv.ps1'
+            ParamVersion = 'MavenVersion'; ParamPaquetes = $null
+            Carpeta = 'Maven'; Patron = '^maven-(\d+\.\d+)$'; AdmiteForce = $true
+        }
+        [PSCustomObject]@{
+            Clave = 'gradle'; Nombre = 'Gradle'; Script = 'Setup-GradleEnv.ps1'
+            ParamVersion = 'GradleVersion'; ParamPaquetes = $null
+            Carpeta = 'Gradle'; Patron = '^gradle-(\d+\.\d+)$'; AdmiteForce = $true
+        }
+        [PSCustomObject]@{
+            Clave = 'dotnet'; Nombre = '.NET SDK'; Script = 'Setup-DotnetEnv.ps1'
+            ParamVersion = 'Channel'; ParamPaquetes = $null
+            Carpeta = 'Dotnet'; Patron = '^dotnet-(\d+\.\d+)$'; AdmiteForce = $true
+        }
+        [PSCustomObject]@{
+            Clave = 'vscode'; Nombre = 'VS Code'; Script = 'Setup-VSCodeEnv.ps1'
+            ParamVersion = $null; ParamPaquetes = $null
+            Carpeta = 'VSCode'; Patron = '^vscode-(\d+\.\d+)$'; AdmiteForce = $true
+        }
+    )
+}
+
+function Get-InstalledRuntimeLines {
+    <#
+        Devuelve que lineas hay instaladas de un runtime del catalogo, leyendo
+        los nombres de carpeta. Es la base de Restore-Env -Save.
+    #>
+    param([Parameter(Mandatory=$true)][PSCustomObject]$Entrada)
+
+    $raiz = Join-Path $WorkspaceRoot $Entrada.Carpeta
+    if (-not (Test-Path -LiteralPath $raiz)) { return @() }
+
+    return @(Get-ChildItem -LiteralPath $raiz -Directory -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            if ($_.Name -match $Entrada.Patron) { $Matches[1] }
+        })
+}
+
+function Read-DevEnvManifest {
+    <#
+    .SYNOPSIS
+        Valida un devenv.json ya cargado y devuelve lo que hay que instalar.
+    .DESCRIPTION
+        Separada de la lectura del archivo para poder probarla. Devuelve un
+        objeto con Runtimes (lista ordenada segun el catalogo) y Errores.
+
+        Un runtime desconocido no se ignora en silencio: se devuelve como error.
+        Un devenv.json con una errata dejaria el entorno a medias sin decir por
+        que, y este comando existe justo para lo contrario.
+    #>
+    param([AllowNull()]$Config)
+
+    $errores  = @()
+    $runtimes = @()
+
+    if (-not $Config) {
+        return [PSCustomObject]@{ Runtimes = @(); Errores = @('el manifiesto esta vacio o no es JSON valido') }
+    }
+
+    if ($Config.version -and [int]$Config.version -gt 1) {
+        $errores += "el manifiesto declara version $($Config.version) y este kit entiende hasta la 1"
+    }
+
+    if (-not $Config.runtimes) {
+        $errores += "no hay ninguna seccion 'runtimes'"
+        return [PSCustomObject]@{ Runtimes = @(); Errores = $errores }
+    }
+
+    $catalogo = Get-RuntimeCatalog
+    $pedidos  = @{}
+    foreach ($p in $Config.runtimes.PSObject.Properties) {
+        $clave = $p.Name.ToLowerInvariant()
+        if (-not ($catalogo | Where-Object { $_.Clave -eq $clave })) {
+            $errores += "runtime desconocido: '$($p.Name)'  (conocidos: $(($catalogo.Clave) -join ', '))"
+            continue
+        }
+        $pedidos[$clave] = [string]$p.Value
+    }
+
+    # Se recorre el CATALOGO y no lo pedido, para que el orden de instalacion
+    # sea siempre el mismo: Java antes que Maven y Gradle, que lo necesitan.
+    foreach ($e in $catalogo) {
+        if (-not $pedidos.ContainsKey($e.Clave)) { continue }
+
+        $v = $pedidos[$e.Clave]
+        $paquetes = $null
+        if ($e.ParamPaquetes -and $Config.paquetes) {
+            $prop = $Config.paquetes.PSObject.Properties[$e.Clave]
+            if ($prop -and $prop.Value) { $paquetes = @($prop.Value) -join ',' }
+        }
+
+        $runtimes += [PSCustomObject]@{
+            Clave    = $e.Clave
+            Nombre   = $e.Nombre
+            Version  = $v
+            Paquetes = $paquetes
+            Entrada  = $e
+        }
+    }
+
+    return [PSCustomObject]@{ Runtimes = $runtimes; Errores = $errores }
+}
+
 $PythonFtpIndexUrl = "https://www.python.org/ftp/python/"
 
 function Get-PythonArchiveInfo {
