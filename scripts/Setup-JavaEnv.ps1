@@ -135,7 +135,7 @@ $ReleaseMarker = ".assassinskipadm-release"
 function Get-InstalledJavaVersion {
     param([string]$JavaExe)
 
-    # java -version escribe en stderr por diseño historico, de ahi el -Quiet.
+    # java -version escribe en stderr por decision historica, de ahi el -Quiet.
     $run = Invoke-NativeCommand -FilePath $JavaExe -Arguments @('-version') -Quiet
     if ($run.ExitCode -ne 0) { return $null }
     if ($run.Output -match 'version "([^"]+)"') { return $Matches[1] }

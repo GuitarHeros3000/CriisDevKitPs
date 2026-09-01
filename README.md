@@ -603,7 +603,10 @@ sistema, y no eleva privilegios: si un software necesita admin de verdad, lo dic
 
 1. Detecta el tipo de instalador (MSI / WiX Burn / Inno Setup / NSIS / desconocido).
 2. Intenta la instalacion per-user nativa (sin admin).
-3. Verifica **donde aterrizo de verdad**, comparando HKCU **y HKLM** antes y despues.
+3. Verifica **donde aterrizo de verdad**: primero lo que declara el propio instalador
+   (para un MSI, el `MSI_LUA` del log de Windows Installer), y si no lo dice, la ruta
+   donde quedaron los archivos. La rama del registro **no** decide: 7-Zip se instala
+   per-user en `%LOCALAPPDATA%` y aun asi registra en HKLM.
 4. Si no hay modo per-user, extrae los archivos a una carpeta portable en `..\Apps`.
 5. Si necesita admin real (drivers, servicios, MSI per-machine), lo informa con honestidad.
 
@@ -636,14 +639,26 @@ sin instalar nada.
 |---|---|---|---|
 | MSI | extension `.msi` | `MSIINSTALLPERUSER=1 ALLUSERS=2` | `msiexec /a` |
 | WiX Burn | seccion PE `.wixburn` | no existe uno estandar | `/layout` |
-| Inno Setup | cadena `Inno Setup` en el binario | `/CURRENTUSER` | `innounp` |
+| Inno Setup | cadena `Inno Setup` en el binario | `/CURRENTUSER` | `innoextract` (o `innounp` si lo tienes) |
 | NSIS | cadena `Nullsoft` en el binario | no fiable | `7z x` |
+
+Las herramientas de extraccion no hace falta instalarlas: si faltan, el kit se las
+consigue solo y las deja en `..\Apps\tools`. 7-Zip se saca de su MSI oficial con
+`msiexec /a`, e `innoextract` de su zip.
 
 Burn se detecta por su seccion PE, no por buscar la palabra "Burn" en el binario:
 esa aparece por casualidad en casi cualquier ejecutable grande.
 
 Un `/layout` de Burn deja los MSI sueltos, no una app portable lista para usar. Si
-alguno de esos MSI instala drivers o servicios, seguira necesitando admin.
+alguno de esos MSI instala drivers o servicios, seguira necesitando admin. Y cuando
+el bundle lleva sus cargas **embebidas** -lo normal en un instalador de un solo
+archivo- `/layout` responde 0 pero solo copia el propio instalador: el kit lo trata
+como fallo en vez de anunciar una extraccion que no ha ocurrido.
+
+**Inno Setup reciente no se puede extraer.** `innoextract` 1.9 es la ultima que
+existe y solo cubre hasta Inno Setup 6.0.5; 7-Zip tampoco reconoce el formato.
+Comprobado con el instalador de Git 2.55. Para esos, la via es la instalacion
+per-user, que es lo que el kit intenta antes de extraer.
 
 ### Opciones
 
@@ -711,6 +726,19 @@ $env:HTTPS_PROXY = "http://dominio%5Cusuario:clave@proxy.empresa:8080"
 Sin codificar, la URL **no es una URI valida** y el proxy no funciona en absoluto:
 ni siquiera llega a intentarse la conexion. El error de .NET no lo explica, asi que
 el kit lo detecta antes y te dice esto mismo.
+
+Codifica tambien los caracteres especiales de la **clave**: `@` es `%40` y `:` es
+`%3A`. El kit los desescapa antes de enviarlos, asi que al proxy le llega la clave
+de verdad.
+
+**Esas credenciales se envian aparte, no dentro de la URL del proxy.**
+`Invoke-WebRequest -Proxy` acepta la URL entera sin protestar pero descarta el
+usuario y la clave, asi que el proxy responde 407 igual que si no hubieras puesto
+nada. `Split-ProxyCredential` las separa y `Add-ProxyToRequest` las pasa por
+`-ProxyCredential`; sin credenciales escritas se recurre a la identidad de Windows
+(`-ProxyUseDefaultCredentials`), que es como estan montados los proxies con
+autenticacion integrada. Comprobado contra un proxy Basic de verdad: antes, con la
+clave correcta en la URL, fallaba con el mismo 407 que con la clave equivocada.
 
 **La clave nunca se imprime.** Todo lo que muestra un proxy pasa por
 `Format-ProxyForDisplay`, que la sustituye por `***` y conserva el usuario (que si
@@ -909,6 +937,8 @@ por una version anterior del kit siguen en disco y tienen que seguir entendiendo
 | `Remove-UserPathEntry` | Quita entradas exactas o todo lo que cuelgue de una carpeta |
 | `Show-PathConflicts` | Avisa si ya hay otras versiones del runtime en el PATH |
 | `Resolve-DownloadProxy` | Devuelve el proxy a usar para una URL |
+| `Split-ProxyCredential` | Separa la URL del proxy en direccion limpia y credenciales |
+| `Add-ProxyToRequest` | Rellena proxy y credenciales en los parametros de una peticion |
 | `Format-ProxyForDisplay` | Oculta la clave de una URL de proxy antes de mostrarla |
 | `Protect-ProxySecrets` | Igual, pero en cualquier punto de un texto (errores de .NET) |
 | `Test-ProxyUsable` | Valida la URL del proxy y explica el `%5C` de las cuentas de dominio |
