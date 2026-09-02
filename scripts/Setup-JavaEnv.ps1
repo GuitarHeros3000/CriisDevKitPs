@@ -375,6 +375,10 @@ else {
 Write-JavaShell -JdkPath $jdkPath -Major $JavaVersion -Release $binary.Release | Out-Null
 Write-Log "Shell creado: $jdkPath\java$JavaVersion-shell.bat" "SUCCESS"
 
+# Maven y Gradle llevan un shell por cada JDK; el que se acaba de instalar tiene
+# que aparecer ahi sin que haya que reejecutar sus Setup a mano.
+foreach ($linea in @(Sync-BuildToolShells)) { Write-Log "Shells al dia: $linea" "SUCCESS" }
+
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  CONFIGURACION COMPLETADA" -ForegroundColor Cyan

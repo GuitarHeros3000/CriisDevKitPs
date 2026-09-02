@@ -11,8 +11,16 @@
     Necesita un JDK. Si hay uno instalado por el kit, el shell generado apunta
     ahi con JAVA_HOME; si no, avisa en vez de fallar con un error de Java que no
     explica nada.
+
+    Con varios JDK instalados se escribe ADEMAS un shell por cada uno
+    (gradle97-java21-shell.bat, gradle97-java25-shell.bat...), para trabajar el
+    mismo dia en proyectos que piden Javas distintos sin tocar JAVA_HOME ni
+    reejecutar nada: se abre el shell que toque.
 .PARAMETER GradleVersion
     Version concreta (ej: 9.7.1). Si se omite, la actual segun la API de Gradle.
+.PARAMETER JavaVersion
+    A que JDK del kit apunta el shell por defecto (ej: 21). Si se omite, el mas
+    alto instalado.
 .PARAMETER Force
     Reinstala aunque ya exista esa linea.
 .PARAMETER WhatIf
@@ -21,10 +29,17 @@
     .\Setup-GradleEnv.ps1
 .EXAMPLE
     .\Setup-GradleEnv.ps1 -GradleVersion 8.14 -Force
+.EXAMPLE
+    .\Setup-GradleEnv.ps1 -JavaVersion 21
 #>
 
 param(
     [string]$GradleVersion,
+
+    # A que JDK del kit ata el shell por defecto (ej: 21). Sin esto se usa el
+    # mas alto instalado. Ademas, si hay varios JDK se genera un shell por cada
+    # uno, para poder cambiar de Java sin reejecutar esto.
+    [string]$JavaVersion,
 
     [switch]$Force,
 
@@ -148,7 +163,14 @@ Write-Log "  Version: $($release.Version)" "SUCCESS"
 $line       = Get-ToolLine -Version $release.Version
 $FolderName = "gradle-$line"
 $shellName  = "gradle$($line -replace '\.','')-shell.bat"
-$javaHome   = Get-KitJavaHome
+$javaHome   = Resolve-KitJdk -Linea $JavaVersion
+if ($JavaVersion -and -not $javaHome) {
+    $hay = @(Get-KitJdkLines)
+    Write-Log "El kit no tiene instalado el JDK $JavaVersion." "ERROR"
+    Write-Log "  Instalado: $(if ($hay.Count) { $hay -join ', ' } else { '(ninguno)' })" "WARN"
+    Write-Log "  Instalalo con:  .\Setup-JavaEnv.bat -JavaVersion $JavaVersion" "WARN"
+    exit 1
+}
 
 Write-Log "Carpeta destino: $GradleRoot" "INFO"
 if ($javaHome) { Write-Log "JDK del kit:     $javaHome" "INFO" }
@@ -174,6 +196,10 @@ if ($WhatIf) {
     }
     Write-Host ("  [PATH]     {0}\bin" -f $destino)
     Write-Host ("  [shell]    {0}" -f $shellName)
+    $jdks = @(Get-KitJdkLines)
+    foreach ($j in $(if ($jdks.Count -ge 2) { $jdks } else { @() })) {
+        Write-Host ("             gradle{0}-java{1}-shell.bat" -f ($line -replace '\.',''), $j) -ForegroundColor DarkGray
+    }
     if ($javaHome) { Write-Host ("  [JAVA_HOME] {0}   (solo dentro del shell)" -f $javaHome) }
     else           { Write-Host  "  [JAVA_HOME] sin JDK del kit: Gradle no arrancara sin uno" -ForegroundColor Yellow }
     Write-Host ""
@@ -190,6 +216,12 @@ Add-UserPathEntry -Path (Join-Path $gradlePath "bin")
 
 Write-BuildToolShell -Tool Gradle -ToolPath $gradlePath -Version $release.Version -JavaHome $javaHome | Out-Null
 Write-Log "Shell creado: $gradlePath\$shellName" "SUCCESS"
+
+# Con varios JDK instalados, uno por cada uno: abrir el que toque es mas comodo
+# que reejecutar este comando para cambiar de Java.
+$porJdk = Write-BuildToolShellsPorJdk -Tool Gradle -ToolPath $gradlePath -Version $release.Version
+foreach ($s in $porJdk.Escritos) { Write-Log "  y ademas: $(Split-Path -Leaf $s)" "SUCCESS" }
+if ($porJdk.Borrados -gt 0) { Write-Log "  retirados $($porJdk.Borrados) shells de JDK que ya no estan" "INFO" }
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan

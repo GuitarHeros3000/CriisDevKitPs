@@ -1595,3 +1595,205 @@ Describe "Constructores de URL de descarga" {
             Should Be 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip'
     }
 }
+
+Describe "Un shell de Maven/Gradle por cada JDK" {
+
+    # Quien trabaja a diario en proyectos que piden Javas distintos no puede
+    # reejecutar el Setup cada vez que cambia de proyecto. Estas pruebas fijan
+    # que exista un shell por JDK y que cada uno apunte al SUYO: si todos
+    # acabaran en el mismo JAVA_HOME el resultado seria una compilacion con el
+    # Java equivocado, que es un fallo silencioso.
+
+    $raizReal = $WorkspaceRoot
+    $falso    = Join-Path $env:TEMP ("kit-multijdk-" + [Guid]::NewGuid().ToString('N'))
+
+    function New-JdkFalso {
+        param([string]$Linea)
+        $bin = Join-Path (Join-Path (Join-Path $falso "Java") "jdk-$Linea") "bin"
+        New-Item -ItemType Directory -Path $bin -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $bin "java.exe") -Value "" -Encoding ASCII
+    }
+
+    function New-HerramientaFalsa {
+        param([string]$Nombre)
+        $p = Join-Path $falso $Nombre
+        New-Item -ItemType Directory -Path (Join-Path $p "bin") -Force | Out-Null
+        return $p
+    }
+
+    BeforeEach {
+        if (Test-Path -LiteralPath $falso) { Remove-Item -LiteralPath $falso -Recurse -Force }
+        New-Item -ItemType Directory -Path $falso -Force | Out-Null
+        $script:WorkspaceRoot = $falso
+    }
+
+    AfterEach {
+        $script:WorkspaceRoot = $raizReal
+        Remove-Item -LiteralPath $falso -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    Context "Get-KitJdkLines" {
+
+        # Ordenar como texto pondria "21" antes que "9". Con Java 8 y Java 21
+        # instalados eso haria que "el mas alto" fuera el 8.
+        It "ordena por numero y no como texto" {
+            New-JdkFalso 21; New-JdkFalso 8; New-JdkFalso 25
+            (Get-KitJdkLines) -join ',' | Should Be '8,21,25'
+        }
+
+        It "no cuenta una carpeta sin java.exe" {
+            New-JdkFalso 21
+            New-Item -ItemType Directory -Path (Join-Path $falso "Java\jdk-99") -Force | Out-Null
+            (Get-KitJdkLines) -join ',' | Should Be '21'
+        }
+
+        It "sin carpeta Java devuelve vacio" {
+            (Get-KitJdkLines).Count | Should Be 0
+        }
+    }
+
+    Context "Resolve-KitJdk" {
+
+        It "devuelve el JDK que se le pide" {
+            New-JdkFalso 21; New-JdkFalso 25
+            Resolve-KitJdk -Linea '21' | Should Be (Join-Path $falso "Java\jdk-21")
+        }
+
+        It "devuelve nulo si esa linea no esta instalada" {
+            New-JdkFalso 25
+            Resolve-KitJdk -Linea '21' | Should BeNullOrEmpty
+        }
+
+        It "sin linea se queda con el mas alto, como antes" {
+            New-JdkFalso 21; New-JdkFalso 25
+            Resolve-KitJdk | Should Be (Join-Path $falso "Java\jdk-25")
+        }
+    }
+
+    Context "Write-BuildToolShell -SufijoJdk" {
+
+        It "nombra el archivo con el JDK al que ata" {
+            $mvn = New-HerramientaFalsa "maven-3.9"
+            $f = Write-BuildToolShell -Tool Maven -ToolPath $mvn -Version '3.9.11' `
+                                      -JavaHome 'C:\jdk-21' -SufijoJdk '21'
+            Split-Path -Leaf $f | Should Be 'mvn39-java21-shell.bat'
+        }
+
+        It "sin sufijo mantiene el nombre de siempre" {
+            $mvn = New-HerramientaFalsa "maven-3.9"
+            $f = Write-BuildToolShell -Tool Maven -ToolPath $mvn -Version '3.9.11' -JavaHome 'C:\jdk-21'
+            Split-Path -Leaf $f | Should Be 'mvn39-shell.bat'
+        }
+    }
+
+    Context "Write-BuildToolShellsPorJdk" {
+
+        It "escribe uno por JDK y cada uno apunta al suyo" {
+            New-JdkFalso 21; New-JdkFalso 25
+            $g = New-HerramientaFalsa "gradle-9.7"
+
+            $hechos = (Write-BuildToolShellsPorJdk -Tool Gradle -ToolPath $g -Version '9.7.1').Escritos
+            $hechos.Count | Should Be 2
+
+            foreach ($h in $hechos) {
+                $null = (Split-Path -Leaf $h) -match '-java(\d+)-shell\.bat$'
+                $linea = $Matches[1]
+                $jh = ([regex]::Match((Get-Content -LiteralPath $h -Raw), 'set "JAVA_HOME=([^"]+)"')).Groups[1].Value
+                Split-Path -Leaf $jh | Should Be "jdk-$linea"
+            }
+        }
+
+        # Con un solo JDK el shell normal ya apunta ahi: un segundo archivo
+        # identico solo haria dudar de cual abrir.
+        It "con un solo JDK no escribe ninguno" {
+            New-JdkFalso 25
+            $g = New-HerramientaFalsa "gradle-9.7"
+            (Write-BuildToolShellsPorJdk -Tool Gradle -ToolPath $g -Version '9.7.1').Escritos.Count | Should Be 0
+        }
+
+        # Un shell que exporta un JAVA_HOME inexistente hace fallar la compilacion
+        # con un error de Java que no menciona la desinstalacion.
+        It "borra el shell de un JDK que ya no esta" {
+            New-JdkFalso 21; New-JdkFalso 25
+            $g = New-HerramientaFalsa "gradle-9.7"
+            Write-BuildToolShellsPorJdk -Tool Gradle -ToolPath $g -Version '9.7.1' | Out-Null
+            Test-Path (Join-Path $g "gradle97-java21-shell.bat") | Should Be $true
+
+            Remove-Item -LiteralPath (Join-Path $falso "Java\jdk-21") -Recurse -Force
+            Write-BuildToolShellsPorJdk -Tool Gradle -ToolPath $g -Version '9.7.1' | Out-Null
+
+            Test-Path (Join-Path $g "gradle97-java21-shell.bat") | Should Be $false
+            Test-Path (Join-Path $g "gradle97-java25-shell.bat") | Should Be $false
+        }
+
+        It "no toca el shell por defecto al limpiar" {
+            New-JdkFalso 25
+            $g = New-HerramientaFalsa "gradle-9.7"
+            Write-BuildToolShell -Tool Gradle -ToolPath $g -Version '9.7.1' -JavaHome (Join-Path $falso "Java\jdk-25") | Out-Null
+            Write-BuildToolShellsPorJdk -Tool Gradle -ToolPath $g -Version '9.7.1' | Out-Null
+            Test-Path (Join-Path $g "gradle97-shell.bat") | Should Be $true
+        }
+    }
+
+    Context "Sync-BuildToolShells" {
+
+        # Se monta un Gradle creible: Sync lee la version del jar, no de ejecutar
+        # nada, asi que basta con el nombre del archivo.
+        function New-GradleFalso {
+            $g = Join-Path $falso "Gradle\gradle-9.7"
+            New-Item -ItemType Directory -Path (Join-Path $g "bin") -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $g "lib") -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $g "bin\gradle.bat") -Value "" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $g "lib\gradle-launcher-9.7.1.jar") -Value "" -Encoding ASCII
+            return $g
+        }
+
+        # Instalar un JDK despues de Gradle tiene que dar shell para el nuevo sin
+        # reejecutar Setup-GradleEnv: es justo el caso de trabajar en proyectos
+        # con Javas distintos.
+        It "al aparecer un segundo JDK escribe los shells sin tocar el Setup" {
+            New-JdkFalso 25
+            $g = New-GradleFalso
+            Write-BuildToolShell -Tool Gradle -ToolPath $g -Version '9.7.1' -JavaHome (Join-Path $falso "Java\jdk-25") | Out-Null
+
+            New-JdkFalso 21
+            $r = @(Sync-BuildToolShells)
+
+            Test-Path (Join-Path $g "gradle97-java21-shell.bat") | Should Be $true
+            Test-Path (Join-Path $g "gradle97-java25-shell.bat") | Should Be $true
+            ($r -join ' ') | Should Match '2 shells'
+        }
+
+        # Sin esto, desinstalar el JDK al que apuntaba el shell por defecto deja
+        # Gradle roto hasta que alguien reejecute su Setup, y el error que da
+        # Java no menciona la desinstalacion.
+        It "reapunta el shell por defecto si su JDK desaparecio" {
+            New-JdkFalso 21; New-JdkFalso 25
+            $g = New-GradleFalso
+            Write-BuildToolShell -Tool Gradle -ToolPath $g -Version '9.7.1' -JavaHome (Join-Path $falso "Java\jdk-21") | Out-Null
+
+            Remove-Item -LiteralPath (Join-Path $falso "Java\jdk-21") -Recurse -Force
+            $r = @(Sync-BuildToolShells)
+
+            $jh = Get-ShellJavaHome -ShellBat (Join-Path $g "gradle97-shell.bat")
+            Split-Path -Leaf $jh | Should Be 'jdk-25'
+            ($r -join ' ') | Should Match 'ahora a jdk-25'
+        }
+
+        It "no toca el shell por defecto si su JDK sigue ahi" {
+            New-JdkFalso 21; New-JdkFalso 25
+            $g = New-GradleFalso
+            Write-BuildToolShell -Tool Gradle -ToolPath $g -Version '9.7.1' -JavaHome (Join-Path $falso "Java\jdk-21") | Out-Null
+
+            Sync-BuildToolShells | Out-Null
+
+            $jh = Get-ShellJavaHome -ShellBat (Join-Path $g "gradle97-shell.bat")
+            Split-Path -Leaf $jh | Should Be 'jdk-21'
+        }
+
+        It "sin Maven ni Gradle instalados no dice nada" {
+            New-JdkFalso 21; New-JdkFalso 25
+            (Sync-BuildToolShells).Count | Should Be 0
+        }
+    }
+}

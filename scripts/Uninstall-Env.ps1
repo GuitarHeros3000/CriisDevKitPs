@@ -377,6 +377,9 @@ if ($Runtime -eq 'Java') {
             Write-Log "  Si tenias uno de maquina, vuelve a ser el que manda." "WARN"
         }
     }
+
+    # Los shells por JDK de Maven y Gradle apuntarian a la carpeta borrada.
+    foreach ($linea in @(Sync-BuildToolShells)) { Write-Log "Shells al dia: $linea" "INFO" }
 }
 
 # --- Si alguna carpeta madre queda vacia, tambien se retira ---

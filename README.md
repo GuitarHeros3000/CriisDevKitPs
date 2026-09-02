@@ -808,6 +808,46 @@ detecta el caso de un shell generado cuando aun no habia ningun JDK.
 Maven publica **SHA-512** y no SHA-256, que es la razon de que `Invoke-Download`
 admita los dos.
 
+### Un shell por cada JDK
+
+Ni Maven ni Gradle leen la version de Java del proyecto: usan **el `JAVA_HOME` que
+encuentren**. Con dos JDK instalados hay que decidir cual, y el kit no puede
+adivinarlo por proyecto.
+
+Asi que con **mas de un JDK** se genera un shell por cada uno:
+
+```
+Maven\maven-3.9\
+├── mvn39-shell.bat          el JDK por defecto (el mas alto, o el de -JavaVersion)
+├── mvn39-java21-shell.bat   JAVA_HOME = Java\jdk-21
+└── mvn39-java25-shell.bat   JAVA_HOME = Java\jdk-25
+```
+
+Abres el que pide el proyecto en el que vas a trabajar. No hay que tocar
+`JAVA_HOME` ni reejecutar nada, y como cada shell es una ventana aparte puedes
+tener dos proyectos con Javas distintos abiertos a la vez.
+
+Para fijar a que JDK apunta el shell por defecto:
+
+```powershell
+.\Setup-MavenEnv.bat -JavaVersion 21
+```
+
+Los shells por JDK se mantienen solos: instalar un JDK nuevo los regenera, y
+desinstalar uno retira el suyo. Si el JDK del shell por defecto desaparece, se
+reapunta al mas alto que quede -si no, la herramienta se quedaria rota con un
+error de Java que no menciona la desinstalacion que lo causo-.
+
+Comprobado compilando un `pom.xml` que exige `release 25`: bajo
+`mvn39-java21-shell.bat` falla con *release version 25 not supported*, y bajo
+`mvn39-java25-shell.bat` compila. O sea que cada shell ata Java **de verdad**, no
+solo en lo que dice `mvn -version`.
+
+> Esto no es lo mismo que las *toolchains* de Maven o Gradle, que resuelven el JDK
+> desde dentro del proyecto. Requieren configuracion **en el proyecto**
+> (`maven-toolchains-plugin` en el `pom.xml`, o un bloque `toolchain` en el
+> `build.gradle`) y el kit no la va a meter en proyectos ajenos.
+
 ## .NET SDK
 
 ```powershell

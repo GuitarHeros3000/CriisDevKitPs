@@ -827,6 +827,43 @@ function Test-BuildToolInstall {
             Write-Check "  JAVA_HOME en el shell" "sin definir" 'warn'
             Write-Detail "Se genero sin JDK del kit. Instala uno y reejecuta $SetupBat -Force"
         }
+        else {
+            # A que JDK ata el shell por defecto. Con varios instalados no es
+            # obvio, y es justo lo que decide con que Java compila.
+            $jh = Get-ShellJavaHome -ShellBat $shell
+            if ($jh -and -not (Test-Path -LiteralPath $jh)) {
+                # Apunta a un JDK borrado: la herramienta no arranca, y el error
+                # de Java no menciona la desinstalacion que lo provoco.
+                Write-Check "  JAVA_HOME del shell" "$(Split-Path -Leaf $jh) (ya no existe)" 'fail'
+                Write-Detail "Reapuntalo con:  $SetupBat -Force"
+            }
+            elseif ($jh) {
+                Write-Check "  JAVA_HOME del shell" (Split-Path -Leaf $jh) 'ok'
+            }
+        }
+
+        # Los shells por JDK: uno por cada Java instalado, para proyectos que
+        # piden Javas distintos.
+        $jdks = @(Get-KitJdkLines)
+        $porJdk = @(Get-ChildItem -LiteralPath $d.FullName -Filter "$ShellPrefijo*-java*-shell.bat" -ErrorAction SilentlyContinue |
+                    ForEach-Object { if ($_.Name -match '-java(\d+)-shell\.bat$') { $Matches[1] } } |
+                    Sort-Object { [int]$_ })
+
+        if ($jdks.Count -ge 2) {
+            $faltan = @($jdks | Where-Object { $porJdk -notcontains $_ })
+            if ($faltan.Count -eq 0) {
+                Write-Check "  Shells por JDK" ("Java " + ($porJdk -join ', ')) 'ok'
+            }
+            else {
+                Write-Check "  Shells por JDK" ("falta Java " + ($faltan -join ', ')) 'warn'
+                Write-Detail "Regeneralos con:  $SetupBat"
+            }
+        }
+        elseif ($porJdk.Count -gt 0) {
+            # Sobra: quedo de cuando habia mas de un JDK.
+            Write-Check "  Shells por JDK" ("sobran (Java " + ($porJdk -join ', ') + ")") 'warn'
+            Write-Detail "Solo hay un JDK. Limpialos con:  $SetupBat"
+        }
     }
 }
 

@@ -1811,6 +1811,39 @@ function Get-JavaMajor {
     return $null
 }
 
+function Resolve-KitJdk {
+    <#
+        Devuelve la ruta del JDK del kit que se le pida por su linea ("21"), o
+        $null si no esta instalado. Sin -Linea devuelve el mas alto, que es lo
+        que hacia Get-KitJavaHome y sigue siendo el valor por defecto.
+    #>
+    param([string]$Linea)
+
+    if ([string]::IsNullOrWhiteSpace($Linea)) { return (Get-KitJavaHome) }
+
+    $ruta = Join-Path (Join-Path $WorkspaceRoot "Java") ("jdk-" + $Linea.Trim())
+    if (Test-Path (Join-Path $ruta "bin\java.exe")) { return $ruta }
+    return $null
+}
+
+function Get-KitJdkLines {
+    <#
+        Las lineas de JDK del kit instaladas, de menor a mayor.
+
+        No es Get-InstalledRuntimeLines con la entrada de Java porque aqui hacen
+        falta dos cosas mas: exigir bin\java.exe -una carpeta a medio borrar daria
+        un shell con un JAVA_HOME roto- y ordenar por NUMERO, ya que como texto
+        "21" iria antes que "8" y "el mas alto" acabaria siendo el Java 8.
+    #>
+    $javaRoot = Join-Path $WorkspaceRoot "Java"
+    if (-not (Test-Path -LiteralPath $javaRoot)) { return @() }
+
+    return @(Get-ChildItem -LiteralPath $javaRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^jdk-(\d+)$' -and (Test-Path (Join-Path $_.FullName "bin\java.exe")) } |
+        ForEach-Object { $_.Name -replace '^jdk-', '' } |
+        Sort-Object { [int]$_ })
+}
+
 function Get-KitJavaHome {
     <#
         Devuelve el JDK del kit que deben usar Maven y Gradle, o $null.
@@ -1819,15 +1852,11 @@ function Get-KitJavaHome {
         uno instalado por el kit es el que el usuario controla, y es el que va a
         seguir ahi. Se coge el de version mas alta.
     #>
-    $javaRoot = Join-Path $WorkspaceRoot "Java"
-    if (-not (Test-Path -LiteralPath $javaRoot)) { return $null }
+    $lineas = @(Get-KitJdkLines)
+    if ($lineas.Count -eq 0) { return $null }
 
-    $dirs = @(Get-ChildItem -LiteralPath $javaRoot -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^jdk-(\d+)$' -and (Test-Path (Join-Path $_.FullName "bin\java.exe")) } |
-        Sort-Object { [int]($_.Name -replace '^jdk-', '') } -Descending)
-
-    if ($dirs.Count -eq 0) { return $null }
-    return $dirs[0].FullName
+    # Get-KitJdkLines ordena de menor a mayor.
+    return (Join-Path (Join-Path $WorkspaceRoot "Java") ("jdk-" + $lineas[-1]))
 }
 
 function Write-BuildToolShell {
@@ -1839,12 +1868,19 @@ function Write-BuildToolShell {
         Si hay un JDK del kit se usa ese; si no, se deja el JAVA_HOME que ya
         hubiera y el shell avisa cuando no hay ninguno, en vez de fallar con un
         error de Java que no dice de que va.
+
+        Con -SufijoJdk se escribe un shell APARTE atado a un JDK concreto
+        (mvn39-java21-shell.bat). Existe porque con varios JDK instalados el
+        shell normal se queda con el mas alto, y quien trabaja a diario con
+        proyectos que piden Javas distintos necesitaba reejecutar el Setup para
+        cambiar. Con uno por JDK, se abre el que toque.
     #>
     param(
         [Parameter(Mandatory=$true)][ValidateSet('Maven', 'Gradle')][string]$Tool,
         [Parameter(Mandatory=$true)][string]$ToolPath,
         [Parameter(Mandatory=$true)][string]$Version,
-        [string]$JavaHome
+        [string]$JavaHome,
+        [string]$SufijoJdk
     )
 
     $binCmd = ConvertTo-CmdLiteral (Join-Path $ToolPath "bin")
@@ -1861,11 +1897,12 @@ function Write-BuildToolShell {
         $lines += "set `"PATH=$(ConvertTo-CmdLiteral (Join-Path $JavaHome 'bin'));%PATH%`""
     }
 
+    $titulo = if ($SufijoJdk) { "$Tool $Version  (Java $SufijoJdk)" } else { "$Tool $Version Shell" }
     $lines += @(
-        "title $Tool $Version Shell",
+        "title $titulo",
         "echo.",
         "echo ============================================",
-        "echo   $Tool $Version Shell",
+        "echo   $titulo",
         "echo ============================================",
         "echo."
     )
@@ -1887,9 +1924,125 @@ function Write-BuildToolShell {
         "cmd /k"
     )
 
-    $file = Join-Path $ToolPath "$($exe)$linea-shell.bat"
+    $nombre = if ($SufijoJdk) { "$($exe)$linea-java$SufijoJdk-shell.bat" } else { "$($exe)$linea-shell.bat" }
+    $file = Join-Path $ToolPath $nombre
     Set-Content -Path $file -Value ($lines -join "`n") -Encoding ASCII
     return $file
+}
+
+function Write-BuildToolShellsPorJdk {
+    <#
+        Escribe un shell de la herramienta por CADA JDK del kit instalado, ademas
+        del de siempre.
+
+        Solo tiene sentido con mas de un JDK: con uno, el shell normal ya apunta
+        ahi y un segundo archivo identico solo confundiria.
+
+        Tambien borra los shells de JDK que ya no estan, para que no queden
+        apuntando a una carpeta desinstalada.
+
+        Devuelve { Escritos = rutas; Borrados = cuantos se retiraron }.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][ValidateSet('Maven', 'Gradle')][string]$Tool,
+        [Parameter(Mandatory=$true)][string]$ToolPath,
+        [Parameter(Mandatory=$true)][string]$Version
+    )
+
+    $exe    = if ($Tool -eq 'Maven') { 'mvn' } else { 'gradle' }
+    $lineas = @(Get-KitJdkLines)
+    if ($lineas.Count -lt 2) { $lineas = @() }
+
+    # Fuera los que sobran antes de escribir: si se desinstalo un JDK, su shell
+    # ya no lleva a ningun sitio.
+    $borrados = 0
+    Get-ChildItem -LiteralPath $ToolPath -Filter "$exe*-java*-shell.bat" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '-java(\d+)-shell\.bat$' -and $lineas -notcontains $Matches[1] } |
+        ForEach-Object {
+            Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+            $borrados++
+        }
+
+    $escritos = @()
+    foreach ($l in $lineas) {
+        $escritos += (Write-BuildToolShell -Tool $Tool -ToolPath $ToolPath -Version $Version `
+                                           -JavaHome (Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$l") `
+                                           -SufijoJdk $l)
+    }
+
+    return [PSCustomObject]@{
+        Escritos = $escritos
+        Borrados = $borrados
+    }
+}
+
+function Get-ShellJavaHome {
+    <#
+        Que JAVA_HOME exporta un shell generado, o cadena vacia si no exporta
+        ninguno.
+    #>
+    param([Parameter(Mandatory=$true)][string]$ShellBat)
+
+    if (-not (Test-Path -LiteralPath $ShellBat)) { return '' }
+    return ([regex]::Match((Get-Content -LiteralPath $ShellBat -Raw), 'set "JAVA_HOME=([^"]+)"')).Groups[1].Value
+}
+
+function Sync-BuildToolShells {
+    <#
+        Repasa los shells por JDK de Maven y Gradle contra los JDK que hay ahora.
+
+        Se llama despues de instalar o desinstalar un JDK: si no, instalar Java
+        21 despues de Maven no daria shell para el 21, y habria que reejecutar el
+        Setup de Maven a mano.
+
+        Ademas rescata el shell por defecto si su JAVA_HOME se quedo apuntando a
+        un JDK borrado: no hacerlo deja la herramienta rota hasta que alguien
+        reejecute su Setup, y el error que da Java no menciona nada de esto.
+
+        Devuelve una linea por herramienta tocada; nada si no hay ninguna.
+    #>
+    $resumen = @()
+
+    foreach ($t in @(
+        @{ Tool = 'Maven';  Root = 'Maven';  Exe = 'mvn';    Marca = 'bin\mvn.cmd';    Jar = 'lib\maven-core-*.jar';      Rx = 'maven-core-([\d.]+)\.jar' },
+        @{ Tool = 'Gradle'; Root = 'Gradle'; Exe = 'gradle'; Marca = 'bin\gradle.bat'; Jar = 'lib\gradle-launcher-*.jar'; Rx = 'gradle-launcher-([\d.]+)\.jar' }
+    )) {
+        $root = Join-Path $WorkspaceRoot $t.Root
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+
+        foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path (Join-Path $d.FullName $t.Marca))) { continue }
+
+            # La version sale del jar y no de ejecutar la herramienta: gradle y
+            # mvn necesitan JAVA_HOME, que aqui puede no estar puesto.
+            $jars = @(Get-ChildItem -Path (Join-Path $d.FullName $t.Jar) -ErrorAction SilentlyContinue)
+            if ($jars.Count -eq 0 -or $jars[0].Name -notmatch $t.Rx) { continue }
+            $version = $Matches[1]
+
+            $hechos = Write-BuildToolShellsPorJdk -Tool $t.Tool -ToolPath $d.FullName -Version $version
+            if ($hechos.Escritos.Count -gt 0) {
+                $resumen += "$($t.Tool) $version : $($hechos.Escritos.Count) shells, uno por JDK"
+            }
+            elseif ($hechos.Borrados -gt 0) {
+                $resumen += "$($t.Tool) $version : retirados $($hechos.Borrados) shells de JDK que ya no estan"
+            }
+
+            # El shell por defecto atado a un JDK que ya no existe.
+            $porDefecto = Join-Path $d.FullName "$($t.Exe)$((Get-ToolLine -Version $version) -replace '\.','')-shell.bat"
+            $jh = Get-ShellJavaHome -ShellBat $porDefecto
+            if ($jh -and -not (Test-Path -LiteralPath $jh)) {
+                $nuevo = Get-KitJavaHome
+                Write-BuildToolShell -Tool $t.Tool -ToolPath $d.FullName -Version $version -JavaHome $nuevo | Out-Null
+                $resumen += if ($nuevo) {
+                    "$($t.Tool) $version : el shell apuntaba a $(Split-Path -Leaf $jh), ahora a $(Split-Path -Leaf $nuevo)"
+                } else {
+                    "$($t.Tool) $version : el shell apuntaba a $(Split-Path -Leaf $jh), que ya no esta; queda sin JDK"
+                }
+            }
+        }
+    }
+
+    return $resumen
 }
 
 function Get-ToolLine {
