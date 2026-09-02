@@ -1479,10 +1479,10 @@ function Get-GradleProxyLine {
     $props = "-Dhttp.proxyHost=$($u.Host) -Dhttp.proxyPort=$($u.Port) " +
              "-Dhttps.proxyHost=$($u.Host) -Dhttps.proxyPort=$($u.Port)"
 
-    $cred = Split-ProxyCredential -ProxyUrl $proxy
-    if ($cred -and $cred.Credential) {
-        $usuario = $cred.Credential.UserName
-        $clave   = $cred.Credential.GetNetworkCredential().Password
+    $cred = Split-ProxyCredential -Proxy $proxy
+    if ($cred -and $cred.Credencial) {
+        $usuario = $cred.Credencial.UserName
+        $clave   = $cred.Credencial.GetNetworkCredential().Password
         $props += " -Dhttp.proxyUser=$usuario -Dhttp.proxyPassword=$clave"
         $props += " -Dhttps.proxyUser=$usuario -Dhttps.proxyPassword=$clave"
     }
@@ -2194,6 +2194,22 @@ function Get-PipCorpCa {
     return $m.Groups[1].Value.Trim()
 }
 
+function Write-TextoSinBom {
+    <#
+        Escribe texto tal cual, sin BOM y sin anadir salto al final.
+
+        Set-Content -Encoding UTF8 en PowerShell 5.1 antepone SIEMPRE un BOM de
+        tres bytes y anade un salto. En un archivo del kit da igual, pero aqui se
+        reescribe el settings.xml que trae Maven, y quitar el bloque tiene que
+        dejarlo EXACTAMENTE como estaba, byte a byte.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Ruta,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Texto
+    )
+    [IO.File]::WriteAllText($Ruta, $Texto, (New-Object System.Text.UTF8Encoding($false)))
+}
+
 function Set-MavenCorpProxy {
     <#
         Maven NO lee HTTP_PROXY ni HTTPS_PROXY. Es la diferencia con npm, pip y
@@ -2221,11 +2237,16 @@ function Set-MavenCorpProxy {
 
     # Fuera el bloque anterior, si lo hubiera. Con marcas propias no se toca
     # nada que hubiera escrito el usuario o la empresa en ese archivo.
-    $limpio = [regex]::Replace($texto, [regex]::Escape($marcaIni) + '.*?' + [regex]::Escape($marcaFin),
+    #
+    # Se come tambien el salto de linea que lo precede. Sin eso, cada ciclo de
+    # poner y quitar dejaba una linea en blanco de mas y el settings.xml crecia
+    # unos bytes cada vez.
+    $limpio = [regex]::Replace($texto,
+                               '\r?\n?[ \t]*' + [regex]::Escape($marcaIni) + '.*?' + [regex]::Escape($marcaFin),
                                '', 'Singleline')
 
     if ($Quitar) {
-        if ($limpio -ne $texto) { Set-Content -LiteralPath $cfg -Value $limpio -Encoding UTF8 }
+        if ($limpio -ne $texto) { Write-TextoSinBom -Ruta $cfg -Texto $limpio }
         return $true
     }
 
@@ -2233,16 +2254,16 @@ function Set-MavenCorpProxy {
     if (-not $proxy) { return $false }
 
     $u = [Uri]$proxy
-    $cred = Split-ProxyCredential -ProxyUrl $proxy
+    $cred = Split-ProxyCredential -Proxy $proxy
 
     $bloque = @($marcaIni, '  <proxies>', '    <proxy>',
                 '      <id>assassinskipadm</id>', '      <active>true</active>',
                 "      <protocol>$($u.Scheme)</protocol>",
                 "      <host>$($u.Host)</host>",
                 "      <port>$($u.Port)</port>")
-    if ($cred -and $cred.Credential) {
-        $bloque += "      <username>$($cred.Credential.UserName)</username>"
-        $bloque += "      <password>$($cred.Credential.GetNetworkCredential().Password)</password>"
+    if ($cred -and $cred.Credencial) {
+        $bloque += "      <username>$($cred.Credencial.UserName)</username>"
+        $bloque += "      <password>$($cred.Credencial.GetNetworkCredential().Password)</password>"
     }
     $bloque += @('    </proxy>', '  </proxies>', $marcaFin)
 
@@ -2250,7 +2271,7 @@ function Set-MavenCorpProxy {
     $nuevo = [regex]::Replace($limpio, '(<settings[^>]*>)', "`$1`n" + ($bloque -join "`n"), 'Singleline')
     if ($nuevo -eq $limpio) { return $false }
 
-    Set-Content -LiteralPath $cfg -Value $nuevo -Encoding UTF8
+    Write-TextoSinBom -Ruta $cfg -Texto $nuevo
     return $true
 }
 
