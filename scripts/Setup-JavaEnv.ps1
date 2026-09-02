@@ -379,6 +379,10 @@ Write-Log "Shell creado: $jdkPath\java$JavaVersion-shell.bat" "SUCCESS"
 # que aparecer ahi sin que haya que reejecutar sus Setup a mano.
 foreach ($linea in @(Sync-BuildToolShells)) { Write-Log "Shells al dia: $linea" "SUCCESS" }
 
+# Y el VS Code portable del kit, por el mismo motivo: si ya tiene JDK anotados,
+# este tiene que aparecer sin que haya que acordarse de nada.
+foreach ($linea in @(Sync-VSCodeJavaRuntimes)) { Write-Log "VS Code al dia: $linea" "SUCCESS" }
+
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  CONFIGURACION COMPLETADA" -ForegroundColor Cyan

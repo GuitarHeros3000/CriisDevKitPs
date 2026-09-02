@@ -1934,6 +1934,118 @@ Describe "Un shell de Maven/Gradle por cada JDK" {
         }
     }
 
+    Context "Sync-VSCodeJavaRuntimes" {
+
+        # Mismo motivo que Sync-BuildToolShells: instalar o quitar un JDK tiene
+        # que notarse donde el kit ya lo tiene anotado, sin reejecutar nada.
+
+        function New-PortableConAjustes {
+            param([string]$Json)
+
+            $raiz = Join-Path $falso "VSCode\vscode-1.136"
+            New-Item -ItemType Directory -Path (Join-Path $raiz "data\user-data\User") -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $raiz "Code.exe") -Value "" -Encoding ASCII
+
+            $s = Join-Path $raiz "data\user-data\User\settings.json"
+            if ($null -ne $Json) { Set-Content -LiteralPath $s -Value $Json -Encoding UTF8 }
+            return $s
+        }
+
+        function Runtimes($ruta) {
+            if (-not (Test-Path -LiteralPath $ruta)) { return @() }
+            $j = Get-Content -LiteralPath $ruta -Raw | ConvertFrom-Json
+            if (-not $j.PSObject.Properties['java.configuration.runtimes']) { return @() }
+            return @($j.'java.configuration.runtimes')
+        }
+
+        It "anade el JDK nuevo donde ya habia registrados" {
+            New-JdkFalso 21
+            $s = New-PortableConAjustes ("{ ""java.configuration.runtimes"": [ { ""name"": ""JavaSE-21"", ""path"": ""$(($falso -replace '\\','\\'))\\Java\\jdk-21"", ""default"": true } ] }")
+
+            New-JdkFalso 25
+            $r = @(Sync-VSCodeJavaRuntimes)
+
+            (Runtimes $s).name -join ',' | Should Be 'JavaSE-21,JavaSE-25'
+            $r.Count | Should Be 1
+        }
+
+        # Cambiar el JDK por defecto porque aparezca otro seria decidir con que
+        # compila el usuario sin avisarle.
+        It "respeta el JDK por defecto que ya estaba elegido" {
+            New-JdkFalso 21
+            $s = New-PortableConAjustes ("{ ""java.configuration.runtimes"": [ { ""name"": ""JavaSE-21"", ""path"": ""$(($falso -replace '\\','\\'))\\Java\\jdk-21"", ""default"": true } ] }")
+
+            New-JdkFalso 25
+            Sync-VSCodeJavaRuntimes | Out-Null
+
+            (@(Runtimes $s) | Where-Object { $_.default }).name | Should Be 'JavaSE-21'
+        }
+
+        It "si el JDK por defecto ya no esta, pasa al mas alto" {
+            New-JdkFalso 21; New-JdkFalso 25
+            $s = New-PortableConAjustes ("{ ""java.configuration.runtimes"": [ { ""name"": ""JavaSE-21"", ""path"": ""$(($falso -replace '\\','\\'))\\Java\\jdk-21"", ""default"": true } ] }")
+
+            Remove-Item -LiteralPath (Join-Path $falso "Java\jdk-21") -Recurse -Force
+            Sync-VSCodeJavaRuntimes | Out-Null
+
+            (@(Runtimes $s) | Where-Object { $_.default }).name | Should Be 'JavaSE-25'
+        }
+
+        It "retira el JDK que se desinstalo" {
+            New-JdkFalso 21; New-JdkFalso 25
+            $s = New-PortableConAjustes ("{ ""java.configuration.runtimes"": [ { ""name"": ""JavaSE-21"", ""path"": ""$(($falso -replace '\\','\\'))\\Java\\jdk-21"" }, { ""name"": ""JavaSE-25"", ""path"": ""$(($falso -replace '\\','\\'))\\Java\\jdk-25"", ""default"": true } ] }")
+
+            Remove-Item -LiteralPath (Join-Path $falso "Java\jdk-21") -Recurse -Force
+            Sync-VSCodeJavaRuntimes | Out-Null
+
+            (Runtimes $s).name | Should Be 'JavaSE-25'
+        }
+
+        # Quien los quito con -Remove no quiere que vuelvan solos al instalar un
+        # Java. Mantener al dia lo que alguien pidio es una cosa; decidir por el,
+        # otra distinta.
+        It "no registra nada donde nadie lo pidio" {
+            New-JdkFalso 21
+            $s = New-PortableConAjustes '{ "editor.fontSize": 13 }'
+
+            @(Sync-VSCodeJavaRuntimes).Count | Should Be 0
+            (Runtimes $s).Count | Should Be 0
+        }
+
+        It "-Inicializar registra en un portable recien instalado" {
+            New-JdkFalso 21; New-JdkFalso 25
+            $s = New-PortableConAjustes $null
+
+            @(Sync-VSCodeJavaRuntimes -Inicializar).Count | Should Be 1
+            (Runtimes $s).name -join ',' | Should Be 'JavaSE-21,JavaSE-25'
+        }
+
+        # Reinstalar el editor conservando data\ no puede pisar una decision.
+        It "-Inicializar no pisa un settings donde ya se opino" {
+            New-JdkFalso 21
+            $s = New-PortableConAjustes '{ "java.configuration.runtimes": [] }'
+
+            @(Sync-VSCodeJavaRuntimes -Inicializar).Count | Should Be 0
+            (Runtimes $s).Count | Should Be 0
+        }
+
+        It "conserva los demas ajustes al reescribir" {
+            New-JdkFalso 21
+            $s = New-PortableConAjustes ("{ ""editor.fontSize"": 13, ""java.configuration.runtimes"": [ { ""name"": ""JavaSE-21"", ""path"": ""$(($falso -replace '\\','\\'))\\Java\\jdk-21"" } ] }")
+
+            New-JdkFalso 25
+            Sync-VSCodeJavaRuntimes | Out-Null
+
+            (Get-Content -LiteralPath $s -Raw | ConvertFrom-Json).'editor.fontSize' | Should Be 13
+        }
+
+        It "no reescribe si no ha cambiado nada" {
+            New-JdkFalso 21
+            $s = New-PortableConAjustes ("{ ""java.configuration.runtimes"": [ { ""name"": ""JavaSE-21"", ""path"": ""$(($falso -replace '\\','\\'))\\Java\\jdk-21"", ""default"": true } ] }")
+            @(Sync-VSCodeJavaRuntimes).Count | Should Be 0
+        }
+    }
+
     Context "Merge-VSCodeJavaRuntimes" {
 
             $raiz = "C:\kit\Java"

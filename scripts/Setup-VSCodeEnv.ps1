@@ -223,6 +223,21 @@ Add-UserPathEntry -Path (Join-Path $vscodePath "bin")
 Write-VSCodeShell -VSCodePath $vscodePath -Version $release.Version | Out-Null
 Write-Log "Shell creado: $vscodePath\$shellName" "SUCCESS"
 
+# Si ya hay JDK del kit, este editor nace sabiendo cuales son. Sin esto, un
+# portable instalado despues de los Java nacia sin saber nada de ellos y habia
+# que acordarse de registrarlos a mano.
+foreach ($linea in @(Sync-VSCodeJavaRuntimes -Inicializar)) {
+    Write-Log "JDK registrados: $linea" "SUCCESS"
+
+    # Registrarlos no sirve de nada sin la extension que los lee, y un portable
+    # recien instalado no trae ninguna. Solo se dice si de verdad falta.
+    $settings = Join-Path $vscodePath "data\user-data\User\settings.json"
+    if (@(Get-VSCodeExtensions -SettingsPath $settings) -notcontains 'redhat.java') {
+        Write-Log "  Los lee la extension de Java, que este VS Code no tiene:" "WARN"
+        Write-Log "    .\Use-VSCodeJava.bat -InstallExtension" "WARN"
+    }
+}
+
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  CONFIGURACION COMPLETADA" -ForegroundColor Cyan

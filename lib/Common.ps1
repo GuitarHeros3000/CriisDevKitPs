@@ -2258,6 +2258,139 @@ function Merge-VSCodeJavaRuntimes {
     return @($ajenas + $nuevas)
 }
 
+function Read-VSCodeSettings {
+    <#
+        Lee un settings.json de VS Code. Devuelve Ajustes, y Legible en $false si
+        lleva comentarios: VS Code los admite y ConvertFrom-Json no, asi que ese
+        archivo se puede leer a medias pero NO se puede reescribir sin comerselos.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Ruta)
+
+    if (-not (Test-Path -LiteralPath $Ruta)) {
+        return [PSCustomObject]@{ Ajustes = [PSCustomObject]@{}; Legible = $true; Existe = $false }
+    }
+
+    $texto = Get-Content -LiteralPath $Ruta -Raw
+    if ([string]::IsNullOrWhiteSpace($texto)) {
+        return [PSCustomObject]@{ Ajustes = [PSCustomObject]@{}; Legible = $true; Existe = $true }
+    }
+
+    try { $o = $texto | ConvertFrom-Json }
+    catch { return [PSCustomObject]@{ Ajustes = $null; Legible = $false; Existe = $true } }
+
+    return [PSCustomObject]@{ Ajustes = $o; Legible = $true; Existe = $true }
+}
+
+function Set-VSCodeJavaRuntimes {
+    <#
+        Escribe java.configuration.runtimes en un settings.json conservando el
+        resto de ajustes. Se recompone el objeto entero porque asi da igual que
+        la propiedad ya estuviera o no.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Ruta,
+        [Parameter(Mandatory=$true)][AllowNull()]$Ajustes,
+        [AllowNull()]$Runtimes
+    )
+
+    $carpeta = Split-Path -Parent $Ruta
+    if (-not (Test-Path -LiteralPath $carpeta)) {
+        New-Item -ItemType Directory -Path $carpeta -Force | Out-Null
+    }
+
+    $salida = [ordered]@{}
+    if ($Ajustes) {
+        foreach ($p in $Ajustes.PSObject.Properties) {
+            if ($p.Name -ne 'java.configuration.runtimes') { $salida[$p.Name] = $p.Value }
+        }
+    }
+    if (@($Runtimes).Count -gt 0) { $salida['java.configuration.runtimes'] = @($Runtimes) }
+
+    ([PSCustomObject]$salida | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $Ruta -Encoding UTF8
+}
+
+function Get-RegisteredKitJdks {
+    <#
+        Que lineas de JDK del kit constan en un settings.json ya leido.
+    #>
+    param([AllowNull()]$Ajustes)
+
+    if (-not $Ajustes -or -not $Ajustes.PSObject.Properties['java.configuration.runtimes']) { return @() }
+    $raiz = (Join-Path $WorkspaceRoot "Java").TrimEnd('\')
+
+    return @(@($Ajustes.'java.configuration.runtimes') |
+        Where-Object { $_ -and $_.path -and ([string]$_.path).StartsWith($raiz, [StringComparison]::OrdinalIgnoreCase) } |
+        ForEach-Object { if ((Split-Path -Leaf ([string]$_.path)) -match '^jdk-(\d+)$') { $Matches[1] } })
+}
+
+function Sync-VSCodeJavaRuntimes {
+    <#
+        Pone al dia los JDK registrados en el VS Code PORTABLE del kit.
+
+        Es el equivalente de Sync-BuildToolShells para el editor: instalar o
+        quitar un JDK tiene que notarse donde el kit ya lo tiene anotado, sin que
+        haya que acordarse de reejecutar nada. Que una cosa fuera automatica y la
+        otra no era una incoherencia, no una decision.
+
+        Solo toca el portable, nunca el VS Code instalado en el equipo: ese es del
+        usuario y se entra ahi unicamente con Use-VSCodeJava -Global.
+
+        Y solo si YA tenia JDK del kit anotados. Un portable donde nadie los
+        registro -o donde se quitaron con -Remove- se queda como esta: mantener al
+        dia lo que alguien pidio es una cosa, y decidir por el otra distinta.
+
+        Con -Inicializar se registra tambien donde no hubiera nada, que es lo que
+        hace falta al instalar el editor teniendo ya JDK.
+    #>
+    param([switch]$Inicializar)
+
+    $resumen = @()
+    $lineas  = @(Get-KitJdkLines)
+
+    foreach ($t in @(Get-VSCodeSettingsTargets | Where-Object { $_.DelKit })) {
+        $s = Read-VSCodeSettings -Ruta $t.Ruta
+        if (-not $s.Legible) { continue }
+
+        $tieneClave = $s.Ajustes -and $s.Ajustes.PSObject.Properties['java.configuration.runtimes']
+        $yaHay = @(Get-RegisteredKitJdks -Ajustes $s.Ajustes)
+
+        if ($yaHay.Count -eq 0) {
+            # Sin nada anotado no se decide por el usuario, salvo al instalar el
+            # editor: ahi si, un portable nuevo debe nacer sabiendo que JDK hay.
+            if (-not $Inicializar -or $tieneClave -or $lineas.Count -eq 0) { continue }
+        }
+
+        # Se respeta el JDK por defecto que hubiera si sigue instalado: cambiarlo
+        # por instalar otra version seria decidir con que compila sin avisar.
+        $defActual = $null
+        if ($tieneClave) {
+            $d = @(@($s.Ajustes.'java.configuration.runtimes') | Where-Object { $_.default -and $_.path })
+            if ($d.Count -gt 0 -and (Split-Path -Leaf ([string]$d[0].path)) -match '^jdk-(\d+)$') {
+                $defActual = $Matches[1]
+            }
+        }
+        $porDefecto = if ($defActual -and $lineas -contains $defActual) { $defActual }
+                      elseif ($lineas.Count -gt 0) { $lineas[-1] }
+                      else { $null }
+
+        $delKit    = @(Get-KitJavaRuntimeEntries -Default $porDefecto)
+        $actual    = if ($tieneClave) { @($s.Ajustes.'java.configuration.runtimes') } else { @() }
+        $resultado = @(Merge-VSCodeJavaRuntimes -Actual $actual -DelKit $delKit `
+                                                -RaizJava (Join-Path $WorkspaceRoot "Java"))
+
+        $antes   = (@($actual)    | ForEach-Object { "$($_.name)=$($_.path)=$($_.default)" }) -join '|'
+        $despues = (@($resultado) | ForEach-Object { "$($_.name)=$($_.path)=$($_.default)" }) -join '|'
+        if ($antes -eq $despues) { continue }
+
+        Set-VSCodeJavaRuntimes -Ruta $t.Ruta -Ajustes $s.Ajustes -Runtimes $resultado
+
+        $txt = if ($lineas.Count -gt 0) { "Java $($lineas -join ', ')" } else { "sin ningun JDK" }
+        $resumen += "$($t.Etiqueta) : $txt"
+    }
+
+    return $resumen
+}
+
 function Get-BuildToolJavaBindings {
     <#
         A que linea de JDK del kit apunta hoy el shell por defecto de cada

@@ -380,6 +380,9 @@ if ($Runtime -eq 'Java') {
 
     # Los shells por JDK de Maven y Gradle apuntarian a la carpeta borrada.
     foreach ($linea in @(Sync-BuildToolShells)) { Write-Log "Shells al dia: $linea" "INFO" }
+
+    # Y el VS Code portable tendria registrado un JDK que ya no existe.
+    foreach ($linea in @(Sync-VSCodeJavaRuntimes)) { Write-Log "VS Code al dia: $linea" "INFO" }
 }
 
 # --- Si alguna carpeta madre queda vacia, tambien se retira ---

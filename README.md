@@ -858,6 +858,25 @@ solo en lo que dice `mvn -version`.
 .\Use-VSCodeJava.bat -Remove     Los quita
 ```
 
+**El caso normal no necesita este comando.** El VS Code portable se mantiene solo,
+igual que los shells de Maven y Gradle: instalar un JDK lo registra, desinstalarlo lo
+retira, e instalar el editor teniendo ya JDK los deja anotados de entrada.
+
+```
+[SUCCESS] JDK instalado en ...\Java\jdk-21
+[SUCCESS] VS Code al dia: VS Code 1.136 del kit : Java 21, 25
+```
+
+Si elegiste un JDK por defecto con `-Default`, **se respeta**: instalar otra version
+no te cambia con cual compilas. Y donde nadie registro nada -o donde se quito con
+`-Remove`- no se registra solo: mantener al dia lo que alguien pidio es una cosa, y
+decidir por el otra distinta.
+
+El comando queda para lo que no puede ser automatico: instalar la extension
+(`-InstallExtension`, que son cientos de MB del marketplace y no puede dispararse
+sola dentro de un `Setup-JavaEnv`), elegir el JDK por defecto, quitar el registro, y
+el VS Code del equipo.
+
 **Por defecto solo toca el VS Code portable del kit.** El que tengas instalado en el
 equipo es tuyo: sus ajustes son personales y puede que quieras que siga compilando
 con el Java que ya usaba. Se dice en cada ejecucion y se entra ahi solo con
