@@ -871,9 +871,10 @@ function Test-VSCodeJavaRuntimes {
     <#
         Si VS Code conoce los JDK del kit.
 
-        Va aparte de la seccion de VS Code portable a proposito: lo normal en un
-        equipo corporativo es tener VS Code instalado por usuario -sin admin- y
-        no el portable del kit, y es justo ese el que hay que mirar.
+        Del VS Code instalado en el equipo solo se dice algo si YA tiene JDK del
+        kit registrados. Ese editor no lo gestiona el kit -sus ajustes son
+        personales- y avisar de que "le falta" algo que nunca se pidio seria
+        reganar por no hacer una cosa que nadie ha decidido hacer.
     #>
     $lineas = @(Get-KitJdkLines)
     if ($lineas.Count -eq 0) { return }
@@ -881,20 +882,16 @@ function Test-VSCodeJavaRuntimes {
     $targets = @(Get-VSCodeSettingsTargets)
     if ($targets.Count -eq 0) { return }
 
-    Write-Section "VS Code y los JDK"
+    $dicho = $false
 
     foreach ($t in $targets) {
-        if (-not (Test-Path -LiteralPath $t.Ruta)) {
-            Write-Check $t.Etiqueta "sin ajustes; no conoce ningun JDK del kit" 'info'
-            Write-Detail "Registralos con:  .\Use-VSCodeJava.bat"
-            continue
-        }
+        $existe = Test-Path -LiteralPath $t.Ruta
 
-        try { $cfg = Get-Content -LiteralPath $t.Ruta -Raw | ConvertFrom-Json }
-        catch {
-            # Con comentarios no se puede leer, y tampoco se reescribiria.
-            Write-Check $t.Etiqueta "settings.json con comentarios; no se puede leer" 'info'
-            continue
+        $cfg = $null
+        $ilegible = $false
+        if ($existe) {
+            try { $cfg = Get-Content -LiteralPath $t.Ruta -Raw | ConvertFrom-Json }
+            catch { $ilegible = $true }
         }
 
         $reg = @()
@@ -905,6 +902,25 @@ function Test-VSCodeJavaRuntimes {
         $delKit = @($reg | Where-Object { $_.path -and ([string]$_.path).StartsWith($JavaRoot, [StringComparison]::OrdinalIgnoreCase) } |
                    ForEach-Object { if ((Split-Path -Leaf ([string]$_.path)) -match '^jdk-(\d+)$') { $Matches[1] } })
 
+        # El del equipo, si no se ha optado por gestionarlo, no se menciona.
+        if (-not $t.DelKit -and $delKit.Count -eq 0) { continue }
+
+        if (-not $dicho) { Write-Section "VS Code y los JDK"; $dicho = $true }
+
+        # El del equipo necesita -Global: sin el, el comando ni lo mira.
+        $cmd = ".\Use-VSCodeJava.bat" + $(if ($t.DelKit) { "" } else { " -Global" })
+
+        if (-not $existe) {
+            Write-Check $t.Etiqueta "sin ajustes; no conoce ningun JDK del kit" 'info'
+            Write-Detail "Registralos con:  $cmd"
+            continue
+        }
+        if ($ilegible) {
+            # Con comentarios no se puede leer, y tampoco se reescribiria.
+            Write-Check $t.Etiqueta "settings.json con comentarios; no se puede leer" 'info'
+            continue
+        }
+
         $faltan = @($lineas | Where-Object { $delKit -notcontains $_ })
         $sobran = @($delKit | Where-Object { $lineas -notcontains $_ })
 
@@ -913,21 +929,21 @@ function Test-VSCodeJavaRuntimes {
         if (@(Get-VSCodeExtensions -SettingsPath $t.Ruta) -notcontains 'redhat.java') {
             Write-Check $t.Etiqueta "sin la extension de Java" 'warn'
             Write-Detail "Lo registrado no lo lee nadie hasta instalarla."
-            Write-Detail "Instalala con:  .\Use-VSCodeJava.bat -InstallExtension"
+            Write-Detail "Instalala con:  $cmd -InstallExtension"
             continue
         }
 
         if ($delKit.Count -eq 0) {
             Write-Check $t.Etiqueta "no conoce los JDK del kit" 'info'
             Write-Detail "Cada proyecto usaria el JAVA_HOME global en vez del JDK que pide."
-            Write-Detail "Registralos con:  .\Use-VSCodeJava.bat"
+            Write-Detail "Registralos con:  $cmd"
         }
         elseif ($faltan.Count -gt 0 -or $sobran.Count -gt 0) {
             $q = @()
             if ($faltan.Count -gt 0) { $q += "falta Java $($faltan -join ', ')" }
             if ($sobran.Count -gt 0) { $q += "sobra Java $($sobran -join ', ')" }
             Write-Check $t.Etiqueta ($q -join '; ') 'warn'
-            Write-Detail "Ponlo al dia con:  .\Use-VSCodeJava.bat"
+            Write-Detail "Ponlo al dia con:  $cmd"
         }
         else {
             $porDefecto = @($reg | Where-Object { $_.default }).name -join ','

@@ -1876,6 +1876,8 @@ Describe "Un shell de Maven/Gradle por cada JDK" {
             New-Item -ItemType Directory -Path (Join-Path $raiz "data\user-data\User") -Force | Out-Null
             New-Item -ItemType Directory -Path (Join-Path $raiz "bin") -Force | Out-Null
             Set-Content -LiteralPath (Join-Path $raiz "bin\code.cmd") -Value "" -Encoding ASCII
+            # Get-VSCodeSettingsTargets exige el ejecutable, no solo la carpeta.
+            Set-Content -LiteralPath (Join-Path $raiz "Code.exe") -Value "" -Encoding ASCII
 
             foreach ($c in $Carpetas) { New-Item -ItemType Directory -Path (Join-Path $ext $c) -Force | Out-Null }
 
@@ -1920,6 +1922,15 @@ Describe "Un shell de Maven/Gradle por cada JDK" {
         It "encuentra el code.cmd del portable a partir de su settings.json" {
             $s = New-PortableFalso -Carpetas @()
             Split-Path -Leaf (Get-VSCodeCli -SettingsPath $s) | Should Be 'code.cmd'
+        }
+
+        # El VS Code del equipo es del usuario y no lo gestiona el kit, asi que
+        # los dos se distinguen: el comando solo entra en el segundo si se pide.
+        It "marca cual es del kit y cual del equipo" {
+            New-PortableFalso -Carpetas @() | Out-Null
+            $t = @(Get-VSCodeSettingsTargets)
+            @($t | Where-Object { $_.DelKit }).Count | Should Be 1
+            ($t | Where-Object { $_.DelKit }).Ruta | Should Match 'user-data'
         }
     }
 

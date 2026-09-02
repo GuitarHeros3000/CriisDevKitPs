@@ -22,6 +22,14 @@
     El ajuste solo hace algo si ese VS Code tiene la extension de Java. El
     portable del kit viene sin ninguna, asi que se comprueba y se dice; con
     -InstallExtension se instala, que tampoco pide admin.
+
+    Por defecto SOLO toca el VS Code portable del kit. El que tengas instalado
+    en el equipo es tuyo y no lo gestiona el kit: sus ajustes son personales y
+    puede que quieras que siga usando el Java que ya usaba. Con -Global se
+    incluye tambien, y con -Path se apunta a un settings.json concreto.
+.PARAMETER Global
+    Incluye ademas el VS Code instalado en el equipo, cuyo settings.json vive en
+    tu perfil (%APPDATA%\Code) y no en el kit.
 .PARAMETER Default
     Linea del JDK que se usara en un proyecto que no declare ninguno (ej: 21).
     Si se omite, el mas alto instalado por el kit.
@@ -39,15 +47,19 @@
 .EXAMPLE
     .\Use-VSCodeJava.ps1 -WhatIf
 .EXAMPLE
-    .\Use-VSCodeJava.ps1 -Default 21
+    .\Use-VSCodeJava.ps1 -InstallExtension
 .EXAMPLE
-    .\Use-VSCodeJava.ps1 -Remove
+    .\Use-VSCodeJava.ps1 -Global -Default 21
+.EXAMPLE
+    .\Use-VSCodeJava.ps1 -Remove -Global
 #>
 
 param(
     [string]$Default,
 
     [string]$Path,
+
+    [switch]$Global,
 
     [switch]$InstallExtension,
 
@@ -108,12 +120,26 @@ if ($Path) {
     $targets = @([PSCustomObject]@{ Etiqueta = "settings.json indicado"; Ruta = $Path; DelKit = $false })
 }
 else {
-    $targets = @(Get-VSCodeSettingsTargets)
+    $todos = @(Get-VSCodeSettingsTargets)
+
+    # Por defecto solo el portable del kit. El VS Code del equipo es del usuario,
+    # no del kit: sus ajustes son personales y puede que quiera seguir compilando
+    # con el Java que ya usaba. Se entra ahi solo si lo pide.
+    $targets = @($todos | Where-Object { $Global -or $_.DelKit })
+
+    $fuera = @($todos | Where-Object { -not $_.DelKit -and -not $Global })
+    foreach ($f in $fuera) {
+        Write-Log "No se toca: $($f.Etiqueta)   (anade -Global si lo quieres)" "INFO"
+    }
+    if ($fuera.Count -gt 0) { Write-Host "" }
 }
 
 if ($targets.Count -eq 0) {
-    Write-Log "No se ha encontrado ningun VS Code en este equipo." "ERROR"
-    Write-Log "  Instala el portable del kit:  .\Setup-VSCodeEnv.bat" "WARN"
+    Write-Log "No hay ningun VS Code portable del kit." "ERROR"
+    Write-Log "  Instalalo con:  .\Setup-VSCodeEnv.bat" "WARN"
+    if (@(Get-VSCodeSettingsTargets).Count -gt 0) {
+        Write-Log "  O aplicalo al VS Code que ya tienes:  -Global" "WARN"
+    }
     Write-Log "  O indica el settings.json a mano:  -Path <ruta>" "WARN"
     exit 1
 }

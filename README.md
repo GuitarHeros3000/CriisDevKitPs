@@ -852,10 +852,24 @@ solo en lo que dice `mvn -version`.
 
 ```powershell
 .\Use-VSCodeJava.bat -WhatIf     Ensena que cambiaria
-.\Use-VSCodeJava.bat             Los registra
+.\Use-VSCodeJava.bat             Los registra en el VS Code portable del kit
 .\Use-VSCodeJava.bat -Default 21 Y elige cual manda por defecto
+.\Use-VSCodeJava.bat -Global     Tambien en el VS Code que ya tenias instalado
 .\Use-VSCodeJava.bat -Remove     Los quita
 ```
+
+**Por defecto solo toca el VS Code portable del kit.** El que tengas instalado en el
+equipo es tuyo: sus ajustes son personales y puede que quieras que siga compilando
+con el Java que ya usaba. Se dice en cada ejecucion y se entra ahi solo con
+`-Global`:
+
+```
+[INFO] No se toca: VS Code del equipo   (anade -Global si lo quieres)
+```
+
+Por lo mismo, `Doctor` **no menciona** el VS Code del equipo mientras no tenga JDK
+del kit registrados: avisar de que "le falta" algo que nunca se pidio seria reganar
+por no hacer una cosa que nadie ha decidido hacer.
 
 La extension de Java de VS Code **no lee la version de Java del proyecto**: usa el
 `JAVA_HOME` del proceso, que es uno solo para todas las ventanas y solo cambia al
@@ -875,7 +889,7 @@ Eso es `java.configuration.runtimes`, y es lo que escribe este comando:
 A partir de ahi, un proyecto que declara Java 21 compila con el 21 y uno que declara
 25 con el 25, en el mismo VS Code y **sin tocar ningun archivo de los proyectos**.
 
-Busca los dos sitios donde puede vivir ese archivo: el VS Code **portable del kit**
+Conoce los dos sitios donde puede vivir ese archivo: el VS Code **portable del kit**
 (en `data\user-data\User\`) y el **instalado por usuario** en `%APPDATA%\Code`, que
 es lo normal en un equipo corporativo. Comprobado con los dos a la vez.
 
