@@ -876,9 +876,36 @@ A partir de ahi, un proyecto que declara Java 21 compila con el 21 y uno que dec
 25 con el 25, en el mismo VS Code y **sin tocar ningun archivo de los proyectos**.
 
 Busca los dos sitios donde puede vivir ese archivo: el VS Code **portable del kit**
-(dentro de su `data\`) y el **instalado por usuario** en `%APPDATA%\Code`, que es lo
-normal en un equipo corporativo. Comprobado en un equipo donde solo estaba el
-segundo.
+(en `data\user-data\User\`) y el **instalado por usuario** en `%APPDATA%\Code`, que
+es lo normal en un equipo corporativo. Comprobado con los dos a la vez.
+
+### El portable no trae extensiones
+
+Un VS Code portable recien instalado por el kit **no tiene ninguna extension**, asi
+que registrar los JDK ahi no hace nada por si solo: quien lee ese ajuste es la
+extension de Java. Se detecta y se dice, y se instala si se pide:
+
+```powershell
+.\Use-VSCodeJava.bat -InstallExtension
+```
+
+Instala `vscjava.vscode-java-pack` -que arrastra el servidor de lenguaje, el
+depurador, las pruebas, Maven y Gradle- con el propio CLI de VS Code. **No pide
+admin**: en el portable va a `data\extensions`, dentro de la carpeta del kit. Se
+descarga del marketplace, asi que necesita red; el proxy del kit se le pasa por las
+variables que VS Code si mira, porque el editor no usa la descarga del kit.
+
+Comprobado de punta a punta: portable recien instalado -0 extensiones-, se registra
+el JDK, avisa de que falta la extension, se instala con `-InstallExtension`, y
+`Doctor` pasa de `[!] sin la extension de Java` a `[ok] Java 25`.
+
+> Saber que extensiones hay tiene mas trampa de la que parece, y las dos vias
+> evidentes fallan. El `extensions.json` de la carpeta de extensiones **queda vacio
+> en cuanto usas perfiles de VS Code** -cada perfil lleva el suyo en
+> `User\profiles\<id>\`-: en un equipo con 68 extensiones devolvia cero. Y mirar los
+> nombres de carpeta a secas tampoco vale, porque al desinstalar VS Code dice
+> *successfully uninstalled* pero deja la carpeta hasta el siguiente arranque. Lo
+> que acierta en los dos casos es la carpeta **menos** lo que marque `.obsolete`.
 
 **Es aditivo y reversible.** Los JDK que ya tuvieras registrados a mano -el de la
 empresa, por ejemplo- se conservan; solo se reemplazan los que apuntan a la carpeta

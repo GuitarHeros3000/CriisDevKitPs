@@ -19,9 +19,15 @@
     NO toca java.jdt.ls.java.home, que es el JDK con el que arranca el propio
     servidor de la extension. Ese ya lo resuelve ella sola, y cambiarlo puede
     dejar sin Java a un editor que funcionaba.
+    El ajuste solo hace algo si ese VS Code tiene la extension de Java. El
+    portable del kit viene sin ninguna, asi que se comprueba y se dice; con
+    -InstallExtension se instala, que tampoco pide admin.
 .PARAMETER Default
     Linea del JDK que se usara en un proyecto que no declare ninguno (ej: 21).
     Si se omite, el mas alto instalado por el kit.
+.PARAMETER InstallExtension
+    Instala el pack de Java en el VS Code que no lo tenga. Se descarga del
+    marketplace, asi que necesita red (y usa el proxy del kit si lo hay).
 .PARAMETER Path
     settings.json concreto. Si se omite, todos los VS Code que se encuentren.
 .PARAMETER Remove
@@ -43,6 +49,8 @@ param(
 
     [string]$Path,
 
+    [switch]$InstallExtension,
+
     [switch]$Remove,
 
     [switch]$Force,
@@ -56,6 +64,12 @@ $ErrorActionPreference = "Stop"
 
 $JavaRoot = Join-Path $WorkspaceRoot "Java"
 $Clave    = 'java.configuration.runtimes'
+
+# La que lee java.configuration.runtimes es redhat.java; el pack la arrastra
+# junto al depurador, las pruebas, Maven y Gradle, que es lo que se espera al
+# decir "quiero Java en VS Code".
+$ExtLenguaje = 'redhat.java'
+$ExtPack     = 'vscjava.vscode-java-pack'
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
@@ -150,28 +164,61 @@ foreach ($t in $targets) {
     $defAntes   = @($actual    | Where-Object { $_.default }).name -join ','
     $defDespues = @($resultado | Where-Object { $_.default }).name -join ','
 
-    if ($antes -eq $despues -and $defAntes -eq $defDespues) {
+    $cambia = -not ($antes -eq $despues -and $defAntes -eq $defDespues)
+
+    # Sin la extension de Java, este ajuste no lo lee nadie. El portable del kit
+    # viene sin ninguna extension, asi que es el caso normal y no una rareza.
+    # Se mira ANTES de descartar un settings.json que ya estaba al dia: si no, la
+    # segunda ejecucion diria "ya esta" sobre un VS Code que no puede usarlo.
+    $faltaJava = $false
+    if (-not $Remove) {
+        $faltaJava = @(Get-VSCodeExtensions -SettingsPath $t.Ruta) -notcontains $ExtLenguaje
+    }
+
+    if (-not $cambia -and -not $faltaJava) {
         Write-Host "    ya estaba al dia" -ForegroundColor Green
         Write-Host ""
         continue
     }
 
-    foreach ($r in $resultado) {
-        $esDelKit = ([string]$r.path).StartsWith($JavaRoot, [StringComparison]::OrdinalIgnoreCase)
-        $marca = if ($r.default) { "   <- por defecto" } else { "" }
-        $quien = if ($esDelKit) { "" } else { "   (ya estaba, no es del kit)" }
-        Write-Host ("    + {0,-14} {1}{2}{3}" -f $r.name, $r.path, $marca, $quien) -ForegroundColor White
+    if ($cambia) {
+        foreach ($r in $resultado) {
+            $esDelKit = ([string]$r.path).StartsWith($JavaRoot, [StringComparison]::OrdinalIgnoreCase)
+            $marca = if ($r.default) { "   <- por defecto" } else { "" }
+            $quien = if ($esDelKit) { "" } else { "   (ya estaba, no es del kit)" }
+            Write-Host ("    + {0,-14} {1}{2}{3}" -f $r.name, $r.path, $marca, $quien) -ForegroundColor White
+        }
+        foreach ($r in $actual) {
+            $sigue = @($resultado | Where-Object { $_.path -eq $r.path }).Count -gt 0
+            if (-not $sigue) {
+                Write-Host ("    - {0,-14} {1}" -f $r.name, $r.path) -ForegroundColor DarkYellow
+            }
+        }
+        if ($resultado.Count -eq 0) { Write-Host "    (queda sin ningun runtime registrado)" -ForegroundColor DarkYellow }
     }
-    foreach ($r in $actual) {
-        $sigue = @($resultado | Where-Object { $_.path -eq $r.path }).Count -gt 0
-        if (-not $sigue) {
-            Write-Host ("    - {0,-14} {1}" -f $r.name, $r.path) -ForegroundColor DarkYellow
+    else {
+        Write-Host "    los JDK ya estaban registrados" -ForegroundColor Green
+    }
+
+    if ($faltaJava) {
+        if ($InstallExtension) {
+            Write-Host "    falta la extension de Java: se instalara $ExtPack" -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "    OJO: este VS Code no tiene la extension de Java," -ForegroundColor Yellow
+            Write-Host "         asi que el ajuste no hara nada hasta instalarla." -ForegroundColor Yellow
+            Write-Host "         Anade -InstallExtension y se instala aqui mismo." -ForegroundColor Gray
         }
     }
-    if ($resultado.Count -eq 0) { Write-Host "    (queda sin ningun runtime registrado)" -ForegroundColor DarkYellow }
     Write-Host ""
 
-    $planes += [PSCustomObject]@{ Target = $t; Ajustes = $ajustes; Runtimes = $resultado }
+    $planes += [PSCustomObject]@{
+        Target    = $t
+        Ajustes   = $ajustes
+        Runtimes  = $resultado
+        Cambia    = $cambia
+        FaltaJava = $faltaJava
+    }
 }
 
 if ($planes.Count -eq 0) {
@@ -205,6 +252,29 @@ $fallos = 0
 
 foreach ($p in $planes) {
     $ruta = $p.Target.Ruta
+
+    if ($p.FaltaJava -and $InstallExtension) {
+        $cli = Get-VSCodeCli -SettingsPath $ruta
+        if (-not $cli) {
+            Write-Log "No se encontro el code.cmd de $($p.Target.Etiqueta); no se instala la extension" "WARN"
+        }
+        else {
+            Write-Log "Instalando $ExtPack en $($p.Target.Etiqueta)..." "INFO"
+            Write-Log "  (se descarga del marketplace; tarda un rato)" "INFO"
+            $r = Install-VSCodeExtension -CodeCmd $cli -Id $ExtPack
+            if ($r.Ok) {
+                Write-Log "Extension instalada" "SUCCESS"
+            }
+            else {
+                Write-Log "No se pudo instalar la extension" "ERROR"
+                $r.Salida | Select-Object -Last 3 | ForEach-Object { Write-Log "  $_" "WARN" }
+                # El ajuste se escribe igual: cuando la instalen a mano, ya esta.
+                $fallos++
+            }
+        }
+    }
+
+    if (-not $p.Cambia) { continue }
 
     try {
         $carpeta = Split-Path -Parent $ruta

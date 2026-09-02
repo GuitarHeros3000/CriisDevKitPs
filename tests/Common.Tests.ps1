@@ -1865,6 +1865,64 @@ Describe "Un shell de Maven/Gradle por cada JDK" {
 
     # Aparte y no dentro del anterior: Pester 3.4 -el que trae Windows- no
     # admite un Context dentro de otro.
+    Context "Extensiones de un VS Code" {
+
+        function New-PortableFalso {
+            param([string[]]$Carpetas, [string[]]$Obsoletas)
+
+            $raiz = Join-Path $falso "VSCode\vscode-1.136"
+            $ext  = Join-Path $raiz "data\extensions"
+            New-Item -ItemType Directory -Path $ext -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $raiz "data\user-data\User") -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $raiz "bin") -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $raiz "bin\code.cmd") -Value "" -Encoding ASCII
+
+            foreach ($c in $Carpetas) { New-Item -ItemType Directory -Path (Join-Path $ext $c) -Force | Out-Null }
+
+            if ($Obsoletas) {
+                $o = [ordered]@{}
+                foreach ($c in $Obsoletas) { $o[$c] = $true }
+                ([PSCustomObject]$o | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $ext ".obsolete") -Encoding ASCII
+            }
+
+            return (Join-Path $raiz "data\user-data\User\settings.json")
+        }
+
+        It "lee las extensiones de la carpeta" {
+            $s = New-PortableFalso -Carpetas @('redhat.java-1.55.0-win32-x64', 'vscjava.vscode-maven-0.45.3')
+            $e = @(Get-VSCodeExtensions -SettingsPath $s)
+            ($e -join ',') | Should Be 'redhat.java,vscjava.vscode-maven'
+        }
+
+        # Al desinstalar, VS Code dice "successfully uninstalled" y deja la
+        # carpeta hasta el siguiente arranque. Sin mirar .obsolete, una extension
+        # retirada seguia constando como instalada.
+        It "no cuenta una extension ya desinstalada" {
+            $s = New-PortableFalso -Carpetas @('redhat.java-1.55.0-win32-x64') `
+                                   -Obsoletas @('redhat.java-1.55.0-win32-x64')
+            @(Get-VSCodeExtensions -SettingsPath $s).Count | Should Be 0
+        }
+
+        # Caso real: una version vieja marcada obsoleta y la nueva instalada.
+        It "con dos versiones y la vieja obsoleta, la extension sigue estando" {
+            $s = New-PortableFalso -Carpetas @('redhat.java-1.53.0-win32-x64', 'redhat.java-1.55.0-win32-x64') `
+                                   -Obsoletas @('redhat.java-1.53.0-win32-x64')
+            @(Get-VSCodeExtensions -SettingsPath $s) | Should Be 'redhat.java'
+        }
+
+        # Un portable sin carpeta de extensiones: recien instalado, antes de
+        # arrancarlo por primera vez.
+        It "un portable sin carpeta de extensiones devuelve vacio" {
+            $s = Join-Path $falso "VSCode\vscode-1.136\data\user-data\User\settings.json"
+            @(Get-VSCodeExtensions -SettingsPath $s).Count | Should Be 0
+        }
+
+        It "encuentra el code.cmd del portable a partir de su settings.json" {
+            $s = New-PortableFalso -Carpetas @()
+            Split-Path -Leaf (Get-VSCodeCli -SettingsPath $s) | Should Be 'code.cmd'
+        }
+    }
+
     Context "Merge-VSCodeJavaRuntimes" {
 
             $raiz = "C:\kit\Java"

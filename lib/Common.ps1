@@ -2067,6 +2067,125 @@ function Get-VSCodeSettingsTargets {
     return $targets
 }
 
+function Get-VSCodeCli {
+    <#
+        El code.cmd de un VS Code, a partir de la ruta de su settings.json.
+
+        Hace falta para preguntarle por sus extensiones y para instalarlas, y no
+        es deducible de una sola regla: en el portable esta en <carpeta>\bin\ y
+        en el instalado por usuario, en Programs\Microsoft VS Code\bin\.
+    #>
+    param([Parameter(Mandatory=$true)][string]$SettingsPath)
+
+    # Portable:  ...\vscode-1.136\data\user-data\User\settings.json
+    $userData = Split-Path -Parent (Split-Path -Parent $SettingsPath)
+    if ((Split-Path -Leaf $userData) -eq 'user-data') {
+        $raiz = Split-Path -Parent (Split-Path -Parent $userData)
+        $cli  = Join-Path $raiz "bin\code.cmd"
+        if (Test-Path -LiteralPath $cli) { return $cli }
+        return $null
+    }
+
+    # Instalado por usuario o de maquina.
+    foreach ($c in @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd"),
+        "C:\Program Files\Microsoft VS Code\bin\code.cmd"
+    )) {
+        if (Test-Path -LiteralPath $c) { return $c }
+    }
+    return $null
+}
+
+function Get-VSCodeExtensions {
+    <#
+        Que extensiones tiene instaladas ese VS Code.
+
+        Se leen las CARPETAS, descontando las que .obsolete marque.
+
+        Las dos alternativas evidentes estan mal, y las dos se probaron:
+
+        - extensions.json de la carpeta de extensiones parecia el registro
+          bueno, pero en cuanto se usan PERFILES de VS Code queda vacio: cada
+          perfil lleva el suyo en User\profiles\<id>\extensions.json. En un
+          equipo con 68 extensiones instaladas devolvia cero.
+
+        - los nombres de carpeta a secas tampoco: al desinstalar, VS Code dice
+          "successfully uninstalled" pero deja la carpeta y la anota en
+          .obsolete para borrarla al arrancar, asi que una extension retirada
+          seguia constando como instalada.
+
+        La carpeta menos lo obsoleto acierta en los dos casos, y ademas es lo
+        que interesa: los perfiles solo eligen cuales se activan, pero todas
+        viven en el mismo sitio.
+
+        Tampoco se usa 'code --list-extensions': tarda varios segundos y Doctor
+        lo llamaria en cada ejecucion.
+    #>
+    param([Parameter(Mandatory=$true)][string]$SettingsPath)
+
+    # Portable: data\extensions, al lado de data\user-data.
+    $userData = Split-Path -Parent (Split-Path -Parent $SettingsPath)
+    $dir = if ((Split-Path -Leaf $userData) -eq 'user-data') {
+        Join-Path (Split-Path -Parent $userData) "extensions"
+    } else {
+        Join-Path $env:USERPROFILE ".vscode\extensions"
+    }
+
+    if (-not (Test-Path -LiteralPath $dir)) { return @() }
+
+    $obsoletas = @()
+    $ob = Join-Path $dir ".obsolete"
+    if (Test-Path -LiteralPath $ob) {
+        try {
+            $o = Get-Content -LiteralPath $ob -Raw | ConvertFrom-Json
+            $obsoletas = @($o.PSObject.Properties.Name)
+        }
+        catch { }
+    }
+
+    # El nombre de carpeta es <publicador>.<id>-<version>[-<plataforma>].
+    return @(Get-ChildItem -LiteralPath $dir -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $obsoletas -notcontains $_.Name } |
+        ForEach-Object { $_.Name -replace '-\d+\.\d+\.\d+.*$', '' } |
+        Sort-Object -Unique)
+}
+
+function Install-VSCodeExtension {
+    <#
+        Instala una extension en ese VS Code con su propio CLI. No pide admin: en
+        el portable va a data\extensions y en el instalado por usuario, al perfil.
+
+        VS Code no usa la descarga del kit, sale por su cuenta, asi que se le
+        pasa el proxy por las variables que si mira. Sin esto, en un equipo con
+        proxy obligatorio la instalacion fallaba sin explicar por que.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$CodeCmd,
+        [Parameter(Mandatory=$true)][string]$Id
+    )
+
+    $previo = @{ HTTPS_PROXY = $env:HTTPS_PROXY; HTTP_PROXY = $env:HTTP_PROXY }
+    try {
+        $proxy = Resolve-DownloadProxy -Uri ([Uri]"https://marketplace.visualstudio.com")
+        if ($proxy) {
+            $env:HTTPS_PROXY = $proxy
+            $env:HTTP_PROXY  = $proxy
+        }
+
+        $salida = & cmd /c "`"$CodeCmd`" --install-extension $Id --force 2>&1"
+        $rc = $LASTEXITCODE
+
+        return [PSCustomObject]@{
+            Ok     = ($rc -eq 0)
+            Salida = @($salida)
+        }
+    }
+    finally {
+        $env:HTTPS_PROXY = $previo.HTTPS_PROXY
+        $env:HTTP_PROXY  = $previo.HTTP_PROXY
+    }
+}
+
 function Get-KitJavaRuntimeEntries {
     <#
         Las entradas de java.configuration.runtimes que describen los JDK del

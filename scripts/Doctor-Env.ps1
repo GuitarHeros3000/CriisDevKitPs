@@ -908,6 +908,15 @@ function Test-VSCodeJavaRuntimes {
         $faltan = @($lineas | Where-Object { $delKit -notcontains $_ })
         $sobran = @($delKit | Where-Object { $lineas -notcontains $_ })
 
+        # Registrar los JDK no sirve de nada si ese VS Code no tiene la extension
+        # que los lee. El portable del kit viene sin ninguna.
+        if (@(Get-VSCodeExtensions -SettingsPath $t.Ruta) -notcontains 'redhat.java') {
+            Write-Check $t.Etiqueta "sin la extension de Java" 'warn'
+            Write-Detail "Lo registrado no lo lee nadie hasta instalarla."
+            Write-Detail "Instalala con:  .\Use-VSCodeJava.bat -InstallExtension"
+            continue
+        }
+
         if ($delKit.Count -eq 0) {
             Write-Check $t.Etiqueta "no conoce los JDK del kit" 'info'
             Write-Detail "Cada proyecto usaria el JAVA_HOME global en vez del JDK que pide."
