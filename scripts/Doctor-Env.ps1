@@ -886,6 +886,44 @@ function Test-BuildToolInstall {
     }
 }
 
+function Test-JdkCorpCa {
+    <#
+        Si los JDK confian en la CA de la empresa.
+
+        Solo se dice algo cuando hay una CA guardada: sin ella no se sabe si esta
+        red intercepta el HTTPS, y avisar de que "falta" un certificado que
+        quiza no haga falta seria ruido en la mayoria de los equipos.
+    #>
+    if (-not (Test-Path -LiteralPath $CorpCaFile)) { return }
+
+    $lineas = @(Get-KitJdkLines)
+    if ($lineas.Count -eq 0) { return }
+
+    Write-Section "CA de la empresa en los JDK"
+
+    $alias = 'assassinskipadm-corp'
+    $faltan = @()
+
+    foreach ($l in $lineas) {
+        $jdk = Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$l"
+        if ((Get-JdkTrustedAliases -JdkPath $jdk) -contains $alias) {
+            Write-Check "jdk-$l" "confia en la CA de la empresa" 'ok'
+        }
+        else {
+            # Java no usa el almacen de Windows: sin esto, Maven y Gradle fallan
+            # con PKIX path building failed aunque el navegador vaya bien.
+            Write-Check "jdk-$l" "sin la CA de la empresa" 'warn'
+            $faltan += $l
+        }
+    }
+
+    if ($faltan.Count -gt 0) {
+        Write-Detail "Maven y Gradle fallaran con 'PKIX path building failed'."
+        Add-Fix -Description "poner la CA de la empresa en $($faltan.Count) JDK (jdk-$($faltan -join ', jdk-'))" `
+                -Action { Sync-JdkCertificates | Out-Null }
+    }
+}
+
 function Test-VSCodeJavaRuntimes {
     <#
         Si VS Code conoce los JDK del kit.
@@ -1617,6 +1655,8 @@ function Test-KitIntegrity {
         "sources.json.ejemplo",
         "Use-VSCodeJava.bat",
         "scripts\Use-VSCodeJava.ps1",
+        "Use-CorpCert.bat",
+        "scripts\Use-CorpCert.ps1",
         "Setup-MavenEnv.bat",
         "Start-MavenEnv.bat",
         "scripts\Setup-MavenEnv.ps1",
@@ -1684,6 +1724,7 @@ Test-BuildToolInstall -Titulo "Gradle" -Root $GradleRoot -Prefijo 'gradle' `
 Test-DotnetInstall
 Test-VSCodeInstall
 Test-VSCodeJavaRuntimes
+Test-JdkCorpCa
 Test-InstalledSignatures
 Test-LockDrift
 Test-PortableApps

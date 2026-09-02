@@ -848,6 +848,56 @@ solo en lo que dice `mvn -version`.
 > (`maven-toolchains-plugin` en el `pom.xml`, o un bloque `toolchain` en el
 > `build.gradle`) y el kit no la va a meter en proyectos ajenos.
 
+## La CA de tu empresa dentro de los JDK
+
+```powershell
+.\Use-CorpCert.bat -WhatIf                 Ensena que haria
+.\Use-CorpCert.bat                         La busca sola y la aplica
+.\Use-CorpCert.bat -Cert C:\ca.cer         Si te la dio IT en un archivo
+.\Use-CorpCert.bat -Remove                 La retira
+```
+
+Muchas redes corporativas abren el HTTPS para inspeccionarlo: el trafico llega
+firmado por una CA de la empresa y no por la del sitio real. Windows lo acepta
+porque IT metio esa CA en el almacen del sistema, y por eso el navegador y
+PowerShell funcionan.
+
+**Java no usa ese almacen.** Tiene el suyo, `lib\security\cacerts`, con unas 118 CA
+publicas de fabrica, y la de tu empresa no esta. El resultado es el peor de los
+casos para diagnosticar: el kit descarga el JDK sin problema -PowerShell si confia-
+y el primer `mvn install` falla con
+
+```
+PKIX path building failed: unable to find valid certification path to requested target
+```
+
+que no menciona ni el proxy, ni la empresa, ni el certificado que falta.
+
+Arreglar el `cacerts` **arregla Maven, Gradle y cualquier herramienta Java a la vez**,
+porque todas van por ahi. Y no pide admin: ese archivo esta dentro de la carpeta del
+JDK, que la puso el propio usuario.
+
+La CA se guarda en `%LOCALAPPDATA%\AssassinSkipAdm` y se **reaplica sola** al
+instalar otro JDK, igual que los shells de Maven o los JDK de VS Code. `Doctor` dice
+cuales la tienen y lo repara con `-Fix`.
+
+### Como decide si tu red intercepta
+
+La primera version comparaba las raices entre si: varios dominios sin relacion
+firmados por la misma raiz parecia senal de un intermediario. Al probarlo en una red
+normal resulto que **`api.adoptium.net` y `registry.npmjs.org` comparten raiz de
+verdad** (GlobalSign ECC Root CA R4), asi que esa regla daba falsos positivos por
+pura casualidad.
+
+La pregunta buena no es *"se repite la raiz?"* sino **"la conoce Java?"**. Un JDK
+trae las CA publicas de fabrica y la de un proxy corporativo no esta ahi por
+definicion. Ademas es exactamente la condicion en la que importarla sirve de algo,
+que es lo que se quiere decidir.
+
+Comprobado en las dos direcciones: GlobalSign **si** esta entre las 118 del JDK -no
+se confunde con una corporativa- y una CA de prueba fabricada al efecto **no**, o sea
+que se detectaria.
+
 ## Los JDK del kit dentro de VS Code
 
 ```powershell

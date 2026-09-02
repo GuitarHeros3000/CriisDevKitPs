@@ -2020,6 +2020,241 @@ function Get-ShellJavaHome {
     return ([regex]::Match((Get-Content -LiteralPath $ShellBat -Raw), 'set "JAVA_HOME=([^"]+)"')).Groups[1].Value
 }
 
+$CorpCaFile = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\corp-ca.cer"
+
+function Get-TlsChainRoot {
+    <#
+        La CA raiz con la que se firma el certificado que devuelve un host HTTPS.
+
+        Sirve para reconocer una interceptacion TLS: si tres dominios que no
+        tienen nada que ver entre si llegan firmados por la MISMA raiz, esa raiz
+        es un intermediario de la empresa y no la CA publica de cada uno.
+
+        Devuelve $null si no se pudo conectar; eso no distingue "sin red" de
+        "bloqueado", y por eso quien llama prueba con varios hosts.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$HostName,
+        [int]$Port = 443
+    )
+
+    $cliente = $null
+    try {
+        $cliente = New-Object System.Net.Sockets.TcpClient
+        $tarea = $cliente.ConnectAsync($HostName, $Port)
+        if (-not $tarea.Wait(5000)) { return $null }
+
+        # El callback acepta cualquier cadena a proposito: aqui no se valida
+        # nada, solo se quiere VER quien firma.
+        $ssl = New-Object System.Net.Security.SslStream($cliente.GetStream(), $false,
+                    { param($a, $b, $c, $d) $true })
+        $ssl.AuthenticateAsClient($HostName)
+
+        $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)
+        $cadena = New-Object System.Security.Cryptography.X509Certificates.X509Chain
+        $cadena.ChainPolicy.RevocationMode = 'NoCheck'
+        $cadena.ChainPolicy.VerificationFlags = 'AllFlags'
+        $null = $cadena.Build($cert)
+
+        if ($cadena.ChainElements.Count -eq 0) { return $null }
+        $raiz = $cadena.ChainElements[$cadena.ChainElements.Count - 1].Certificate
+
+        return [PSCustomObject]@{
+            Subject    = $raiz.Subject
+            Thumbprint = $raiz.Thumbprint
+            Cert       = $raiz
+        }
+    }
+    catch { return $null }
+    finally {
+        if ($ssl) { $ssl.Dispose() }
+        if ($cliente) { $cliente.Close() }
+    }
+}
+
+function Get-CertSha256 {
+    <#
+        La huella SHA-256 de un certificado en el formato con dos puntos que usa
+        keytool, para poder compararlas directamente.
+    #>
+    param([Parameter(Mandatory=$true)]$Cert)
+
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($sha.ComputeHash($Cert.RawData)).Replace('-', ':') }
+    finally { $sha.Dispose() }
+}
+
+function Get-JdkTrustedFingerprints {
+    <#
+        Las huellas SHA-256 de todas las CA en las que confia un JDK de fabrica.
+        Un JDK trae unas 118: las publicas y reconocidas.
+    #>
+    param([Parameter(Mandatory=$true)][string]$JdkPath)
+
+    $keytool = Join-Path $JdkPath "bin\keytool.exe"
+    $store   = Join-Path $JdkPath "lib\security\cacerts"
+    if (-not (Test-Path $keytool) -or -not (Test-Path $store)) { return @() }
+
+    $salida = & cmd /c "`"$keytool`" -list -keystore `"$store`" -storepass changeit 2>&1"
+    if ($LASTEXITCODE -ne 0) { return @() }
+
+    return @($salida |
+        Where-Object { $_ -match 'SHA-?256[^:]*:\s*([0-9A-Fa-f:]{95})' } |
+        ForEach-Object { $Matches[1].ToUpperInvariant() })
+}
+
+function Find-CorpCa {
+    <#
+        Busca la CA de la empresa mirando quien firma varios dominios publicos y
+        comprobando si Java ya confia en esa raiz.
+
+        La primera version de esto comparaba las raices entre si: si varios
+        dominios sin relacion llegaban firmados por la MISMA, se daba por
+        interceptado. Al probarlo en una red normal salio que api.adoptium.net y
+        registry.npmjs.org comparten raiz de verdad -GlobalSign ECC Root CA R4-,
+        asi que esa regla daba falsos positivos por pura casualidad.
+
+        La pregunta buena no es "?se repite la raiz?" sino "?la conoce Java?".
+        Un JDK trae las CA publicas de fabrica; la de un proxy corporativo no
+        esta ahi por definicion. Y ademas es exactamente la condicion en la que
+        importarla sirve de algo, que es lo que se quiere decidir.
+
+        Necesita un JDK del kit para tener contra que comparar.
+    #>
+    param([string[]]$Hosts = @('api.adoptium.net', 'registry.npmjs.org', 'pypi.org'))
+
+    $lineas = @(Get-KitJdkLines)
+    if ($lineas.Count -eq 0) {
+        return [PSCustomObject]@{ Interceptado = $false; Motivo = 'no hay ningun JDK con el que comparar'; Cert = $null }
+    }
+    $conocidas = @(Get-JdkTrustedFingerprints -JdkPath (Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$($lineas[-1])"))
+    if ($conocidas.Count -eq 0) {
+        return [PSCustomObject]@{ Interceptado = $false; Motivo = 'no se pudo leer el almacen del JDK'; Cert = $null }
+    }
+
+    $vistos = 0
+    foreach ($h in $Hosts) {
+        $r = Get-TlsChainRoot -HostName $h
+        if (-not $r) { continue }
+        $vistos++
+
+        if ($conocidas -notcontains (Get-CertSha256 -Cert $r.Cert)) {
+            return [PSCustomObject]@{
+                Interceptado = $true
+                Motivo       = "$h llega firmado por una raiz que Java no conoce"
+                Cert         = $r.Cert
+                Subject      = $r.Subject
+                Thumbprint   = $r.Thumbprint
+            }
+        }
+    }
+
+    if ($vistos -eq 0) {
+        return [PSCustomObject]@{ Interceptado = $false; Motivo = 'no se pudo comprobar (sin respuesta)'; Cert = $null }
+    }
+    return [PSCustomObject]@{
+        Interceptado = $false
+        Motivo       = "las $vistos raices son publicas y Java ya las conoce"
+        Cert         = $null
+    }
+}
+
+function Get-JdkTrustedAliases {
+    <#
+        Los alias del almacen de certificados de un JDK. Se lee con keytool
+        porque el formato del cacerts no es leible de otra forma sin admin ni
+        librerias externas.
+    #>
+    param([Parameter(Mandatory=$true)][string]$JdkPath)
+
+    $keytool = Join-Path $JdkPath "bin\keytool.exe"
+    $store   = Join-Path $JdkPath "lib\security\cacerts"
+    if (-not (Test-Path $keytool) -or -not (Test-Path $store)) { return @() }
+
+    $salida = & cmd /c "`"$keytool`" -list -keystore `"$store`" -storepass changeit 2>&1"
+    if ($LASTEXITCODE -ne 0) { return @() }
+
+    # Cada entrada empieza por "<alias>, <fecha>, trustedCertEntry". El alias no
+    # lleva comas, asi que basta con lo que hay antes de la primera.
+    return @($salida | Where-Object { $_ -match 'trustedCertEntry' } |
+             ForEach-Object { ($_ -split ',')[0].Trim() })
+}
+
+function Import-JdkCertificate {
+    <#
+        Mete un certificado en el almacen de un JDK del kit.
+
+        NO pide admin: el cacerts vive dentro de la carpeta del JDK, que la puso
+        el propio usuario. Es el punto entero de hacerlo aqui.
+
+        Hace falta porque Java tiene su PROPIO almacen: importar la CA de la
+        empresa en el almacen de Windows arregla PowerShell, .NET y el navegador,
+        pero a Java no le sirve de nada, y Maven y Gradle corren sobre Java.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$JdkPath,
+        [Parameter(Mandatory=$true)][string]$CertPath,
+        [string]$Alias = 'assassinskipadm-corp'
+    )
+
+    $keytool = Join-Path $JdkPath "bin\keytool.exe"
+    $store   = Join-Path $JdkPath "lib\security\cacerts"
+
+    if (-not (Test-Path $keytool)) {
+        return [PSCustomObject]@{ Ok = $false; Salida = @("no hay keytool en $JdkPath") }
+    }
+    if (-not (Test-Path $store)) {
+        return [PSCustomObject]@{ Ok = $false; Salida = @("no hay cacerts en $JdkPath") }
+    }
+
+    # -noprompt no basta si el alias ya existe: keytool falla en vez de
+    # reemplazar, asi que se retira antes y da igual que no estuviera.
+    & cmd /c "`"$keytool`" -delete -alias $Alias -keystore `"$store`" -storepass changeit 2>&1" | Out-Null
+
+    $salida = & cmd /c "`"$keytool`" -importcert -noprompt -trustcacerts -alias $Alias -file `"$CertPath`" -keystore `"$store`" -storepass changeit 2>&1"
+    return [PSCustomObject]@{ Ok = ($LASTEXITCODE -eq 0); Salida = @($salida) }
+}
+
+function Remove-JdkCertificate {
+    param(
+        [Parameter(Mandatory=$true)][string]$JdkPath,
+        [string]$Alias = 'assassinskipadm-corp'
+    )
+
+    $keytool = Join-Path $JdkPath "bin\keytool.exe"
+    $store   = Join-Path $JdkPath "lib\security\cacerts"
+    if (-not (Test-Path $keytool) -or -not (Test-Path $store)) { return $false }
+
+    & cmd /c "`"$keytool`" -delete -alias $Alias -keystore `"$store`" -storepass changeit 2>&1" | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Sync-JdkCertificates {
+    <#
+        Reaplica la CA guardada a los JDK que no la tengan.
+
+        Se llama al instalar un JDK, por el mismo motivo que los shells de Maven:
+        un JDK nuevo -o uno reinstalado con -Force, que rehace el cacerts- nace
+        sin la CA de la empresa y sus descargas fallan con un error de
+        certificado que no menciona nada de esto.
+    #>
+    param([string]$Alias = 'assassinskipadm-corp')
+
+    if (-not (Test-Path -LiteralPath $CorpCaFile)) { return @() }
+
+    $resumen = @()
+    foreach ($l in @(Get-KitJdkLines)) {
+        $jdk = Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$l"
+        if ((Get-JdkTrustedAliases -JdkPath $jdk) -contains $Alias) { continue }
+
+        $r = Import-JdkCertificate -JdkPath $jdk -CertPath $CorpCaFile -Alias $Alias
+        if ($r.Ok) { $resumen += "jdk-$l" }
+    }
+
+    if ($resumen.Count -eq 0) { return @() }
+    return @("CA de la empresa puesta en: $($resumen -join ', ')")
+}
+
 function Get-VSCodeSettingsTargets {
     <#
         Donde vive el settings.json de cada VS Code que haya en la maquina.

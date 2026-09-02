@@ -383,6 +383,10 @@ foreach ($linea in @(Sync-BuildToolShells)) { Write-Log "Shells al dia: $linea" 
 # este tiene que aparecer sin que haya que acordarse de nada.
 foreach ($linea in @(Sync-VSCodeJavaRuntimes)) { Write-Log "VS Code al dia: $linea" "SUCCESS" }
 
+# Un JDK recien instalado nace sin la CA de la empresa, y sus descargas fallan
+# con un error de certificado que no menciona nada de esto.
+foreach ($linea in @(Sync-JdkCertificates)) { Write-Log $linea "SUCCESS" }
+
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  CONFIGURACION COMPLETADA" -ForegroundColor Cyan
