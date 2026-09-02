@@ -2603,12 +2603,19 @@ function Update-GeneratedShells {
     $angularRoot = Join-Path $WorkspaceRoot "Angular"
     $nodeDirs = @(Get-ChildItem -LiteralPath $angularRoot -Directory -ErrorAction SilentlyContinue |
                   Where-Object { $_.Name -match '^node-v(.+)-win-x64$' })
-    foreach ($d in @(Get-ChildItem -LiteralPath $angularRoot -Directory -ErrorAction SilentlyContinue |
-                     Where-Object { $_.Name -match '^angular-v(\d+)$' })) {
+
+    foreach ($d in @(Get-ChildItem -LiteralPath $angularRoot -Directory -ErrorAction SilentlyContinue)) {
+        # El -match va AQUI y no en un Where-Object: dentro de Where-Object,
+        # $Matches se queda en el ambito hijo y el cuerpo del bucle leeria el de
+        # la ultima comparacion que hubiera hecho antes -la de Node, dos lineas
+        # mas arriba-, o nada.
+        if ($d.Name -notmatch '^angular-v(\d+)$') { continue }
         $num = $Matches[1]
+
         # Con varias Node no se puede deducir con cual se instalo, y escribir el
         # shell con la equivocada seria peor que no tocarlo.
         if ($nodeDirs.Count -ne 1) { continue }
+
         Write-AngularShell -AngularPath $d.FullName -NodePath $nodeDirs[0].FullName `
                            -Version $num -NodeVersion ($nodeDirs[0].Name -replace '^node-v|-win-x64$', '') | Out-Null
         $resumen += "Shell rehecho: $($d.Name)"
