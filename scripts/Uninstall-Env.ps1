@@ -334,7 +334,25 @@ foreach ($t in $targets) {
     }
     catch {
         Write-Log "No se pudo borrar $($t.Name): $($_.Exception.Message)" "ERROR"
-        Write-Log "  Cierra las ventanas que lo esten usando y reintenta." "WARN"
+
+        # Decir QUE lo retiene, no "cierra las ventanas". Los que mas estorban
+        # aqui no tienen ventana ninguna: servidores de compilacion que quedan
+        # vivos en segundo plano despues de un build. Paso de verdad con
+        # VBCSCompiler, el de Roslyn, tras un 'dotnet run'.
+        $culpables = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.Path -and $_.Path.StartsWith($t.Path.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+        })
+
+        if ($culpables.Count -gt 0) {
+            Write-Log "  Lo retienen estos procesos:" "WARN"
+            foreach ($c in $culpables) {
+                Write-Log "    $($c.ProcessName)  (PID $($c.Id))" "WARN"
+            }
+            Write-Log "  Cierralos y reintenta. Si no tienen ventana, desde el Administrador de tareas." "WARN"
+        }
+        else {
+            Write-Log "  Cierra las ventanas o programas que lo esten usando y reintenta." "WARN"
+        }
         $failed += $t.Name
     }
 }
