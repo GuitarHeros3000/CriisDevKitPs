@@ -620,7 +620,11 @@ function Test-JavaHome {
         }
         $mayPath = Get-JavaMajor -Version $verPath
 
-        if ($mayHome -and $mayPath -and $mayHome -lt $mayPath) {
+        if ($mayHome -and $mayPath -and $mayHome -eq $mayPath) {
+            Write-Check "JAVA_HOME vs java" "coinciden (Java $mayHome)" 'ok'
+        }
+        elseif ($mayHome -and $mayPath -and $mayHome -lt $mayPath) {
+            # El caso peligroso: compilas con un Java MAS VIEJO del que crees.
             Write-Check "JAVA_HOME vs java" "descuadrados: $verHome frente a $verPath" 'warn'
             Write-Detail "'java' en consola responde $verPath, pero Maven, Gradle y los IDE"
             Write-Detail "leen JAVA_HOME: compilarian con Java $mayHome."
@@ -629,7 +633,19 @@ function Test-JavaHome {
             Write-Detail "OJO: cambia con que JDK compilan TODOS tus proyectos."
         }
         elseif ($mayHome -and $mayPath) {
-            Write-Check "JAVA_HOME vs java" "coinciden (Java $mayHome)" 'ok'
+            # JAVA_HOME es MAS NUEVO que el java del PATH. Menos peligroso que
+            # al reves -compilas con el moderno- pero siguen sin coincidir, y
+            # antes esto se anunciaba como "coinciden" solo porque la
+            # comprobacion miraba unicamente si JAVA_HOME estaba anticuado.
+            Write-Check "JAVA_HOME vs java" "distintos: $verHome frente a $verPath" 'warn'
+            Write-Detail "Maven, Gradle y los IDE usan Java $mayHome (JAVA_HOME), pero 'java'"
+            Write-Detail "en consola responde $verPath, que gana desde el PATH de maquina."
+            $kitJdk = Get-KitJavaHome
+            if ($kitJdk) {
+                $lineaKit = Split-Path -Leaf $kitJdk
+                Write-Detail "Para que tambien la consola use el del kit:"
+                Write-Detail "  .\Use-Env.bat -Runtime Java -Version $($lineaKit -replace '^jdk-','')"
+            }
         }
     }
 }
