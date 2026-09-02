@@ -26,6 +26,10 @@
 #>
 
 param(
+    # Version concreta (ej: 1.135.0). Si se omite, la ultima estable. Existe
+    # para que un devenv.lock.json pueda fijarla.
+    [string]$VSCodeVersion,
+
     [switch]$Force,
 
     [switch]$KeepData,
@@ -154,9 +158,12 @@ function Get-VSCodePortable {
 
 # --------------------------------------------------------------------------
 
-Write-Log "Consultando la ultima version estable de VS Code..."
+$pedidoVs = Split-RuntimeVersionSpec -Clave vscode -Spec $VSCodeVersion
 
-$release = Get-VSCodeRelease
+Write-Log $(if ($pedidoVs.Exacta) { "Buscando VS Code $($pedidoVs.Exacta)..." }
+            else { "Consultando la ultima version estable de VS Code..." })
+
+$release = Get-VSCodeRelease -Version $pedidoVs.Exacta
 if (-not $release) {
     Write-Log "No se pudo consultar la version de VS Code." "ERROR"
     Write-Log "  No se pudo leer $VSCodeUpdateApi. Reintenta." "WARN"
@@ -164,6 +171,11 @@ if (-not $release) {
 }
 
 Write-Log "  Version: $($release.Version)" "SUCCESS"
+if ($pedidoVs.Exacta -and -not $release.Sha256) {
+    # Se dice en vez de callarlo: pedir una version concreta sale por otra ruta
+    # que no publica checksum, asi que esa descarga NO se verifica.
+    Write-Log "  Al pedir una version concreta no hay checksum publicado: no se verificara." "WARN"
+}
 
 $line       = Get-ToolLine -Version $release.Version
 $FolderName = "vscode-$line"

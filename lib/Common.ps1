@@ -2019,6 +2019,22 @@ function Get-VSCodeRelease {
         VS Code da los tres de una vez. Se pide el canal "archive": el otro es el
         instalador, que es justo el que pide admin.
     #>
+    param([string]$Version)
+
+    # Con una version concreta no se usa la API de actualizacion -que solo sabe
+    # de la ultima- sino la ruta por version, que redirige al zip. Comprobado
+    # con 1.134.0 y 1.135.0. A cambio no hay checksum publicado: se descarga sin
+    # el y se dice, en vez de fingir que se verifico.
+    if (-not [string]::IsNullOrWhiteSpace($Version)) {
+        $v = $Version.Trim()
+        return [PSCustomObject]@{
+            Version  = $v
+            Url      = "https://update.code.visualstudio.com/$v/win32-x64-archive/stable"
+            Sha256   = $null
+            FileName = "VSCode-win32-x64-$v.zip"
+        }
+    }
+
     $api = Invoke-JsonApi -Uri $VSCodeUpdateApi -Quiet
     if (-not $api -or [string]::IsNullOrWhiteSpace($api.url)) { return $null }
 
@@ -2110,10 +2126,13 @@ function Get-RuntimeCatalog {
             Clave = 'java'; Nombre = 'Java'; Script = 'Setup-JavaEnv.ps1'
             ParamVersion = 'JavaVersion'; ParamPaquetes = $null
             Carpeta = 'Java'; Patron = '^jdk-(\d+)$'; AdmiteForce = $true
-            # El kit instala Eclipse Temurin, que firma como Eclipse Foundation.
-            ExeFirma = 'bin\java.exe'; FirmanteEsperado = 'Eclipse Foundation'
+            # Temurin ha firmado con dos nombres distintos segun la epoca: el
+            # JDK 25 sale como "Eclipse Foundation" y el 21 como "Eclipse.org
+            # Foundation, Inc.". Por eso el firmante esperado admite varias
+            # formas: con una sola, un JDK legitimo se marcaba como suplantado.
+            ExeFirma = 'bin\java.exe'; FirmanteEsperado = @('Eclipse Foundation', 'Eclipse.org Foundation')
             Bundle = $false
-            Fijable = $false
+            Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'node'; Nombre = 'Node'; Script = 'Setup-NodeEnv.ps1'
@@ -2129,7 +2148,7 @@ function Get-RuntimeCatalog {
             Carpeta = 'Angular'; Patron = '^angular-v(\d+)$'; AdmiteForce = $false
             ExeFirma = $null;           FirmanteEsperado = $null
             Bundle = $false
-            Fijable = $false
+            Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'git'; Nombre = 'Git'; Script = 'Setup-GitEnv.ps1'
@@ -2161,15 +2180,15 @@ function Get-RuntimeCatalog {
             Carpeta = 'Dotnet'; Patron = '^dotnet-(\d+\.\d+)$'; AdmiteForce = $true
             ExeFirma = 'dotnet.exe';   FirmanteEsperado = '.NET'
             Bundle = $true; Envoltorio = $false; Sfx = $false
-            Fijable = $false
+            Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'vscode'; Nombre = 'VS Code'; Script = 'Setup-VSCodeEnv.ps1'
-            ParamVersion = $null; ParamPaquetes = $null
+            ParamVersion = 'VSCodeVersion'; ParamPaquetes = $null
             Carpeta = 'VSCode'; Patron = '^vscode-(\d+\.\d+)$'; AdmiteForce = $true
             ExeFirma = 'Code.exe';     FirmanteEsperado = 'Microsoft Corporation'
             Bundle = $true; Envoltorio = $false; Sfx = $false
-            Fijable = $false
+            Fijable = $true
         }
     )
 }
@@ -2726,10 +2745,44 @@ function Get-LatestAngularCliVersion {
 
 function Get-JavaArchiveInfo {
     <#
-        Datos del JDK de Adoptium para una version mayor. Devuelve $null si la
-        API no responde.
+        Datos del JDK de Adoptium. Con -Major coge el ultimo de esa linea; con
+        -Release, ESE exacto (ej: jdk-25.0.4.1+1), que es lo que permite fijarlo
+        en un devenv.lock.json.
+
+        Son dos endpoints distintos y la respuesta tiene distinta forma: el de
+        "latest" devuelve una lista de objetos con .binary, y el de release_name
+        un objeto con .binaries. Devuelve $null si la API no responde.
+
+        Los filtros de la query no son opcionales en el segundo: sin ellos
+        devuelve tambien los static-libs y el primer zip no seria el JDK.
     #>
-    param([Parameter(Mandatory=$true)][int]$Major)
+    param(
+        [int]$Major,
+        [string]$Release
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($Release)) {
+        $uri = "https://api.adoptium.net/v3/assets/release_name/eclipse/" +
+               [Uri]::EscapeDataString($Release) +
+               "?architecture=x64&image_type=jdk&os=windows"
+
+        $r = Invoke-JsonApi -Uri $uri -TimeoutSec 120 -Quiet
+        if (-not $r) { return $null }
+
+        $obj = @($r)[0]
+        $zip = @($obj.binaries | Where-Object { $_.package.name -like '*.zip' })
+        if ($zip.Count -eq 0) { return $null }
+
+        return [PSCustomObject]@{
+            FileName = $zip[0].package.name
+            Url      = $zip[0].package.link
+            Sha256   = $zip[0].package.checksum
+            Release  = $obj.release_name
+            SizeMb   = [math]::Round($zip[0].package.size / 1MB, 1)
+        }
+    }
+
+    if ($Major -le 0) { return $null }
 
     $uri = "https://api.adoptium.net/v3/assets/latest/$Major/hotspot" +
            "?architecture=x64&image_type=jdk&os=windows&vendor=eclipse"
@@ -2747,6 +2800,71 @@ function Get-JavaArchiveInfo {
         Sha256   = $r.binary.package.checksum
         Release  = $r.release_name
     }
+}
+
+function Split-RuntimeVersionSpec {
+    <#
+    .SYNOPSIS
+        Separa lo que pide el usuario en "linea" y "exacta".
+    .DESCRIPTION
+        Los Setup aceptan ahora las dos formas en el MISMO parametro, para que
+        un devenv.lock.json pueda fijar la version sin necesitar un parametro
+        distinto por runtime:
+
+            -JavaVersion 21              la linea: el ultimo parche de la 21
+            -JavaVersion jdk-21.0.5+11   ese release exacto
+
+        Devuelve Linea (siempre) y Exacta ($null si solo se pidio la linea).
+        Reconocer una u otra depende del runtime, porque sus versiones no tienen
+        la misma forma: la de Java lleva prefijo y un '+', la de Angular es un
+        semver, y la de VS Code y .NET son X.Y frente a X.Y.Z.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Clave,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Spec
+    )
+
+    $s = $Spec.Trim()
+    if ([string]::IsNullOrWhiteSpace($s)) {
+        return [PSCustomObject]@{ Linea = $null; Exacta = $null }
+    }
+
+    switch ($Clave) {
+        'java' {
+            # jdk-25.0.4.1+1  ->  linea 25
+            if ($s -match '^jdk-(\d+)') {
+                return [PSCustomObject]@{ Linea = $Matches[1]; Exacta = $s }
+            }
+            # 25.0.4.1+1 sin prefijo: se acepta y se normaliza.
+            if ($s -match '^(\d+)\.\d+.*\+') {
+                return [PSCustomObject]@{ Linea = $Matches[1]; Exacta = "jdk-$s" }
+            }
+            return [PSCustomObject]@{ Linea = ($s -replace '^jdk-',''); Exacta = $null }
+        }
+        'angular' {
+            # 20.3.35 -> linea 20 ;  20 -> solo linea
+            if ($s -match '^(\d+)\.\d+') {
+                return [PSCustomObject]@{ Linea = $Matches[1]; Exacta = $s }
+            }
+            return [PSCustomObject]@{ Linea = $s; Exacta = $null }
+        }
+        'dotnet' {
+            # 10.0.400 -> canal 10.0 ;  10.0 -> solo canal
+            if ($s -match '^(\d+\.\d+)\.\d+') {
+                return [PSCustomObject]@{ Linea = $Matches[1]; Exacta = $s }
+            }
+            return [PSCustomObject]@{ Linea = $s; Exacta = $null }
+        }
+        'vscode' {
+            # 1.135.0 -> linea 1.135 ;  1.135 -> solo linea
+            if ($s -match '^(\d+\.\d+)\.\d+') {
+                return [PSCustomObject]@{ Linea = $Matches[1]; Exacta = $s }
+            }
+            return [PSCustomObject]@{ Linea = $s; Exacta = $null }
+        }
+    }
+
+    return [PSCustomObject]@{ Linea = $s; Exacta = $null }
 }
 
 function Get-WebText {

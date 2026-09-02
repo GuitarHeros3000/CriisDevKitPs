@@ -185,7 +185,16 @@ function Install-DotnetSdk {
 
 # --------------------------------------------------------------------------
 
-Write-Log $(if ($Channel) { "Buscando el canal $Channel..." } else { "Consultando los canales de .NET con soporte..." })
+# -Channel admite el canal ("10.0") o el SDK exacto ("10.0.400"), para que un
+# devenv.lock.json pueda fijarlo. El canal decide la carpeta; el exacto, que SDK
+# se instala dentro.
+$pedidoNet = Split-RuntimeVersionSpec -Clave dotnet -Spec $Channel
+$SdkExacto = $pedidoNet.Exacta
+$Channel   = $pedidoNet.Linea
+
+Write-Log $(if ($SdkExacto) { "Buscando el SDK $SdkExacto (canal $Channel)..." }
+            elseif ($Channel) { "Buscando el canal $Channel..." }
+            else { "Consultando los canales de .NET con soporte..." })
 
 $release = Get-DotnetRelease -Channel $Channel
 if (-not $release) {
@@ -193,6 +202,15 @@ if (-not $release) {
     if ($Channel) { Write-Log "  El canal '$Channel' no aparece en el indice de Microsoft." "WARN" }
     else          { Write-Log "  No se pudo leer $DotnetIndexUrl. Reintenta." "WARN" }
     exit 1
+}
+
+# Si el lock pidio un SDK exacto, manda ese y no el ultimo del canal. Se
+# reemplaza aqui, despues de validar que el canal existe.
+if ($SdkExacto) {
+    if ($SdkExacto -ne $release.SdkVersion) {
+        Write-Log "  El canal publica ahora el SDK $($release.SdkVersion); se instalara el fijado $SdkExacto" "WARN"
+    }
+    $release.SdkVersion = $SdkExacto
 }
 
 Write-Log "  Canal $($release.Channel) ($($release.Tipo.ToUpperInvariant()), $($release.Soporte)), SDK $($release.SdkVersion)" "SUCCESS"

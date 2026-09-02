@@ -22,8 +22,13 @@
 
 param(
     [Parameter(Mandatory=$false)]
-    [ValidateRange(14, 40)]
-    [int]$AngularVersion = 20,
+    # Admite la linea ("20") o la version exacta del CLI ("20.3.35"), en el
+    # mismo parametro, para que un devenv.lock.json pueda fijarla.
+    #
+    # Sin ValidateRange: ese atributo compara contra un numero y rechazaba
+    # "20.3.35" antes siquiera de entrar al script. El rango se comprueba abajo,
+    # sobre la LINEA ya extraida.
+    [string]$AngularVersion = '20',
 
     [string]$NodeVersion,
 
@@ -388,9 +393,21 @@ function New-AngularProject {
     }
 }
 
+# Se separa lo pedido en linea y version exacta del CLI. Todo lo demas -carpeta,
+# nombre del shell, que Node hace falta- va por la LINEA; la exacta solo decide
+# que le pedimos a npm.
+$pedidoNg       = Split-RuntimeVersionSpec -Clave angular -Spec $AngularVersion
+$AngularExacta  = $pedidoNg.Exacta
+$AngularVersion = [int]$pedidoNg.Linea
+
+if ($AngularVersion -lt 14 -or $AngularVersion -gt 40) {
+    Write-Log "Version de Angular fuera de rango: $AngularVersion (se admite de 14 a 40)" "ERROR"
+    exit 1
+}
+
 Write-Log "========================================" "INFO"
 Write-Log "  Angular Dev Environment Setup" "INFO"
-Write-Log "  Version: $AngularVersion" "INFO"
+Write-Log "  Version: $(if ($AngularExacta) { $AngularExacta } else { $AngularVersion })" "INFO"
 Write-Log "========================================" "INFO"
 Write-Log ""
 Write-Log "Carpeta destino: $AngularRoot" "INFO"
@@ -419,6 +436,7 @@ $EnvSetup = @{
     NodeDownloadUrl   = "https://nodejs.org/dist/v$resolvedNode/$nodeFolderName.zip"
     NodeShasumsUrl    = "https://nodejs.org/dist/v$resolvedNode/SHASUMS256.txt"
     AngularVersion    = $AngularVersion
+    AngularExacta     = $AngularExacta
     AngularFolderName = "angular-v$AngularVersion"
 }
 
@@ -459,7 +477,10 @@ if (-not $nodePath) { exit 1 }
 Show-PathConflicts -Root $EnvSetup.AngularRoot -Keep $nodePath -Label "Angular"
 Add-UserPathEntry -Path $nodePath
 
-$ngCmd = Install-AngularCLI -AngularPath $angularPath -NodePath $nodePath -Version $EnvSetup.AngularVersion
+# A npm se le pide la version EXACTA si el lock la fijo; si no, la linea, que
+# npm resuelve a su ultimo parche.
+$ngCmd = Install-AngularCLI -AngularPath $angularPath -NodePath $nodePath `
+             -Version $(if ($EnvSetup.AngularExacta) { $EnvSetup.AngularExacta } else { $EnvSetup.AngularVersion })
 if (-not $ngCmd) { exit 1 }
 
 Write-AngularShell -AngularPath $angularPath -NodePath $nodePath -Version $EnvSetup.AngularVersion -NodeVersion $EnvSetup.NodeVersion | Out-Null

@@ -874,16 +874,27 @@ El lock cierra esa puerta, igual que un `package-lock.json`:
 Comprobado: con un lock que pedia `3.12.9` y un manifiesto que pedia `3.12`,
 restauro **3.12.9** y no el 3.12.10 disponible.
 
-**Hasta donde llega, dicho sin adornos.** Fijar la version exacta depende de que
-el `Setup` de cada runtime la acepte, y no todos lo hacen:
+**Los nueve se fijan.** Durante un tiempo solo cinco: Java y Angular recibian la
+version como entero, .NET solo aceptaba canal y VS Code no tenia parametro. Ahora
+los cuatro admiten **la linea o la version exacta en el mismo parametro**:
 
-| Se fija exacto | Solo su linea |
-|---|---|
-| Python, Node, Git, Maven, Gradle | Java y Angular (`-Version` es un entero), .NET (solo canal), VS Code (sin parametro) |
+```powershell
+.\Setup-JavaEnv.bat   -JavaVersion 21                 la linea
+.\Setup-JavaEnv.bat   -JavaVersion jdk-21.0.9+10      ese release exacto
+.\Setup-AngularEnv.bat -AngularVersion 20.3.35        ese CLI exacto
+.\Setup-DotnetEnv.bat -Channel 10.0.400               ese SDK exacto
+.\Setup-VSCodeEnv.bat -VSCodeVersion 1.135.0          esa version exacta
+```
 
-El lock **anota igualmente** la version exacta de los cuatro de la derecha, para que
-al menos la diferencia se vea, y `Restore-Env` avisa por cada uno de que no puede
-fijarlo. Prometer un pin que no se puede cumplir seria peor que no tenerlo.
+La carpeta y el nombre del shell siguen saliendo de la **linea** (`jdk-21`,
+`angular-v20`), asi que fijar el parche no cambia donde se instala.
+
+Comprobado: con un lock pidiendo `jdk-21.0.9+10` y un manifiesto pidiendo la linea
+`21`, entra el `21.0.9+10` y `Doctor` confirma `= lock`.
+
+> Al pedir a VS Code una version concreta se usa otra ruta de descarga que **no
+> publica checksum**. El kit lo dice antes de bajar en vez de dar por verificado lo
+> que no lo esta.
 
 **Y sobre los checksums:** el lock guarda el SHA-256 solo donde el kit lo anoto al
 instalar, que hoy es Python. Los demas se verifican **al descargar** contra la
@@ -982,10 +993,9 @@ un companero:
 .\Doctor-Env.bat -Lock C:\proy\devenv.lock.json
 ```
 
-Distingue cuatro casos: **coincide**, **distinto** (y se puede volver con
-`Restore-Env`), **distinto pero previsible** (su `Setup` no admite fijar la exacta) y
-**el lock lo pide y no esta instalado**. Sin lock a la vista no dice nada: no tiene
-sentido llenar el informe de ruido a quien no usa uno.
+Distingue tres casos: **coincide**, **distinto** (y se puede volver con
+`Restore-Env`) y **el lock lo pide y no esta instalado**. Sin lock a la vista no dice
+nada: no tiene sentido llenar el informe de ruido a quien no usa uno.
 
 ## Install-NoAdmin
 

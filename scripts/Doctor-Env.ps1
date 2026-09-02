@@ -948,10 +948,19 @@ function Test-InstalledSignatures {
             $etiqueta = "$($e.Nombre) $linea"
 
             if ($f.Estado -eq 'Valid') {
-                if ($e.FirmanteEsperado -and $f.Firmante -notlike "*$($e.FirmanteEsperado)*") {
+                # FirmanteEsperado puede ser una lista: un mismo proveedor firma
+                # con nombres distintos segun la epoca. Temurin lo hace: el JDK
+                # 25 sale como "Eclipse Foundation" y el 21 como "Eclipse.org
+                # Foundation, Inc.". Con un solo valor, un JDK legitimo se
+                # marcaba como suplantado.
+                $esperados = @($e.FirmanteEsperado | Where-Object { $_ })
+                $encaja = ($esperados.Count -eq 0) -or
+                          @($esperados | Where-Object { $f.Firmante -like "*$_*" }).Count -gt 0
+
+                if (-not $encaja) {
                     # Firmado, valido, pero por OTRO. Es la senal que justifica
                     # toda esta seccion.
-                    Write-Check $etiqueta "firmado por $($f.Firmante), NO por $($e.FirmanteEsperado)" 'fail'
+                    Write-Check $etiqueta "firmado por $($f.Firmante), NO por $($esperados -join ' ni ')" 'fail'
                     Write-Detail "Reinstala desde la fuente oficial:  .\Setup-$($e.Carpeta)Env.bat -Force"
                 }
                 else {

@@ -27,7 +27,10 @@
 #>
 
 param(
-    [int]$JavaVersion = 0,
+    # Admite la linea ("21") o el release exacto ("jdk-21.0.5+11"). Es un
+    # string y no un int para que quepan los dos en el mismo parametro: asi un
+    # devenv.lock.json puede fijar la version sin necesitar otro distinto.
+    [string]$JavaVersion = '',
 
     [switch]$SetJavaHome,
 
@@ -94,10 +97,37 @@ function Resolve-JavaVersion {
 
 function Get-AdoptiumBinary {
     <#
-        Datos del ultimo JDK de esa version mayor para Windows x64: enlace,
-        checksum SHA-256 y version completa.
+        Datos del JDK para Windows x64: enlace, checksum SHA-256 y version
+        completa. Con -Release se pide ESE exacto en vez del ultimo de la
+        linea, que es lo que permite fijarlo en un devenv.lock.json.
     #>
-    param([int]$Major)
+    param(
+        [int]$Major,
+        [string]$Release
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($Release)) {
+        Write-Log "Consultando Adoptium por el release exacto $Release..."
+        $info = Get-JavaArchiveInfo -Release $Release
+        if (-not $info) {
+            Write-Log "Adoptium no publica el release '$Release'." "ERROR"
+            Write-Log "  Comprueba el nombre exacto, o pide solo la linea:  -JavaVersion $Major" "WARN"
+            return $null
+        }
+
+        # Se traduce a la forma que espera el resto de ESTE script. Devolver el
+        # objeto de Get-JavaArchiveInfo tal cual no valia: usa Url y Sha256
+        # donde aqui se leen Link y Sha256, asi que la descarga se quedaba sin
+        # URL y fallaba con "el argumento 'Uri' es una cadena vacia".
+        return [PSCustomObject]@{
+            Release  = $info.Release
+            Semver   = $null
+            FileName = $info.FileName
+            Link     = $info.Url
+            Sha256   = $info.Sha256
+            SizeMb   = $info.SizeMb
+        }
+    }
 
     $uri = "$AdoptiumApi/assets/latest/$Major/hotspot" +
            "?architecture=x64&image_type=jdk&os=windows&vendor=eclipse"
@@ -259,7 +289,12 @@ function Get-JavaPortable {
 # ellas explican que fallo y devuelven $null (o 0), y es este nivel el que decide
 # que eso es fatal. Asi se pueden probar por separado y reutilizar desde otro
 # script sin que se lleven por delante el proceso entero.
-$JavaVersion = Resolve-JavaVersion -Requested $JavaVersion
+# Se separa lo pedido en linea y release exacto ANTES de resolver: la carpeta y
+# los mensajes van por la linea, y el exacto solo decide que binario se baja.
+$pedido      = Split-RuntimeVersionSpec -Clave java -Spec $JavaVersion
+$JavaRelease = $pedido.Exacta
+
+$JavaVersion = Resolve-JavaVersion -Requested ([int]$(if ($pedido.Linea) { $pedido.Linea } else { 0 }))
 if ($JavaVersion -le 0) { exit 1 }
 
 $FolderName = "jdk-$JavaVersion"
@@ -267,7 +302,7 @@ $FolderName = "jdk-$JavaVersion"
 Write-Log "Carpeta destino: $JavaRoot" "INFO"
 Write-Log ""
 
-$binary = Get-AdoptiumBinary -Major $JavaVersion
+$binary = Get-AdoptiumBinary -Major $JavaVersion -Release $JavaRelease
 if (-not $binary) { exit 1 }
 
 Write-Log "  Release : $($binary.Release)"

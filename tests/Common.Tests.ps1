@@ -912,13 +912,21 @@ Describe "devenv.lock.json (Read-DevEnvLock)" {
         $p.Runtimes[0].Fijado  | Should Be $true
     }
 
-    # Java se instala con -JavaVersion, que es un entero: no hay forma de pedir
-    # 25.0.4.1. Prometer un pin que no se puede cumplir seria peor que no
-    # tenerlo, asi que se cae a la linea y se marca.
-    It "cae a la linea cuando el Setup no admite la exacta" {
-        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "java": { "linea": "25", "exacta": "25.0.4.1+1" } } }')
+    # Java tambien se fija desde que -JavaVersion acepta el release exacto.
+    # Antes era el ejemplo del caso contrario: su parametro era un entero y no
+    # habia forma de pedir 25.0.4.1+1.
+    It "Java tambien usa la exacta" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "java": { "linea": "25", "exacta": "jdk-25.0.4.1+1" } } }')
+        $p.Runtimes[0].Version | Should Be 'jdk-25.0.4.1+1'
+        $p.Runtimes[0].Fijado  | Should Be $true
+    }
+
+    # La caida a la linea sigue en el codigo aunque hoy ningun runtime la
+    # necesite: es la red de seguridad para el siguiente que se anada sin
+    # soporte de version exacta. Se prueba con una entrada marcada a mano.
+    It "sin exacta en el lock, se usa la linea" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "java": { "linea": "25" } } }')
         $p.Runtimes[0].Version | Should Be '25'
-        $p.Runtimes[0].Exacta  | Should Be '25.0.4.1+1'
         $p.Runtimes[0].Fijado  | Should Be $false
     }
 
@@ -960,18 +968,97 @@ Describe "devenv.lock.json (Read-DevEnvLock)" {
     }
 
     # Si esto se desalinea, el lock pediria versiones que el Setup rechaza.
-    It "Fijable coincide con lo que admite cada Setup" {
-        $c = Get-RuntimeCatalog
-        ($c | Where-Object { $_.Clave -eq 'python' }).Fijable | Should Be $true
-        ($c | Where-Object { $_.Clave -eq 'node'   }).Fijable | Should Be $true
-        ($c | Where-Object { $_.Clave -eq 'git'    }).Fijable | Should Be $true
-        ($c | Where-Object { $_.Clave -eq 'maven'  }).Fijable | Should Be $true
-        ($c | Where-Object { $_.Clave -eq 'gradle' }).Fijable | Should Be $true
-        # Estos tienen la version como entero, como canal, o no la tienen.
-        ($c | Where-Object { $_.Clave -eq 'java'    }).Fijable | Should Be $false
-        ($c | Where-Object { $_.Clave -eq 'angular' }).Fijable | Should Be $false
-        ($c | Where-Object { $_.Clave -eq 'dotnet'  }).Fijable | Should Be $false
-        ($c | Where-Object { $_.Clave -eq 'vscode'  }).Fijable | Should Be $false
+    # Los nueve son fijables desde que Java, Angular, .NET y VS Code aceptan la
+    # version exacta en su propio parametro; antes solo lo eran cinco.
+    It "los nueve runtimes se pueden fijar" {
+        foreach ($e in (Get-RuntimeCatalog)) {
+            $e.Fijable | Should Be $true
+        }
+    }
+
+    # Fijable sin parametro con que pedirlo seria mentira: Restore-Env no
+    # tendria como pasar la version.
+    It "todo runtime fijable tiene parametro de version" {
+        foreach ($e in (Get-RuntimeCatalog | Where-Object { $_.Fijable })) {
+            [string]::IsNullOrWhiteSpace($e.ParamVersion) | Should Be $false
+        }
+    }
+}
+
+Describe "Split-RuntimeVersionSpec" {
+
+    # Los Setup aceptan la linea y la version exacta en el MISMO parametro, para
+    # que un lock pueda fijarla sin necesitar otro distinto por runtime. Esto es
+    # lo que distingue una forma de la otra, y no es igual para todos: la de
+    # Java lleva prefijo y un '+', la de Angular es un semver.
+
+    It "Java: reconoce el release exacto y saca su linea" {
+        $r = Split-RuntimeVersionSpec -Clave java -Spec 'jdk-21.0.9+10'
+        $r.Linea  | Should Be '21'
+        $r.Exacta | Should Be 'jdk-21.0.9+10'
+    }
+
+    It "Java: la linea sola no fija nada" {
+        $r = Split-RuntimeVersionSpec -Clave java -Spec '21'
+        $r.Linea  | Should Be '21'
+        $r.Exacta | Should BeNullOrEmpty
+    }
+
+    It "Java: acepta el release sin el prefijo jdk- y lo normaliza" {
+        $r = Split-RuntimeVersionSpec -Clave java -Spec '21.0.9+10'
+        $r.Linea  | Should Be '21'
+        $r.Exacta | Should Be 'jdk-21.0.9+10'
+    }
+
+    It "Angular: 20.3.35 es exacta de la linea 20" {
+        $r = Split-RuntimeVersionSpec -Clave angular -Spec '20.3.35'
+        $r.Linea  | Should Be '20'
+        $r.Exacta | Should Be '20.3.35'
+    }
+
+    It "Angular: 20 es solo la linea" {
+        (Split-RuntimeVersionSpec -Clave angular -Spec '20').Exacta | Should BeNullOrEmpty
+    }
+
+    # .NET y VS Code tienen linea de DOS componentes, no uno: 10.0 y 1.135.
+    It ".NET: 10.0.400 es exacta del canal 10.0" {
+        $r = Split-RuntimeVersionSpec -Clave dotnet -Spec '10.0.400'
+        $r.Linea  | Should Be '10.0'
+        $r.Exacta | Should Be '10.0.400'
+    }
+
+    It ".NET: 10.0 es solo el canal" {
+        $r = Split-RuntimeVersionSpec -Clave dotnet -Spec '10.0'
+        $r.Linea  | Should Be '10.0'
+        $r.Exacta | Should BeNullOrEmpty
+    }
+
+    It "VS Code: 1.135.0 es exacta de la linea 1.135" {
+        $r = Split-RuntimeVersionSpec -Clave vscode -Spec '1.135.0'
+        $r.Linea  | Should Be '1.135'
+        $r.Exacta | Should Be '1.135.0'
+    }
+
+    It "vacio no pide nada" {
+        $r = Split-RuntimeVersionSpec -Clave java -Spec ''
+        $r.Linea  | Should BeNullOrEmpty
+        $r.Exacta | Should BeNullOrEmpty
+    }
+
+    # La linea que devuelve tiene que servir para componer el nombre de carpeta
+    # del catalogo; si no, se instalaria en un sitio y se buscaria en otro.
+    It "la linea encaja con el patron de carpeta del catalogo" {
+        $casos = @{ java = 'jdk-21.0.9+10'; angular = '20.3.35'; dotnet = '10.0.400'; vscode = '1.135.0' }
+        foreach ($clave in $casos.Keys) {
+            $e = @(Get-RuntimeCatalog | Where-Object { $_.Clave -eq $clave })[0]
+            $linea = (Split-RuntimeVersionSpec -Clave $clave -Spec $casos[$clave]).Linea
+            $carpeta = switch ($clave) {
+                'java'    { "jdk-$linea" }
+                'angular' { "angular-v$linea" }
+                default   { "$clave-$linea" }
+            }
+            $carpeta | Should Match $e.Patron
+        }
     }
 }
 

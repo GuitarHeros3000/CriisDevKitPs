@@ -333,8 +333,13 @@ foreach ($r in $plan.Runtimes) {
     }
 
     try {
+        # $LASTEXITCODE se pone a 0 ANTES de llamar. Un .ps1 que termina sin un
+        # "exit" explicito no lo toca, asi que se quedaba el de la ultima orden
+        # nativa que hubiera corrido dentro: Setup-JavaEnv instalaba bien y
+        # Restore-Env lo daba por fallido con "termino con codigo " (vacio).
+        $global:LASTEXITCODE = 0
         & $script @argumentos
-        $rc = $LASTEXITCODE
+        $rc = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
     }
     catch {
         Write-Log "$($r.Nombre) fallo: $($_.Exception.Message)" "ERROR"
