@@ -54,41 +54,6 @@ function Get-InstalledGitVersion {
     return (ConvertFrom-GitVersionOutput -Output $run.Output)
 }
 
-function Invoke-GitPostInstall {
-    <#
-        PortableGit trae un post-install.bat que remata la instalacion: crea
-        /dev, /etc/mtab y el resto del entorno MSYS que necesita Git Bash. Se
-        borra solo al terminar, y esa es la senal de que hizo su trabajo: el
-        codigo de salida es 1 aunque vaya bien, porque lo ultimo que ejecuta es
-        el DEL de si mismo.
-
-        Se lanza con cmd y el directorio de trabajo puesto. Con el
-        "git-bash.exe --command=post-install.bat" que sugiere su cabecera sale
-        del paso sin hacer nada.
-    #>
-    param([string]$GitPath)
-
-    $script = Join-Path $GitPath "post-install.bat"
-    if (-not (Test-Path -LiteralPath $script)) { return $true }
-
-    Write-Log "  rematando la instalacion (entorno de Git Bash)..."
-    try {
-        Start-Process -FilePath "cmd.exe" -ArgumentList @('/c', "`"$script`"") `
-                      -WorkingDirectory $GitPath -Wait -WindowStyle Hidden | Out-Null
-    }
-    catch {
-        Write-Log "  no se pudo ejecutar post-install.bat: $($_.Exception.Message)" "WARN"
-        return $false
-    }
-
-    if (Test-Path -LiteralPath $script) {
-        # Git funciona igual; lo que puede quedar a medias es el entorno Unix.
-        Write-Log "  post-install.bat no llego a terminar; git funciona, Git Bash puede ir justo" "WARN"
-        return $false
-    }
-    return $true
-}
-
 function Get-GitPortable {
     param([PSCustomObject]$Release, [string]$FolderName)
 

@@ -34,7 +34,7 @@
 param(
     [string]$Output,
 
-    [ValidateSet('Angular', 'Python', 'Java')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')]
     [string]$Runtime,
 
     [switch]$SkipBinaries
@@ -49,7 +49,10 @@ $AngularRoot = Join-Path $WorkspaceRoot "Angular"
 $PythonRoot  = Join-Path $WorkspaceRoot "Python"
 $JavaRoot    = Join-Path $WorkspaceRoot "Java"
 
-$ManifestVersion = 1
+# 2 porque el manifiesto lleva ahora la seccion "otros", con los seis runtimes
+# que antes se quedaban fuera. Un Import viejo debe RECHAZAR un bundle nuevo en
+# vez de importarlo a medias sin decir nada.
+$ManifestVersion = 2
 
 if ([string]::IsNullOrWhiteSpace($Output)) {
     $Output = Join-Path $DevKitRoot ("entorno-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".zip")
@@ -200,7 +203,24 @@ $angular = @(if (Test-RuntimeSelected -Name 'Angular' -Selected $Runtime) { Get-
 $python  = @(if (Test-RuntimeSelected -Name 'Python' -Selected $Runtime)  { Get-PythonEntries })
 $java    = @(if (Test-RuntimeSelected -Name 'Java' -Selected $Runtime)    { Get-JavaEntries })
 
-if ($angular.Count -eq 0 -and $python.Count -eq 0 -and $java.Count -eq 0) {
+# Los demas runtimes salen del CATALOGO y no de una lista escrita a mano. Es lo
+# que fallo antes: se anadieron seis runtimes al kit y este comando se quedo en
+# tres, asi que el bundle "portable" ignoraba en silencio Git, Maven, Gradle,
+# .NET y VS Code.
+$otros = @()
+foreach ($e in (Get-RuntimeCatalog | Where-Object { $_.Bundle })) {
+    if (-not (Test-RuntimeSelected -Name $e.Carpeta -Selected $Runtime)) { continue }
+    foreach ($linea in (Get-InstalledRuntimeLines -Entrada $e)) {
+        $exacta = Get-InstalledRuntimeVersion -Entrada $e -Linea $linea
+        if (-not $exacta) {
+            Write-Log "$($e.Nombre) $linea : no se pudo leer su version; se omite" "WARN"
+            continue
+        }
+        $otros += [PSCustomObject]@{ Entrada = $e; Linea = $linea; Version = $exacta }
+    }
+}
+
+if ($angular.Count -eq 0 -and $python.Count -eq 0 -and $java.Count -eq 0 -and $otros.Count -eq 0) {
     Write-Log "No hay nada instalado que exportar." "WARN"
     Write-Log "  Instala algo primero, o revisa con  .\Doctor-Env.bat" "WARN"
     exit 0
@@ -210,6 +230,7 @@ Write-Host "Se va a exportar:" -ForegroundColor Yellow
 foreach ($a in $angular) { Write-Host "  Angular v$($a.Version)  (CLI $($a.CliVersion), Node $($a.Node))" }
 foreach ($p in $python)  { Write-Host "  Python $($p.Full)  ($($p.Packages.Count) paquetes pip)" }
 foreach ($j in $java)    { Write-Host "  Java $($j.Version)  ($($j.Release))" }
+foreach ($o in $otros)   { Write-Host "  $($o.Entrada.Nombre) $($o.Version)" }
 Write-Host ""
 
 # --- Carpeta temporal donde se arma el bundle ---
@@ -230,6 +251,7 @@ try {
         angular         = @()
         python          = @()
         java            = @()
+        otros           = @()
     }
 
     # --- Angular ---
@@ -357,6 +379,45 @@ try {
         }
 
         $manifest.java += $entry
+    }
+
+    # --- Los seis que van por el catalogo ---
+    #
+    # Todos comparten forma: un archivo que se vuelve a descargar y que en
+    # destino se extrae segun sus metadatos (con envoltorio, plano, o
+    # autoextraible). No hay nada por runtime aqui, y esa es la idea: el
+    # proximo entra solo con anadirlo al catalogo.
+    foreach ($o in $otros) {
+        $e = $o.Entrada
+        Write-Log "$($e.Nombre) $($o.Version)..."
+
+        $entry = [ordered]@{
+            clave   = $e.Clave
+            linea   = $o.Linea
+            version = $o.Version
+        }
+
+        if (-not $SkipBinaries) {
+            New-Item -ItemType Directory -Path $runtimesDir -Force | Out-Null
+
+            $info = Get-BundleArchiveInfo -Clave $e.Clave -Version $o.Version
+            if (-not $info) {
+                Write-Log "  no se pudo resolver su descarga; se omite" "ERROR"
+                continue
+            }
+
+            $saved = Save-RuntimeArchive -Url $info.Url -FileName $info.FileName -Sha256 $info.Sha256 `
+                                         -DestDir $runtimesDir -Label "$($e.Nombre) $($o.Version)"
+            if (-not $saved) {
+                Write-Log "  no se pudo traer el archivo; se omite" "ERROR"
+                continue
+            }
+
+            $entry.archive = "runtimes/$($saved.File)"
+            $entry.sha256  = $saved.Sha256
+        }
+
+        $manifest.otros += $entry
     }
 
     # --- Manifiesto ---

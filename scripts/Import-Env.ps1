@@ -28,7 +28,7 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$Path,
 
-    [ValidateSet('Angular', 'Python', 'Java')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')]
     [string]$Runtime,
 
     [switch]$WhatIf,
@@ -45,7 +45,10 @@ $AngularRoot = Join-Path $WorkspaceRoot "Angular"
 $PythonRoot  = Join-Path $WorkspaceRoot "Python"
 $JavaRoot    = Join-Path $WorkspaceRoot "Java"
 
-$SupportedManifest = 1
+# 2 desde que el manifiesto lleva la seccion "otros" con los seis runtimes que
+# antes no se empaquetaban. Los bundles v1 se siguen leyendo: solo les falta esa
+# seccion y la lista sale vacia.
+$SupportedManifest = 2
 
 
 function Expand-BundleArchive {
@@ -59,7 +62,11 @@ function Expand-BundleArchive {
         [string]$RelativePath,
         [string]$Sha256,
         [string]$DestDir,
-        [string]$Label
+        [string]$Label,
+        # Verifica y COPIA el archivo sin extraerlo. Lo necesitan los runtimes
+        # que no vienen en zip -PortableGit es un autoextraible- o que se
+        # descomprimen de otra forma; de eso se encarga Expand-BundledRuntime.
+        [switch]$SoloCopiar
     )
 
     $archive = Join-Path $BundleDir ($RelativePath -replace '/', '\')
@@ -79,14 +86,20 @@ function Expand-BundleArchive {
         Write-Log "  SHA-256 verificado" "SUCCESS"
     }
 
+    if (-not (Test-Path -LiteralPath $DestDir)) {
+        New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+    }
+
+    if ($SoloCopiar) {
+        Copy-Item -LiteralPath $archive -Destination $DestDir -Force
+        return $true
+    }
+
     if (-not (Test-ZipIntegrity -ZipPath $archive)) {
         Write-Log "$Label : el zip del bundle esta danado" "ERROR"
         return $false
     }
 
-    if (-not (Test-Path -LiteralPath $DestDir)) {
-        New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
-    }
     Expand-Archive -Path $archive -DestinationPath $DestDir -Force
     return $true
 }
@@ -146,10 +159,25 @@ try {
     $python  = @(if (Test-RuntimeSelected -Name 'Python' -Selected $Runtime)  { $m.python })
     $java    = @(if (Test-RuntimeSelected -Name 'Java' -Selected $Runtime)    { $m.java })
 
+    # Los seis restantes vienen en "otros", identificados por su clave del
+    # catalogo. Un bundle v1 no trae esa seccion, y entonces la lista sale vacia.
+    $otros = @()
+    foreach ($o in @($m.otros)) {
+        if (-not $o -or -not $o.clave) { continue }
+        $e = @(Get-RuntimeCatalog | Where-Object { $_.Clave -eq $o.clave })
+        if ($e.Count -eq 0) { continue }
+        if (-not (Test-RuntimeSelected -Name $e[0].Carpeta -Selected $Runtime)) { continue }
+        $otros += $o
+    }
+
     Write-Host "Se va a instalar:" -ForegroundColor Yellow
     foreach ($a in $angular) { Write-Host "  Angular v$($a.version)  (CLI $($a.cliVersion), Node $($a.node))" }
     foreach ($p in $python)  { Write-Host "  Python $($p.full)  ($(@($p.packages).Count) paquetes)" }
     foreach ($j in $java)    { Write-Host "  Java $($j.version)  ($($j.release))" }
+    foreach ($o in $otros)   {
+        $n = @(Get-RuntimeCatalog | Where-Object { $_.Clave -eq $o.clave })[0].Nombre
+        Write-Host "  $n $($o.version)"
+    }
     Write-Host ""
     Write-Host "Destino: $WorkspaceRoot" -ForegroundColor Yellow
     Write-Host ""
@@ -343,6 +371,82 @@ try {
         Write-JavaShell -JdkPath $jdkPath -Major $j.version -Release $j.release | Out-Null
         Write-Log "  shell regenerado con las rutas de esta maquina" "SUCCESS"
         $pathsToAdd += (Join-Path $jdkPath "bin")
+    }
+
+    # --- Los seis que van por el catalogo ---
+    #
+    # Un solo bucle para todos: como se extrae cada uno y donde va su bin sale
+    # de los metadatos del catalogo, no de un caso por runtime. Anadir el
+    # siguiente no deberia tocar este archivo.
+    foreach ($o in $otros) {
+        $e = @(Get-RuntimeCatalog | Where-Object { $_.Clave -eq $o.clave })
+        if ($e.Count -eq 0) {
+            Write-Log "El bundle trae '$($o.clave)', que este kit no conoce; se omite" "WARN"
+            continue
+        }
+        $e = $e[0]
+
+        Write-Log "Instalando $($e.Nombre) $($o.version)..."
+
+        $raiz = Join-Path $WorkspaceRoot $e.Carpeta
+        $nombre = switch ($e.Clave) {
+            'node' { "node-$($o.linea)" }
+            default { "$($e.Clave)-$($o.linea)" }
+        }
+        $destino = Join-Path $raiz $nombre
+
+        if (Test-Path -LiteralPath $destino) {
+            Write-Log "  ya existe $nombre; se conserva" "WARN"
+        }
+        else {
+            # El archivo se verifica ANTES de extraer, igual que los demas: si el
+            # bundle viajo en un USB y se corrompio, mejor enterarse aqui.
+            $tmp = Join-Path $env:TEMP ("imp-" + [Guid]::NewGuid().ToString('N').Substring(0,8))
+            if (-not (Expand-BundleArchive -BundleDir $bundleDir -RelativePath $o.archive `
+                                           -Sha256 $o.sha256 -DestDir $tmp -Label "$($e.Nombre) $($o.version)" -SoloCopiar)) {
+                continue
+            }
+
+            if (-not (Test-Path -LiteralPath $raiz)) { New-Item -ItemType Directory -Path $raiz -Force | Out-Null }
+
+            $archivo = @(Get-ChildItem -LiteralPath $tmp -File)[0].FullName
+            $ok = Expand-BundledRuntime -Archivo $archivo -Destino $destino -Entrada $e
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+
+            if (-not $ok) {
+                Write-Log "  no se pudo extraer; se omite" "ERROR"
+                continue
+            }
+
+            # PortableGit necesita su post-install para dejar listo el entorno
+            # de Git Bash. Sin esto, un Git importado quedaba a medias y Doctor
+            # lo cazaba con "post-instalacion sin completar".
+            if ($e.Clave -eq 'git') {
+                Invoke-GitPostInstall -GitPath $destino | Out-Null
+            }
+
+            # VS Code solo es portable si existe data\; sin ella escribiria los
+            # ajustes en el perfil del usuario sin avisar.
+            if ($e.Clave -eq 'vscode') {
+                $data = Join-Path $destino "data"
+                if (-not (Test-Path -LiteralPath $data)) {
+                    New-Item -ItemType Directory -Path $data -Force | Out-Null
+                    Write-Log "  modo portable activado (carpeta data\)" "SUCCESS"
+                }
+            }
+        }
+
+        Write-RuntimeShell -Clave $e.Clave -Ruta $destino -Version $o.version -Linea $o.linea | Out-Null
+        Write-Log "  shell regenerado con las rutas de esta maquina" "SUCCESS"
+
+        # Cada uno publica una carpeta distinta en el PATH.
+        $bin = switch ($e.Clave) {
+            'node'   { $destino }
+            'dotnet' { $destino }
+            'git'    { Join-Path $destino "cmd" }
+            default  { Join-Path $destino "bin" }
+        }
+        $pathsToAdd += $bin
     }
 
     if ($pathsToAdd.Count -gt 0) {

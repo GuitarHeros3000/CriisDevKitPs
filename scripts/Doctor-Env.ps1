@@ -15,6 +15,9 @@
     apuntando a una carpeta borrada. SIN este parametro, Doctor no toca nada.
 .PARAMETER Force
     Con -Fix, no pide confirmacion.
+.PARAMETER Lock
+    Compara lo instalado contra ese devenv.lock.json y senala los desvios. Sin
+    este parametro se busca uno en la carpeta actual; si no hay, no se dice nada.
 .PARAMETER Report
     Ademas de mostrarlo, guarda el diagnostico en un archivo markdown listo para
     adjuntar a un ticket. La clave del proxy va enmascarada, como en pantalla.
@@ -40,7 +43,9 @@ param(
 
     [switch]$Report,
 
-    [string]$ReportPath
+    [string]$ReportPath,
+
+    [string]$Lock
 )
 
 $ProgressPreference = "SilentlyContinue"
@@ -911,6 +916,75 @@ function Test-VSCodeInstall {
     }
 }
 
+function Test-LockDrift {
+    <#
+        Compara lo instalado contra un devenv.lock.json.
+
+        Hasta ahora el lock solo servia AL RESTAURAR. Con esto sirve tambien
+        para lo contrario: saber que tu maquina se salio del carril. Es la
+        pregunta que se hace uno cuando algo compila distinto que a un
+        companero, y sin esto habia que ir version por version a mano.
+
+        Si no hay lock no se dice nada: la mayoria de la gente no usa uno y no
+        tiene sentido llenarle el informe de ruido.
+    #>
+    $ruta = if ($Lock) { $Lock } else { Join-Path (Get-Location).Path "devenv.lock.json" }
+    if (-not (Test-Path -LiteralPath $ruta)) {
+        if ($Lock) {
+            Write-Section "Lock"
+            Write-Check "devenv.lock.json" "no existe: $ruta" 'fail'
+        }
+        return
+    }
+
+    Write-Section "Desvio respecto al lock"
+    Write-Check "Lock" $ruta 'info'
+
+    try { $cfg = Get-Content -LiteralPath $ruta -Raw | ConvertFrom-Json }
+    catch {
+        Write-Check "Lectura" "no es JSON valido" 'fail'
+        return
+    }
+
+    $plan = Read-DevEnvLock -Config $cfg
+    foreach ($e in $plan.Errores) { Write-Check "Lock" $e 'fail' }
+    if ($plan.Runtimes.Count -eq 0) { return }
+
+    foreach ($r in $plan.Runtimes) {
+        $lineas = @(Get-InstalledRuntimeLines -Entrada $r.Entrada)
+        $linea  = if ($r.Linea) { $r.Linea } else { $r.Version }
+
+        if ($lineas -notcontains $linea) {
+            Write-Check $r.Nombre "el lock pide $($r.Version) y no esta instalado" 'fail'
+            Write-Detail "Instalalo con:  .\Restore-Env.bat"
+            continue
+        }
+
+        $instalada = Get-InstalledRuntimeVersion -Entrada $r.Entrada -Linea $linea
+        if (-not $instalada) {
+            Write-Check $r.Nombre "instalado, pero no se pudo leer su version" 'warn'
+            continue
+        }
+
+        if (-not $r.Exacta) {
+            Write-Check $r.Nombre "$instalada  (el lock no anoto version exacta)" 'info'
+        }
+        elseif ($instalada -eq $r.Exacta) {
+            Write-Check $r.Nombre "$instalada  = lock" 'ok'
+        }
+        elseif (-not $r.Entrada.Fijable) {
+            # El lock lo anoto, pero su Setup no admite fijarlo: el desvio era
+            # previsible y no es culpa de nadie.
+            Write-Check $r.Nombre "$instalada  (lock: $($r.Exacta))" 'warn'
+            Write-Detail "Su Setup no admite fijar la version exacta, solo la linea."
+        }
+        else {
+            Write-Check $r.Nombre "$instalada  DISTINTO del lock ($($r.Exacta))" 'fail'
+            Write-Detail "Para volver a lo que dice el lock:  .\Restore-Env.bat"
+        }
+    }
+}
+
 function Test-PortableApps {
     Write-Section "Install-NoAdmin"
 
@@ -1324,6 +1398,7 @@ Test-BuildToolInstall -Titulo "Gradle" -Root $GradleRoot -Prefijo 'gradle' `
                       -SetupBat '.\Setup-GradleEnv.bat'
 Test-DotnetInstall
 Test-VSCodeInstall
+Test-LockDrift
 Test-PortableApps
 Test-UserPath
 Test-PathConflicts

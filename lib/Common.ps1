@@ -1970,57 +1970,240 @@ function Get-RuntimeCatalog {
             Clave = 'python'; Nombre = 'Python'; Script = 'Setup-PythonEnv.ps1'
             ParamVersion = 'PythonVersion'; ParamPaquetes = 'InstallPackages'
             Carpeta = 'Python'; Patron = '^python-(\d+\.\d+)$'; AdmiteForce = $true
+            Bundle = $false
             Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'java'; Nombre = 'Java'; Script = 'Setup-JavaEnv.ps1'
             ParamVersion = 'JavaVersion'; ParamPaquetes = $null
             Carpeta = 'Java'; Patron = '^jdk-(\d+)$'; AdmiteForce = $true
+            Bundle = $false
             Fijable = $false
         }
         [PSCustomObject]@{
             Clave = 'node'; Nombre = 'Node'; Script = 'Setup-NodeEnv.ps1'
             ParamVersion = 'NodeVersion'; ParamPaquetes = $null
             Carpeta = 'Node'; Patron = '^node-(\d+)$'; AdmiteForce = $true
+            Bundle = $true; Envoltorio = $true;  Sfx = $false
             Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'angular'; Nombre = 'Angular'; Script = 'Setup-AngularEnv.ps1'
             ParamVersion = 'AngularVersion'; ParamPaquetes = $null
             Carpeta = 'Angular'; Patron = '^angular-v(\d+)$'; AdmiteForce = $false
+            Bundle = $false
             Fijable = $false
         }
         [PSCustomObject]@{
             Clave = 'git'; Nombre = 'Git'; Script = 'Setup-GitEnv.ps1'
             ParamVersion = 'GitVersion'; ParamPaquetes = $null
             Carpeta = 'Git'; Patron = '^git-(\d+\.\d+)$'; AdmiteForce = $true
+            Bundle = $true; Envoltorio = $false; Sfx = $true
             Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'maven'; Nombre = 'Maven'; Script = 'Setup-MavenEnv.ps1'
             ParamVersion = 'MavenVersion'; ParamPaquetes = $null
             Carpeta = 'Maven'; Patron = '^maven-(\d+\.\d+)$'; AdmiteForce = $true
+            Bundle = $true; Envoltorio = $true;  Sfx = $false
             Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'gradle'; Nombre = 'Gradle'; Script = 'Setup-GradleEnv.ps1'
             ParamVersion = 'GradleVersion'; ParamPaquetes = $null
             Carpeta = 'Gradle'; Patron = '^gradle-(\d+\.\d+)$'; AdmiteForce = $true
+            Bundle = $true; Envoltorio = $true;  Sfx = $false
             Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'dotnet'; Nombre = '.NET SDK'; Script = 'Setup-DotnetEnv.ps1'
             ParamVersion = 'Channel'; ParamPaquetes = $null
             Carpeta = 'Dotnet'; Patron = '^dotnet-(\d+\.\d+)$'; AdmiteForce = $true
+            Bundle = $true; Envoltorio = $false; Sfx = $false
             Fijable = $false
         }
         [PSCustomObject]@{
             Clave = 'vscode'; Nombre = 'VS Code'; Script = 'Setup-VSCodeEnv.ps1'
             ParamVersion = $null; ParamPaquetes = $null
             Carpeta = 'VSCode'; Patron = '^vscode-(\d+\.\d+)$'; AdmiteForce = $true
+            Bundle = $true; Envoltorio = $false; Sfx = $false
             Fijable = $false
         }
     )
+}
+
+function Get-BundleArchiveInfo {
+    <#
+    .SYNOPSIS
+        El archivo original de un runtime: URL, nombre y checksum si lo hay.
+    .DESCRIPTION
+        Lo usa Export-Env para meter en el bundle lo mismo que descargaria el
+        Setup, de modo que en destino se instale sin red. Los setups borran el
+        archivo tras extraerlo, asi que hay que volver a pedirlo.
+
+        Angular, Python y Java NO pasan por aqui: tienen en Export-Env un
+        tratamiento propio porque llevan ademas el arbol de npm-global y las
+        ruedas de pip.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Clave,
+        [Parameter(Mandatory=$true)][string]$Version
+    )
+
+    switch ($Clave) {
+        'node' {
+            $a = Get-NodeArchiveInfo -Version $Version
+            return [PSCustomObject]@{
+                Url = $a.Url; FileName = $a.FileName
+                Sha256 = (Get-Sha256FromShasums -Uri $a.ShasumsUrl -FileName $a.FileName)
+            }
+        }
+        'git' {
+            $r = Get-GitPortableRelease -Version $Version
+            if (-not $r) { return $null }
+            return [PSCustomObject]@{ Url = $r.Url; FileName = $r.FileName; Sha256 = $r.Sha256 }
+        }
+        'maven' {
+            $r = Get-MavenRelease -Version $Version
+            if (-not $r) { return $null }
+            return [PSCustomObject]@{ Url = $r.Url; FileName = $r.FileName; Sha512 = $r.Sha512 }
+        }
+        'gradle' {
+            $r = Get-GradleRelease -Version $Version
+            if (-not $r) { return $null }
+            return [PSCustomObject]@{ Url = $r.Url; FileName = $r.FileName; Sha256 = $r.Sha256 }
+        }
+        'dotnet' {
+            # El SDK tiene URL predecible. Se comprobo con dotnet-install
+            # -DryRun, que imprime exactamente esta.
+            return [PSCustomObject]@{
+                Url      = "https://builds.dotnet.microsoft.com/dotnet/Sdk/$Version/dotnet-sdk-$Version-win-x64.zip"
+                FileName = "dotnet-sdk-$Version-win-x64.zip"
+                Sha256   = $null
+            }
+        }
+        'vscode' {
+            # La API de actualizacion solo da la ULTIMA, pero esta otra ruta
+            # sirve cualquier version concreta y redirige al zip.
+            return [PSCustomObject]@{
+                Url      = "https://update.code.visualstudio.com/$Version/win32-x64-archive/stable"
+                FileName = "VSCode-win32-x64-$Version.zip"
+                Sha256   = $null
+            }
+        }
+    }
+    return $null
+}
+
+function Invoke-GitPostInstall {
+    <#
+        PortableGit trae un post-install.bat que remata la instalacion: crea
+        /dev, /etc/mtab y el resto del entorno MSYS que necesita Git Bash. Se
+        borra solo al terminar, y esa es la senal de que hizo su trabajo: el
+        codigo de salida es 1 aunque vaya bien, porque lo ultimo que ejecuta es
+        el DEL de si mismo.
+
+        Se lanza con cmd y el directorio de trabajo puesto. Con el
+        "git-bash.exe --command=post-install.bat" que sugiere su cabecera sale
+        del paso sin hacer nada.
+
+        Vive aqui y no en Setup-GitEnv porque Import-Env tambien lo necesita:
+        un Git sacado del bundle quedaba con Git Bash a medias, y lo detecto
+        Doctor avisando de "post-instalacion sin completar".
+    #>
+    param([Parameter(Mandatory=$true)][string]$GitPath)
+
+    $script = Join-Path $GitPath "post-install.bat"
+    if (-not (Test-Path -LiteralPath $script)) { return $true }
+
+    Write-Log "  rematando la instalacion (entorno de Git Bash)..."
+    try {
+        Start-Process -FilePath "cmd.exe" -ArgumentList @('/c', "`"$script`"") `
+                      -WorkingDirectory $GitPath -Wait -WindowStyle Hidden | Out-Null
+    }
+    catch {
+        Write-Log "  no se pudo ejecutar post-install.bat: $($_.Exception.Message)" "WARN"
+        return $false
+    }
+
+    if (Test-Path -LiteralPath $script) {
+        # Git funciona igual; lo que puede quedar a medias es el entorno Unix.
+        Write-Log "  post-install.bat no llego a terminar; git funciona, Git Bash puede ir justo" "WARN"
+        return $false
+    }
+    return $true
+}
+
+function Expand-BundledRuntime {
+    <#
+        Coloca el archivo de un runtime en su carpeta definitiva, teniendo en
+        cuenta como viene empaquetado cada uno:
+
+          Envoltorio  el zip trae dentro una carpeta (node-vX, apache-maven-X)
+                      que hay que renombrar a la del kit
+          Plano       el zip vuelca su contenido directamente (dotnet, vscode)
+          Sfx         no es un zip sino un autoextraible (PortableGit)
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Archivo,
+        [Parameter(Mandatory=$true)][string]$Destino,
+        [Parameter(Mandatory=$true)][PSCustomObject]$Entrada
+    )
+
+    if ($Entrada.Sfx) {
+        $proc = Start-Process -FilePath $Archivo -ArgumentList @("-o`"$Destino`"", '-y') -Wait -PassThru
+        return ($proc.ExitCode -eq 0)
+    }
+
+    if (-not $Entrada.Envoltorio) {
+        if (-not (Test-Path -LiteralPath $Destino)) {
+            New-Item -ItemType Directory -Path $Destino -Force | Out-Null
+        }
+        Expand-Archive -Path $Archivo -DestinationPath $Destino -Force
+        return $true
+    }
+
+    $temp = "$Destino.tmp"
+    if (Test-Path $temp) { Remove-Item $temp -Recurse -Force }
+    Expand-Archive -Path $Archivo -DestinationPath $temp -Force
+
+    $inner = @(Get-ChildItem $temp -Directory)
+    if ($inner.Count -eq 1) {
+        Move-Item -LiteralPath $inner[0].FullName -Destination $Destino -Force
+    }
+    else {
+        New-Item -ItemType Directory -Path $Destino -Force | Out-Null
+        Move-Item -Path "$temp\*" -Destination $Destino -Force
+    }
+    Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
+function Write-RuntimeShell {
+    <#
+        Regenera el shell de un runtime con las rutas de ESTA maquina. Import-Env
+        lo necesita para los seis runtimes que empaqueta: dentro del bundle van
+        rutas absolutas del equipo de origen, que aqui no valen.
+
+        Es un despachador y no una funcion nueva: cada Write-*Shell sigue donde
+        estaba, aqui solo se elige cual.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Clave,
+        [Parameter(Mandatory=$true)][string]$Ruta,
+        [Parameter(Mandatory=$true)][string]$Version,
+        [string]$Linea
+    )
+
+    switch ($Clave) {
+        'node'   { return (Write-NodeShell   -NodePath $Ruta -Version $Version) }
+        'git'    { return (Write-GitShell    -GitPath  $Ruta -Version $Version) }
+        'maven'  { return (Write-BuildToolShell -Tool Maven  -ToolPath $Ruta -Version $Version -JavaHome (Get-KitJavaHome)) }
+        'gradle' { return (Write-BuildToolShell -Tool Gradle -ToolPath $Ruta -Version $Version -JavaHome (Get-KitJavaHome)) }
+        'dotnet' { return (Write-DotnetShell -DotnetPath $Ruta -Version $Version -Channel $Linea) }
+        'vscode' { return (Write-VSCodeShell -VSCodePath $Ruta -Version $Version) }
+    }
+    return $null
 }
 
 function Get-InstalledRuntimeVersion {

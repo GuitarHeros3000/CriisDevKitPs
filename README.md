@@ -170,13 +170,31 @@ que bloqueen **uno** para que ese runtime sea inalcanzable.
 | | |
 |---|---|
 | `env.json` | manifiesto: versiones exactas de cada runtime y paquete |
-| `runtimes/` | los zip originales de Node, Python y el JDK, con su SHA-256 |
+| `runtimes/` | los archivos originales de **los nueve** runtimes, con su SHA-256 |
 | `npm-global/` | el Angular CLI ya instalado, para no depender del registro de npm |
 | `wheels/` | los paquetes pip como `.whl`, mas `get-pip.py` y el wheel de `pip` |
 
 `Import-Env` verifica el SHA-256 de cada archivo antes de extraerlo (un USB puede
 corromperlo) y **regenera los shells y el PATH con las rutas de la maquina destino**:
 dentro del bundle van rutas absolutas del origen, que alli no valdrian.
+
+Los nueve, sin excepciones. Durante un tiempo **no fue asi**: se anadieron seis
+runtimes al kit y este comando se quedo en tres, asi que el bundle "portable"
+ignoraba en silencio Git, Node suelto, Maven, Gradle, .NET y VS Code. Ahora los saca
+del **catalogo**, y hay una prueba que pone la suite en rojo si un runtime del
+catalogo se queda fuera de cualquier comando.
+
+Cada archivo se coloca segun como venga empaquetado, que no es igual para todos:
+
+| | |
+|---|---|
+| con envoltorio | el zip trae dentro una carpeta (`node-vX`, `apache-maven-X`) que se sube un nivel |
+| plano | el zip vuelca su contenido directo (.NET, VS Code) |
+| autoextraible | PortableGit no es un zip; se ejecuta con `-o` |
+
+Y los remates propios de cada uno tambien: a Git se le ejecuta su `post-install`
+(si no, Git Bash queda a medias) y a VS Code se le crea la carpeta `data\` (si no,
+deja de ser portable en silencio).
 
 ### Detalles que costaron encontrar
 
@@ -199,6 +217,10 @@ El manifiesto lleva dos versiones distintas: `manifestVersion` describe el **for
 del `env.json` y decide si el bundle se puede importar, y `kitVersion` identifica el
 kit que lo genero. La segunda es informativa: si no coincide, `Import-Env` lo dice
 pero no bloquea. `Doctor` muestra la version del kit de esta maquina.
+
+`manifestVersion` va por la **2** desde que el bundle cubre los nueve runtimes. Un
+kit viejo rechaza un bundle nuevo en vez de importarlo a medias sin decir nada; un
+kit nuevo sigue leyendo los bundles v1, a los que simplemente les falta esa seccion.
 
 ## Registro de ejecuciones
 
@@ -867,6 +889,22 @@ fijarlo. Prometer un pin que no se puede cumplir seria peor que no tenerlo.
 instalar, que hoy es Python. Los demas se verifican **al descargar** contra la
 fuente oficial, y eso es lo que garantiza la integridad. Lo que garantiza el lock
 es la **version**.
+
+### Saber si te has salido del carril
+
+El lock no solo sirve al restaurar. `Doctor` compara lo instalado contra el y senala
+los desvios, que es la pregunta que uno se hace cuando algo compila distinto que a
+un companero:
+
+```powershell
+.\Doctor-Env.bat                       Usa el devenv.lock.json de la carpeta actual
+.\Doctor-Env.bat -Lock C:\proy\devenv.lock.json
+```
+
+Distingue cuatro casos: **coincide**, **distinto** (y se puede volver con
+`Restore-Env`), **distinto pero previsible** (su `Setup` no admite fijar la exacta) y
+**el lock lo pide y no esta instalado**. Sin lock a la vista no dice nada: no tiene
+sentido llenar el informe de ruido a quien no usa uno.
 
 ## Install-NoAdmin
 

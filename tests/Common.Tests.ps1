@@ -975,6 +975,162 @@ Describe "devenv.lock.json (Read-DevEnvLock)" {
     }
 }
 
+Describe "Expand-BundledRuntime" {
+
+    # Los archivos de los runtimes no vienen todos igual, y equivocarse deja la
+    # instalacion un nivel mas abajo o mas arriba de donde toca:
+    #   con envoltorio  el zip trae dentro una carpeta (node-vX, apache-maven-X)
+    #   plano           el zip vuelca su contenido directo (dotnet, vscode)
+    # El tercer modo, el autoextraible de PortableGit, no se puede probar con un
+    # zip sintetico porque necesita el .exe real.
+
+    function NuevoTemp {
+        $d = Join-Path ([System.IO.Path]::GetTempPath()) ("exp-" + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $d -Force | Out-Null
+        return $d
+    }
+
+    function ZipDe($origen, $destino) {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($origen, $destino)
+    }
+
+    It "con envoltorio, sube el contenido un nivel" {
+        $t = NuevoTemp
+        try {
+            # Un zip que dentro trae "apache-maven-3.9.16\bin\mvn.cmd"
+            $src = Join-Path $t "src"
+            New-Item -ItemType Directory -Path (Join-Path $src "apache-maven-3.9.16\bin") -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $src "apache-maven-3.9.16\bin\mvn.cmd") -Value 'x'
+            $zip = Join-Path $t "a.zip"
+            ZipDe $src $zip
+
+            $destino = Join-Path $t "maven-3.9"
+            $e = [PSCustomObject]@{ Envoltorio = $true; Sfx = $false }
+            Expand-BundledRuntime -Archivo $zip -Destino $destino -Entrada $e | Should Be $true
+
+            # El bin queda directamente bajo maven-3.9, no bajo otra carpeta.
+            Test-Path (Join-Path $destino "bin\mvn.cmd") | Should Be $true
+        }
+        finally { Remove-Item $t -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "plano, deja el contenido tal cual" {
+        $t = NuevoTemp
+        try {
+            $src = Join-Path $t "src"
+            New-Item -ItemType Directory -Path $src -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $src "dotnet.exe") -Value 'x'
+            $zip = Join-Path $t "b.zip"
+            ZipDe $src $zip
+
+            $destino = Join-Path $t "dotnet-10.0"
+            $e = [PSCustomObject]@{ Envoltorio = $false; Sfx = $false }
+            Expand-BundledRuntime -Archivo $zip -Destino $destino -Entrada $e | Should Be $true
+
+            Test-Path (Join-Path $destino "dotnet.exe") | Should Be $true
+        }
+        finally { Remove-Item $t -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    # Si el zip con envoltorio trae MAS de una carpeta arriba no hay envoltorio
+    # que quitar, y hay que volcarlo todo en vez de perder contenido.
+    It "con envoltorio pero varias carpetas arriba, no pierde nada" {
+        $t = NuevoTemp
+        try {
+            $src = Join-Path $t "src"
+            New-Item -ItemType Directory -Path (Join-Path $src "uno") -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $src "dos") -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $src "uno\a.txt") -Value 'a'
+            Set-Content -LiteralPath (Join-Path $src "dos\b.txt") -Value 'b'
+            $zip = Join-Path $t "c.zip"
+            ZipDe $src $zip
+
+            $destino = Join-Path $t "x"
+            $e = [PSCustomObject]@{ Envoltorio = $true; Sfx = $false }
+            Expand-BundledRuntime -Archivo $zip -Destino $destino -Entrada $e | Should Be $true
+
+            Test-Path (Join-Path $destino "uno\a.txt") | Should Be $true
+            Test-Path (Join-Path $destino "dos\b.txt") | Should Be $true
+        }
+        finally { Remove-Item $t -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+Describe "Cobertura del catalogo" {
+
+    # ESTA es la prueba que faltaba. El catalogo existe desde hace tiempo, pero
+    # nada obligaba a que los comandos lo siguieran: se anadieron seis runtimes
+    # y Export-Env e Import-Env se quedaron en tres, asi que el bundle
+    # "portable" ignoraba en silencio Git, Maven, Gradle, .NET y VS Code.
+    # Nadie se entero hasta que se comprobo a mano meses despues.
+    #
+    # A partir de aqui, anadir un runtime al catalogo y olvidarse de un comando
+    # pone la suite en rojo el mismo dia.
+
+    $scripts  = Join-Path (Split-Path -Parent $PSScriptRoot) "scripts"
+    $catalogo = Get-RuntimeCatalog
+
+    # Los comandos que deben admitir -Runtime con TODOS los del catalogo.
+    $conValidateSet = @('Doctor-Env', 'Update-Env', 'Uninstall-Env', 'Use-Env', 'Export-Env', 'Import-Env')
+
+    foreach ($nombre in $conValidateSet) {
+        It "$nombre admite los $($catalogo.Count) runtimes del catalogo" {
+            $txt = Get-Content (Join-Path $scripts "$nombre.ps1") -Raw
+
+            # Doctor no tiene -Runtime; se comprueba que nombre cada carpeta.
+            if ($nombre -eq 'Doctor-Env') {
+                foreach ($e in $catalogo) {
+                    $txt | Should Match ([regex]::Escape($e.Carpeta))
+                }
+                return
+            }
+
+            $m = [regex]::Match($txt, "ValidateSet\(([^)]*)\)")
+            $m.Success | Should Be $true
+            foreach ($e in $catalogo) {
+                $m.Groups[1].Value | Should Match ([regex]::Escape("'$($e.Carpeta)'"))
+            }
+        }
+    }
+
+    It "todo runtime empaquetable sabe decir su archivo de descarga" {
+        foreach ($e in ($catalogo | Where-Object { $_.Bundle })) {
+            # No se llama a la red: solo se comprueba que Get-BundleArchiveInfo
+            # contempla la clave, que es lo que se olvida al anadir un runtime.
+            $cuerpo = (Get-Command Get-BundleArchiveInfo).Definition
+            $cuerpo | Should Match ([regex]::Escape("'$($e.Clave)'"))
+        }
+    }
+
+    It "todo runtime empaquetable sabe regenerar su shell" {
+        foreach ($e in ($catalogo | Where-Object { $_.Bundle })) {
+            (Get-Command Write-RuntimeShell).Definition | Should Match ([regex]::Escape("'$($e.Clave)'"))
+        }
+    }
+
+    # Sin estos metadatos, Expand-BundledRuntime no sabe si el zip trae carpeta
+    # dentro y dejaria el runtime un nivel mas abajo de donde toca.
+    It "todo runtime empaquetable declara como viene empaquetado" {
+        foreach ($e in ($catalogo | Where-Object { $_.Bundle })) {
+            ($null -ne $e.Envoltorio) | Should Be $true
+            ($null -ne $e.Sfx)        | Should Be $true
+        }
+    }
+
+    It "los que NO se empaquetan tienen su tratamiento propio en Export-Env" {
+        $txt = Get-Content (Join-Path $scripts "Export-Env.ps1") -Raw
+        foreach ($e in ($catalogo | Where-Object { -not $_.Bundle })) {
+            $txt | Should Match "Get-$($e.Carpeta)Entries"
+        }
+    }
+
+    It "Restore-Env no nombra runtimes: los saca del catalogo" {
+        $txt = Get-Content (Join-Path $scripts "Restore-Env.ps1") -Raw
+        $txt | Should Match 'Get-RuntimeCatalog'
+    }
+}
+
 Describe "Resolve-RuntimeFromPath" {
 
     # Traduce "esta carpeta esta tapada en el PATH" a "esto se arregla con
