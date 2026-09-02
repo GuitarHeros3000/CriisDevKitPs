@@ -449,6 +449,15 @@ try {
         $pathsToAdd += $bin
     }
 
+    # Los shells por JDK de Maven y Gradle, una vez estan todos los runtimes en
+    # su sitio. Aqui y no dentro del bucle: cada Write-RuntimeShell escribe solo
+    # el shell por defecto, y hasta el final no se sabe cuantos JDK trae el
+    # bundle. Sin esto, importar dos Java y un Maven daria un unico shell atado
+    # al Java mas alto, justo lo contrario de lo que se importo.
+    foreach ($linea in @(Sync-BuildToolShells)) {
+        Write-Log "  $linea" "SUCCESS"
+    }
+
     if ($pathsToAdd.Count -gt 0) {
         Write-Log ""
         Add-UserPathEntry -Path $pathsToAdd
