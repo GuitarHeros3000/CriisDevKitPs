@@ -97,7 +97,10 @@ function Get-GitPortable {
 
     Write-Log "Descargando PortableGit $($Release.Version)..."
     Write-Log "  (unos 56 MB)"
+    # PortableGit lo firma el mantenedor de Git for Windows. Si algun dia firma
+    # otro, conviene enterarse; el kit lo dice y sigue.
     if (-not (Invoke-Download -Uri $Release.Url -OutFile $sfx -Sha256 $Release.Sha256 `
+                              -FirmanteEsperado 'Johannes Schindelin' `
                               -Description "PortableGit $($Release.Version)")) {
         return $null
     }

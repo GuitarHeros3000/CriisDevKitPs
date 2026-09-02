@@ -811,6 +811,10 @@ Write-Log "Instalador: $Path"
 
 $type = Get-InstallerType -FilePath $Path
 Write-Log "Tipo detectado: $type"
+
+# Quien firma el instalador que traes tu. Se dice y ya: aqui el kit no elige por
+# ti que software instalas, solo te cuenta de quien viene antes de ejecutarlo.
+Write-SignerReport -FilePath $Path
 Write-Log ""
 
 # --- Extraccion directa si se pidio -ExtractOnly ---

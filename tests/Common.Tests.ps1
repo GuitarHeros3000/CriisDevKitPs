@@ -1057,6 +1057,115 @@ Describe "Expand-BundledRuntime" {
     }
 }
 
+Describe "Firma Authenticode" {
+
+    # Es lo unico del kit que da AUTENTICIDAD. Los checksums dan integridad
+    # pero salen del mismo servidor que el archivo -y con un espejo interno,
+    # del mismo espejo-, asi que no dicen de quien viene.
+    #
+    # Y NUNCA bloquea. No es una postura: el MSI de 7-Zip que el propio kit
+    # descarga no esta firmado, asi que bloquear lo no firmado romperia el kit
+    # consigo mismo.
+
+    Context "Get-FileSignerInfo" {
+
+        It "un .zip no es firmable: no se dice que le falte firma" {
+            $z = Join-Path ([System.IO.Path]::GetTempPath()) ("f-" + [Guid]::NewGuid().ToString('N') + ".zip")
+            Set-Content -LiteralPath $z -Value 'x'
+            try {
+                (Get-FileSignerInfo -FilePath $z).Firmable | Should Be $false
+            }
+            finally { Remove-Item $z -Force -ErrorAction SilentlyContinue }
+        }
+
+        It "un .exe si es firmable, aunque no este firmado" {
+            $e = Join-Path ([System.IO.Path]::GetTempPath()) ("f-" + [Guid]::NewGuid().ToString('N') + ".exe")
+            Set-Content -LiteralPath $e -Value 'no soy un PE'
+            try {
+                $r = Get-FileSignerInfo -FilePath $e
+                $r.Firmable | Should Be $true
+                $r.Firmante | Should BeNullOrEmpty
+            }
+            finally { Remove-Item $e -Force -ErrorAction SilentlyContinue }
+        }
+
+        It "lee el firmante de un binario firmado de Windows" {
+            # powershell.exe lo firma Microsoft y esta en cualquier equipo.
+            $r = Get-FileSignerInfo -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
+            $r.Firmable | Should Be $true
+            $r.Estado   | Should Be 'Valid'
+            $r.Firmante | Should Match 'Microsoft'
+        }
+
+        It "un archivo que no existe no revienta" {
+            (Get-FileSignerInfo -FilePath 'C:\no-existe-esto.exe').Firmable | Should Be $false
+        }
+
+        It "reconoce como firmables los formatos que llevan Authenticode" {
+            foreach ($ext in @('.exe', '.msi', '.dll', '.ps1', '.cab')) {
+                $f = Join-Path ([System.IO.Path]::GetTempPath()) ("f-" + [Guid]::NewGuid().ToString('N') + $ext)
+                Set-Content -LiteralPath $f -Value 'x'
+                try { (Get-FileSignerInfo -FilePath $f).Firmable | Should Be $true }
+                finally { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+            }
+        }
+    }
+
+    Context "Write-SignerReport" {
+
+        function Texto($ruta, $esperado) {
+            if ($esperado) { return ((Write-SignerReport -FilePath $ruta -Esperado $esperado 6>&1) | Out-String) }
+            return ((Write-SignerReport -FilePath $ruta 6>&1) | Out-String)
+        }
+
+        $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+
+        It "dice quien firma" {
+            (Texto $psExe $null) | Should Match 'Firmado por'
+            (Texto $psExe $null) | Should Match 'Microsoft'
+        }
+
+        It "avisa si firma alguien distinto del esperado" {
+            $t = Texto $psExe 'Otra Empresa SL'
+            $t | Should Match 'se esperaba'
+        }
+
+        It "no avisa si firma quien se esperaba" {
+            (Texto $psExe 'Microsoft') | Should Not Match 'se esperaba'
+        }
+
+        It "de un zip no dice nada: no hay nada que comprobar" {
+            $z = Join-Path ([System.IO.Path]::GetTempPath()) ("f-" + [Guid]::NewGuid().ToString('N') + ".zip")
+            Set-Content -LiteralPath $z -Value 'x'
+            try { (Texto $z $null).Trim() | Should Be '' }
+            finally { Remove-Item $z -Force -ErrorAction SilentlyContinue }
+        }
+
+        # Lo importante: sin firma se informa, no se alarma ni se bloquea. Un
+        # archivo que ni siquiera es un ejecutable devuelve UnknownError, que NO
+        # es lo mismo que una firma invalida; confundirlos alarmaria de mas.
+        It "sin firma reconocible lo dice sin tratarlo como error" {
+            $e = Join-Path ([System.IO.Path]::GetTempPath()) ("f-" + [Guid]::NewGuid().ToString('N') + ".exe")
+            Set-Content -LiteralPath $e -Value 'no soy un PE'
+            try {
+                $t = Texto $e $null
+                $t | Should Match 'Sin firma'
+                $t | Should Not Match 'ERROR'
+                $t | Should Not Match 'NO valida'
+            }
+            finally { Remove-Item $e -Force -ErrorAction SilentlyContinue }
+        }
+
+        # El cuarto camino -firma presente pero NO valida: caducada, revocada o
+        # alterada- se queda sin prueba automatica a proposito. Fabricar una
+        # firma invalida de verdad no es trivial: anadirle bytes al final a un
+        # binario firmado NO la rompe, porque Authenticode deja esa region fuera
+        # del hash (probado: sigue dando Valid). Falsear el estado obligaria a
+        # sustituir Get-AuthenticodeSignature, y entonces la prueba solo
+        # comprobaria el doble. Se deja anotado en vez de fingir cobertura.
+    }
+}
+
 Describe "Cobertura del catalogo" {
 
     # ESTA es la prueba que faltaba. El catalogo existe desde hace tiempo, pero

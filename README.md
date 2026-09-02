@@ -890,6 +890,42 @@ instalar, que hoy es Python. Los demas se verifican **al descargar** contra la
 fuente oficial, y eso es lo que garantiza la integridad. Lo que garantiza el lock
 es la **version**.
 
+## Firma Authenticode: de quien viene el archivo
+
+Un checksum dice que el archivo **llego entero**. No dice de **quien viene**: sale
+del mismo servidor que el archivo, y con un espejo interno configurado, del mismo
+espejo. Quien controle ese servidor controla las dos cosas.
+
+La firma Authenticode responde a la otra pregunta, y contra una cadena de confianza
+que Windows ya trae. Por eso funciona donde GPG no: aquel se abandono por el problema
+de distribuir y rotar claves publicas, y aqui ese problema no existe.
+
+El kit la comprueba en cada descarga firmable y en el instalador que le pases a
+`Install-NoAdmin`. Ejemplos reales:
+
+```
+PortableGit-2.55.0.5-64-bit.7z.exe    Firmado por: Johannes Schindelin
+dotnet-install.ps1                    Firmado por: Microsoft Corporation
+npp.8.9.8.Installer.x64.exe           Firmado por: NOTEPAD++
+7z2602-x64.msi                        Sin firma Authenticode
+```
+
+En Git y .NET ademas se compara contra **quien deberia firmarlos**, y si un dia firma
+otro se avisa. Un cambio de certificado puede ser legitimo, pero merece una mirada.
+
+> ### Nunca bloquea
+>
+> Informa; no decide por ti. Y no es una postura, es una necesidad: **el MSI de
+> 7-Zip no esta firmado**, y el propio kit lo descarga para extraer instaladores
+> NSIS. Bloquear lo no firmado romperia el kit consigo mismo.
+>
+> Tampoco es un club de empresas grandes: Notepad++ lo firma su autor a titulo
+> personal. Un tercero puede estar perfectamente firmado, y si no lo esta, el kit
+> te lo dice y sigue adelante.
+
+**Lo que NO te da:** dice **quien** firmo, no si el software es de fiar. Un mal actor
+puede comprar un certificado. Te da un nombre para que decidas tu, no un veredicto.
+
 ### Saber si te has salido del carril
 
 El lock no solo sirve al restaurar. `Doctor` compara lo instalado contra el y senala

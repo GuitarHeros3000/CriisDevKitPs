@@ -105,8 +105,12 @@ function Install-DotnetSdk {
     # El instalador oficial se baja con Invoke-Download y no a pelo, para que
     # pase por el proxy y por el espejo interno como todo lo demas.
     $script = Join-Path $env:TEMP ("dotnet-install-" + [Guid]::NewGuid().ToString('N') + ".ps1")
+    # Este es el caso donde la firma mas importa de todo el kit: no es un zip
+    # que se extrae, es un SCRIPT que se va a EJECUTAR. Microsoft lo firma.
     Write-Log "Obteniendo el instalador oficial de Microsoft..."
-    if (-not (Invoke-Download -Uri $DotnetInstallUrl -OutFile $script -Description "dotnet-install.ps1")) {
+    if (-not (Invoke-Download -Uri $DotnetInstallUrl -OutFile $script `
+                              -FirmanteEsperado 'Microsoft Corporation' `
+                              -Description "dotnet-install.ps1")) {
         return $null
     }
 

@@ -618,6 +618,103 @@ function Get-FileSha512 {
     return (Get-FileHash -LiteralPath $FilePath -Algorithm SHA512).Hash.ToLowerInvariant()
 }
 
+function Get-FileSignerInfo {
+    <#
+    .SYNOPSIS
+        Quien firmo un archivo, segun la firma Authenticode de Windows.
+    .DESCRIPTION
+        Es lo unico que da AUTENTICIDAD en este kit. Los checksums dan
+        integridad -el archivo llego entero- pero no autenticidad, porque salen
+        del MISMO servidor que el archivo; con un espejo interno configurado,
+        del mismo espejo. Authenticode responde a otra pregunta: quien lo firmo
+        y si ha cambiado desde entonces, contra una cadena de confianza que
+        Windows ya trae.
+
+        Se intento antes con GPG y se abandono por el problema de distribuir y
+        rotar las claves publicas. Authenticode no tiene ese problema.
+
+        NUNCA se usa para bloquear, y no es una postura sino una necesidad: el
+        MSI de 7-Zip, que el propio kit descarga para extraer instaladores NSIS,
+        NO esta firmado. Bloquear lo no firmado romperia el kit consigo mismo.
+        Ademas firmar no es cosa de empresas grandes: el instalador de
+        Notepad++ lo firma una persona con su correo.
+
+        Devuelve Firmable, Estado y Firmante. Firmable es $false para un .zip:
+        ahi no hay nada que comprobar y no tiene sentido decir "sin firma".
+    #>
+    param([Parameter(Mandatory=$true)][string]$FilePath)
+
+    $sinFirma = [PSCustomObject]@{ Firmable = $false; Estado = $null; Firmante = $null }
+
+    if (-not (Test-Path -LiteralPath $FilePath)) { return $sinFirma }
+
+    # Solo estos formatos llevan Authenticode. Un zip o un tar.gz no.
+    $ext = [System.IO.Path]::GetExtension($FilePath).ToLowerInvariant()
+    if ($ext -notin @('.exe', '.msi', '.dll', '.ps1', '.cab', '.msp', '.sys', '.cat')) {
+        return $sinFirma
+    }
+
+    try {
+        $s = Get-AuthenticodeSignature -LiteralPath $FilePath -ErrorAction Stop
+    }
+    catch {
+        return [PSCustomObject]@{ Firmable = $true; Estado = 'NoSePudoLeer'; Firmante = $null }
+    }
+
+    $quien = $null
+    if ($s.SignerCertificate) {
+        # Del sujeto del certificado interesa el CN, o el correo si no hay CN:
+        # asi lo firma alguna gente a titulo personal.
+        $subject = $s.SignerCertificate.Subject
+        if ($subject -match 'CN=(?:")?([^",]+)') { $quien = $Matches[1].Trim() }
+        elseif ($subject -match 'E=([^,]+)')     { $quien = $Matches[1].Trim() }
+        else { $quien = $subject }
+    }
+
+    return [PSCustomObject]@{ Firmable = $true; Estado = [string]$s.Status; Firmante = $quien }
+}
+
+function Write-SignerReport {
+    <#
+        Cuenta quien firma un archivo recien descargado. Informativo: describe,
+        no decide. Con -Esperado ademas avisa si el firmante NO es el de
+        siempre, que es la senal que de verdad importa; aun asi solo avisa.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$FilePath,
+        [string]$Esperado
+    )
+
+    $f = Get-FileSignerInfo -FilePath $FilePath
+    if (-not $f.Firmable) { return }
+
+    if ($f.Estado -eq 'Valid') {
+        Write-Log "  Firmado por: $($f.Firmante)" "SUCCESS"
+
+        if ($Esperado -and $f.Firmante -notlike "*$Esperado*") {
+            Write-Log "  OJO: se esperaba a $Esperado y firma otro." "WARN"
+            Write-Log "  Puede ser un cambio legitimo de certificado, o no. Revisalo." "WARN"
+        }
+    }
+    elseif ($f.Estado -eq 'NotSigned') {
+        # Ni error ni sospecha por si sola: hay software legitimo sin firmar,
+        # empezando por el 7-Zip que usa este mismo kit.
+        Write-Log "  Sin firma Authenticode (no todo el software se firma)" "INFO"
+    }
+    elseif ($f.Estado -in @('UnknownError', 'NoSePudoLeer')) {
+        # No es lo mismo que una firma invalida, y confundirlos alarma de mas:
+        # Windows devuelve esto tambien cuando el archivo sencillamente no tiene
+        # el formato que sabe firmar.
+        Write-Log "  Sin firma reconocible (Windows no pudo determinarla)" "INFO"
+    }
+    else {
+        # Aqui si conviene mirar: hay firma y NO valida. Caducada, revocada,
+        # alterada tras firmarse, o de una entidad en la que no se confia.
+        Write-Log "  Firma presente pero NO valida: $($f.Estado)" "WARN"
+        if ($f.Firmante) { Write-Log "  Dice ser: $($f.Firmante)" "WARN" }
+    }
+}
+
 function Get-HashFromChecksumText {
     <#
     .SYNOPSIS
@@ -669,6 +766,9 @@ function Invoke-Download {
         [string]$Sha256,
         # Apache publica SHA-512 en vez de SHA-256, asi que no basta con uno.
         [string]$Sha512,
+        # Quien deberia firmar esto. Solo para avisar si firma otro; nunca
+        # bloquea, ni siquiera si no hay firma ninguna.
+        [string]$FirmanteEsperado,
         [string]$Description,
         [int]$Retries = 2
     )
@@ -753,10 +853,24 @@ function Invoke-Download {
         Write-Log "  $algoritmo verificado" "SUCCESS"
     }
 
+    # La firma se mira SIEMPRE, haya checksum o no, y se cuenta sin decidir
+    # nada por el usuario. Es lo unico que dice de QUIEN viene el archivo: el
+    # checksum solo dice que llego entero, y encima sale del mismo sitio.
     if (Test-Path -LiteralPath $OutFile) {
         Remove-Item -LiteralPath $OutFile -Force
     }
     Move-Item -LiteralPath $temp -Destination $OutFile -Force
+
+    # La firma se mira SIEMPRE, haya checksum o no, y se cuenta sin decidir nada
+    # por el usuario. Es lo unico que dice de QUIEN viene el archivo: el checksum
+    # solo dice que llego entero, y encima sale del mismo sitio.
+    #
+    # Va DESPUES de publicar el archivo, no antes: mientras se descarga se llama
+    # ".part", y Get-FileSignerInfo decide si mirar por la extension. Con el
+    # nombre temporal no reconocia ni un .exe ni un .ps1 como firmables, asi que
+    # no se anunciaba ninguna firma. Salio al probarlo con Git y con
+    # dotnet-install.ps1, que si estan firmados y no decian nada.
+    Write-SignerReport -FilePath $OutFile -Esperado $FirmanteEsperado
 
     return $true
 }
