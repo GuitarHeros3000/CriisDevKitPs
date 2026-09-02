@@ -1839,6 +1839,95 @@ Describe "Un shell de Maven/Gradle por cada JDK" {
         }
     }
 
+    Context "Los JDK del kit dentro de VS Code" {
+
+        # El identificador no es libre: la extension de Java espera el nombre
+        # oficial de la plataforma, y el 8 se llama JavaSE-1.8 y no JavaSE-8.
+        It "nombra cada JDK como espera la extension" {
+            New-JdkFalso 8; New-JdkFalso 21
+            $e = @(Get-KitJavaRuntimeEntries)
+            ($e.name -join ',') | Should Be 'JavaSE-1.8,JavaSE-21'
+        }
+
+        It "marca por defecto el que se le diga, y solo ese" {
+            New-JdkFalso 21; New-JdkFalso 25
+            $e = @(Get-KitJavaRuntimeEntries -Default '21')
+            @($e | Where-Object { $_.default }).Count | Should Be 1
+            ($e | Where-Object { $_.default }).name   | Should Be 'JavaSE-21'
+        }
+
+        It "sin default no marca ninguno" {
+            New-JdkFalso 21
+            @((Get-KitJavaRuntimeEntries) | Where-Object { $_.default }).Count | Should Be 0
+        }
+
+    }
+
+    # Aparte y no dentro del anterior: Pester 3.4 -el que trae Windows- no
+    # admite un Context dentro de otro.
+    Context "Merge-VSCodeJavaRuntimes" {
+
+            $raiz = "C:\kit\Java"
+            $delKit = @(
+                [PSCustomObject]@{ name = 'JavaSE-21'; path = "$raiz\jdk-21" },
+                [PSCustomObject]@{ name = 'JavaSE-25'; path = "$raiz\jdk-25"; default = $true }
+            )
+
+            # Quien tenga registrado a mano el JDK de la empresa no puede
+            # perderlo por ejecutar un comando que iba de otra cosa.
+            It "conserva un JDK ajeno al kit" {
+                $actual = @([PSCustomObject]@{ name = 'JavaSE-1.8'; path = 'C:\Program Files\Java\jdk1.8.0_202' })
+                $r = @(Merge-VSCodeJavaRuntimes -Actual $actual -DelKit $delKit -RaizJava $raiz)
+                $r.Count | Should Be 3
+                ($r | Where-Object { $_.name -eq 'JavaSE-1.8' }).path | Should Be 'C:\Program Files\Java\jdk1.8.0_202'
+            }
+
+            It "reemplaza los del kit en vez de duplicarlos" {
+                $actual = @([PSCustomObject]@{ name = 'JavaSE-21'; path = "$raiz\jdk-21" })
+                $r = @(Merge-VSCodeJavaRuntimes -Actual $actual -DelKit $delKit -RaizJava $raiz)
+                $r.Count | Should Be 2
+            }
+
+            # Dos runtimes por defecto dejan a la extension en un estado que no
+            # se puede predecir.
+            It "deja un unico default" {
+                $actual = @([PSCustomObject]@{ name = 'JavaSE-1.8'; path = 'C:\otro\jdk8'; default = $true })
+                $r = @(Merge-VSCodeJavaRuntimes -Actual $actual -DelKit $delKit -RaizJava $raiz)
+                @($r | Where-Object { $_.default }).Count | Should Be 1
+                ($r | Where-Object { $_.default }).name   | Should Be 'JavaSE-25'
+            }
+
+            It "sin default del kit no le quita el suyo al ajeno" {
+                $actual = @([PSCustomObject]@{ name = 'JavaSE-1.8'; path = 'C:\otro\jdk8'; default = $true })
+                $sinDef = @([PSCustomObject]@{ name = 'JavaSE-21'; path = "$raiz\jdk-21" })
+                $r = @(Merge-VSCodeJavaRuntimes -Actual $actual -DelKit $sinDef -RaizJava $raiz)
+                ($r | Where-Object { $_.default }).name | Should Be 'JavaSE-1.8'
+            }
+
+            It "-Quitar deja solo los ajenos" {
+                $actual = @(
+                    [PSCustomObject]@{ name = 'JavaSE-21';  path = "$raiz\jdk-21" },
+                    [PSCustomObject]@{ name = 'JavaSE-1.8'; path = 'C:\otro\jdk8' }
+                )
+                $r = @(Merge-VSCodeJavaRuntimes -Actual $actual -DelKit $delKit -RaizJava $raiz -Quitar)
+                $r.Count  | Should Be 1
+                $r[0].name | Should Be 'JavaSE-1.8'
+            }
+
+            It "aguanta un settings.json sin ningun runtime" {
+                $r = @(Merge-VSCodeJavaRuntimes -Actual $null -DelKit $delKit -RaizJava $raiz)
+                $r.Count | Should Be 2
+            }
+
+            # Sin normalizar la barra final, la misma carpeta escrita de dos
+            # formas contaria como ajena y quedarian duplicados.
+            It "no se le escapa una ruta del kit por la barra final" {
+                $actual = @([PSCustomObject]@{ name = 'JavaSE-21'; path = "$raiz\jdk-21\" })
+                $r = @(Merge-VSCodeJavaRuntimes -Actual $actual -DelKit $delKit -RaizJava $raiz)
+                $r.Count | Should Be 2
+            }
+    }
+
     Context "Sync-BuildToolShells" {
 
         # Se monta un Gradle creible: Sync lee la version del jar, no de ejecutar

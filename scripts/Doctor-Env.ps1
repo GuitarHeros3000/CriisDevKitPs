@@ -867,6 +867,68 @@ function Test-BuildToolInstall {
     }
 }
 
+function Test-VSCodeJavaRuntimes {
+    <#
+        Si VS Code conoce los JDK del kit.
+
+        Va aparte de la seccion de VS Code portable a proposito: lo normal en un
+        equipo corporativo es tener VS Code instalado por usuario -sin admin- y
+        no el portable del kit, y es justo ese el que hay que mirar.
+    #>
+    $lineas = @(Get-KitJdkLines)
+    if ($lineas.Count -eq 0) { return }
+
+    $targets = @(Get-VSCodeSettingsTargets)
+    if ($targets.Count -eq 0) { return }
+
+    Write-Section "VS Code y los JDK"
+
+    foreach ($t in $targets) {
+        if (-not (Test-Path -LiteralPath $t.Ruta)) {
+            Write-Check $t.Etiqueta "sin ajustes; no conoce ningun JDK del kit" 'info'
+            Write-Detail "Registralos con:  .\Use-VSCodeJava.bat"
+            continue
+        }
+
+        try { $cfg = Get-Content -LiteralPath $t.Ruta -Raw | ConvertFrom-Json }
+        catch {
+            # Con comentarios no se puede leer, y tampoco se reescribiria.
+            Write-Check $t.Etiqueta "settings.json con comentarios; no se puede leer" 'info'
+            continue
+        }
+
+        $reg = @()
+        if ($cfg -and $cfg.PSObject.Properties['java.configuration.runtimes']) {
+            $reg = @($cfg.'java.configuration.runtimes')
+        }
+
+        $delKit = @($reg | Where-Object { $_.path -and ([string]$_.path).StartsWith($JavaRoot, [StringComparison]::OrdinalIgnoreCase) } |
+                   ForEach-Object { if ((Split-Path -Leaf ([string]$_.path)) -match '^jdk-(\d+)$') { $Matches[1] } })
+
+        $faltan = @($lineas | Where-Object { $delKit -notcontains $_ })
+        $sobran = @($delKit | Where-Object { $lineas -notcontains $_ })
+
+        if ($delKit.Count -eq 0) {
+            Write-Check $t.Etiqueta "no conoce los JDK del kit" 'info'
+            Write-Detail "Cada proyecto usaria el JAVA_HOME global en vez del JDK que pide."
+            Write-Detail "Registralos con:  .\Use-VSCodeJava.bat"
+        }
+        elseif ($faltan.Count -gt 0 -or $sobran.Count -gt 0) {
+            $q = @()
+            if ($faltan.Count -gt 0) { $q += "falta Java $($faltan -join ', ')" }
+            if ($sobran.Count -gt 0) { $q += "sobra Java $($sobran -join ', ')" }
+            Write-Check $t.Etiqueta ($q -join '; ') 'warn'
+            Write-Detail "Ponlo al dia con:  .\Use-VSCodeJava.bat"
+        }
+        else {
+            $porDefecto = @($reg | Where-Object { $_.default }).name -join ','
+            $txt = "Java $($delKit -join ', ')"
+            if ($porDefecto) { $txt += "   (por defecto $porDefecto)" }
+            Write-Check $t.Etiqueta $txt 'ok'
+        }
+    }
+}
+
 function Test-DotnetInstall {
     Write-Section ".NET SDK"
 
@@ -1502,6 +1564,8 @@ function Test-KitIntegrity {
         "scripts\Setup-GitEnv.ps1",
         "scripts\Start-GitEnv.ps1",
         "sources.json.ejemplo",
+        "Use-VSCodeJava.bat",
+        "scripts\Use-VSCodeJava.ps1",
         "Setup-MavenEnv.bat",
         "Start-MavenEnv.bat",
         "scripts\Setup-MavenEnv.ps1",
@@ -1568,6 +1632,7 @@ Test-BuildToolInstall -Titulo "Gradle" -Root $GradleRoot -Prefijo 'gradle' `
                       -SetupBat '.\Setup-GradleEnv.bat'
 Test-DotnetInstall
 Test-VSCodeInstall
+Test-VSCodeJavaRuntimes
 Test-InstalledSignatures
 Test-LockDrift
 Test-PortableApps

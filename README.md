@@ -848,6 +848,59 @@ solo en lo que dice `mvn -version`.
 > (`maven-toolchains-plugin` en el `pom.xml`, o un bloque `toolchain` en el
 > `build.gradle`) y el kit no la va a meter en proyectos ajenos.
 
+## Los JDK del kit dentro de VS Code
+
+```powershell
+.\Use-VSCodeJava.bat -WhatIf     Ensena que cambiaria
+.\Use-VSCodeJava.bat             Los registra
+.\Use-VSCodeJava.bat -Default 21 Y elige cual manda por defecto
+.\Use-VSCodeJava.bat -Remove     Los quita
+```
+
+La extension de Java de VS Code **no lee la version de Java del proyecto**: usa el
+`JAVA_HOME` del proceso, que es uno solo para todas las ventanas y solo cambia al
+reiniciar el editor. Con dos JDK instalados, eso significa que todos tus proyectos
+compilan con el mismo.
+
+Lo que si sabe hacer es elegir un JDK **por proyecto** si le dices cuales tienes.
+Eso es `java.configuration.runtimes`, y es lo que escribe este comando:
+
+```json
+"java.configuration.runtimes": [
+  { "name": "JavaSE-21", "path": "...\\Java\\jdk-21" },
+  { "name": "JavaSE-25", "path": "...\\Java\\jdk-25", "default": true }
+]
+```
+
+A partir de ahi, un proyecto que declara Java 21 compila con el 21 y uno que declara
+25 con el 25, en el mismo VS Code y **sin tocar ningun archivo de los proyectos**.
+
+Busca los dos sitios donde puede vivir ese archivo: el VS Code **portable del kit**
+(dentro de su `data\`) y el **instalado por usuario** en `%APPDATA%\Code`, que es lo
+normal en un equipo corporativo. Comprobado en un equipo donde solo estaba el
+segundo.
+
+**Es aditivo y reversible.** Los JDK que ya tuvieras registrados a mano -el de la
+empresa, por ejemplo- se conservan; solo se reemplazan los que apuntan a la carpeta
+`Java\` del kit. Hace una copia `.bak` antes de escribir, y `-Remove` deshace.
+
+Si tu `settings.json` lleva **comentarios** -VS Code los admite y el lector de JSON
+de PowerShell no- no lo reescribe: te imprime el bloque para que lo pegues. Comerse
+los comentarios de alguien por un comando que iba de otra cosa no es aceptable.
+
+No toca `java.jdt.ls.java.home`, que es el JDK con el que arranca el servidor de la
+extension. Ese lo resuelve ella sola, y cambiarlo puede dejar sin Java a un editor
+que funcionaba.
+
+`Doctor` dice si VS Code esta al dia y avisa si instalas un JDK nuevo que aun no
+conoce:
+
+```
+[ok]  VS Code del equipo        Java 21, 25   (por defecto JavaSE-25)
+[!]   VS Code del equipo        falta Java 21
+        Ponlo al dia con:  .\Use-VSCodeJava.bat
+```
+
 ## .NET SDK
 
 ```powershell

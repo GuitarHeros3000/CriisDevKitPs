@@ -2020,6 +2020,125 @@ function Get-ShellJavaHome {
     return ([regex]::Match((Get-Content -LiteralPath $ShellBat -Raw), 'set "JAVA_HOME=([^"]+)"')).Groups[1].Value
 }
 
+function Get-VSCodeSettingsTargets {
+    <#
+        Donde vive el settings.json de cada VS Code que haya en la maquina.
+
+        Son dos sitios distintos y no uno: el VS Code portable del kit guarda
+        sus ajustes dentro de su propia carpeta data\, y el que se instala por
+        usuario -sin admin, el habitual- los guarda en %APPDATA%\Code. Registrar
+        los JDK en el que no se usa no serviria de nada, asi que se buscan los
+        dos y se dice cual es cual.
+
+        Devuelve tambien los que aun no tienen settings.json: el archivo se crea
+        la primera vez que se cambia un ajuste, y no tenerlo no significa que ese
+        VS Code no exista.
+    #>
+    $targets = @()
+
+    # 1. El portable del kit, una carpeta data\ por version.
+    $vscodeRoot = Join-Path $WorkspaceRoot "VSCode"
+    if (Test-Path -LiteralPath $vscodeRoot) {
+        foreach ($d in @(Get-ChildItem -LiteralPath $vscodeRoot -Directory -ErrorAction SilentlyContinue)) {
+            if ($d.Name -notmatch '^vscode-(\d+\.\d+)$') { continue }
+            if (-not (Test-Path (Join-Path $d.FullName "Code.exe"))) { continue }
+
+            $targets += [PSCustomObject]@{
+                # Corta a proposito: Doctor la imprime en una columna de 26.
+                Etiqueta = "VS Code $($Matches[1]) del kit"
+                Ruta     = Join-Path $d.FullName "data\user-data\User\settings.json"
+                DelKit   = $true
+            }
+        }
+    }
+
+    # 2. El instalado por usuario. Se comprueba el ejecutable y no solo la
+    # carpeta de ajustes: %APPDATA%\Code sobrevive a una desinstalacion.
+    $exe = Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\Code.exe"
+    $sys = "C:\Program Files\Microsoft VS Code\Code.exe"
+    if ((Test-Path -LiteralPath $exe) -or (Test-Path -LiteralPath $sys)) {
+        $targets += [PSCustomObject]@{
+            Etiqueta = "VS Code del equipo"
+            Ruta     = Join-Path $env:APPDATA "Code\User\settings.json"
+            DelKit   = $false
+        }
+    }
+
+    return $targets
+}
+
+function Get-KitJavaRuntimeEntries {
+    <#
+        Las entradas de java.configuration.runtimes que describen los JDK del
+        kit. Es el ajuste con el que la extension de Java elige un JDK POR
+        PROYECTO, segun el nivel que declare cada uno, sin tocar los proyectos.
+
+        El nombre no es libre: la extension espera el identificador oficial de la
+        plataforma, y el Java 8 se llama JavaSE-1.8 y no JavaSE-8.
+    #>
+    param([string]$Default)
+
+    $entradas = @()
+    $javaRoot = Join-Path $WorkspaceRoot "Java"
+
+    foreach ($l in @(Get-KitJdkLines)) {
+        $nombre = if ($l -eq '8') { 'JavaSE-1.8' } else { "JavaSE-$l" }
+        $e = [ordered]@{
+            name = $nombre
+            path = (Join-Path $javaRoot "jdk-$l")
+        }
+        if ($Default -and $l -eq $Default) { $e['default'] = $true }
+        $entradas += [PSCustomObject]$e
+    }
+
+    return $entradas
+}
+
+function Merge-VSCodeJavaRuntimes {
+    <#
+        Mezcla las entradas del kit con las que ya hubiera en settings.json.
+
+        Las de fuera del kit se CONSERVAN: quien tenga registrado a mano el JDK
+        de la empresa no puede perderlo por ejecutar esto. Solo se reemplazan las
+        que apuntan dentro de la carpeta Java del kit, que son las nuestras.
+
+        Si el kit pone un default, se le quita a las conservadas: la extension
+        admite un unico runtime por defecto y dos lo dejarian en un estado que
+        no se puede predecir.
+
+        Con -Quitar se van las del kit y se quedan solo las ajenas.
+    #>
+    param(
+        [AllowNull()]$Actual,
+        [AllowNull()]$DelKit,
+        [Parameter(Mandatory=$true)][string]$RaizJava,
+        [switch]$Quitar
+    )
+
+    $raiz = $RaizJava.TrimEnd('\')
+    $ajenas = @(@($Actual) | Where-Object { $_ -and $_.path } | Where-Object {
+        $p = ([string]$_.path).TrimEnd('\')
+        -not ($p -ieq $raiz -or $p.StartsWith($raiz + '\', [StringComparison]::OrdinalIgnoreCase))
+    })
+
+    if ($Quitar) { return @($ajenas) }
+
+    $nuevas = @($DelKit)
+    $hayDefaultDelKit = @($nuevas | Where-Object { $_.default }).Count -gt 0
+
+    if ($hayDefaultDelKit) {
+        $ajenas = @($ajenas | ForEach-Object {
+            $copia = [ordered]@{}
+            foreach ($p in $_.PSObject.Properties) {
+                if ($p.Name -ne 'default') { $copia[$p.Name] = $p.Value }
+            }
+            [PSCustomObject]$copia
+        })
+    }
+
+    return @($ajenas + $nuevas)
+}
+
 function Get-BuildToolJavaBindings {
     <#
         A que linea de JDK del kit apunta hoy el shell por defecto de cada

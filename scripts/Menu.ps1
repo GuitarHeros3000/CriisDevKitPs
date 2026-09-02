@@ -71,6 +71,7 @@ function Get-Opciones {
     $ops += [PSCustomObject]@{ Num = 20; Grupo = 'ABRIR';     Texto = 'Abrir un shell';            Bat = $null;                 Clave = $null; Pide = 'runtime' }
     $ops += [PSCustomObject]@{ Num = 21; Grupo = 'ABRIR';     Texto = 'Activar en toda terminal';  Bat = 'Use-Env.bat';         Clave = $null; Pide = 'useenv' }
     $ops += [PSCustomObject]@{ Num = 22; Grupo = 'ABRIR';     Texto = 'Desactivar todo (Use-Env)'; Bat = 'Use-Env.bat';         Clave = $null; Pide = 'off' }
+    $ops += [PSCustomObject]@{ Num = 23; Grupo = 'ABRIR';     Texto = 'Dar los JDK a VS Code';     Bat = 'Use-VSCodeJava.bat';  Clave = $null; Pide = $null }
 
     $ops += [PSCustomObject]@{ Num = 30; Grupo = 'MANTENER';  Texto = 'Diagnostico';               Bat = 'Doctor-Env.bat';      Clave = $null; Pide = $null }
     $ops += [PSCustomObject]@{ Num = 31; Grupo = 'MANTENER';  Texto = 'Diagnostico y reparar';     Bat = 'Doctor-Env.bat';      Clave = $null; Pide = 'fix' }
