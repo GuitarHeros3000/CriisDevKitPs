@@ -63,6 +63,43 @@ function Write-Dato {
     Write-Host ("  {0,-20} {1}" -f $Etiqueta, $Valor)
 }
 
+function Invoke-PasoCa {
+    <#
+        Mira si la red intercepta el HTTPS y, si hace falta, ofrece poner la CA.
+
+        Devuelve $true si ya se ha resuelto la cuestion, y $false si NO SE HA
+        PODIDO MIRAR todavia por no haber ningun JDK con que comparar.
+
+        Ese $false es el motivo de que esto sea una funcion y no codigo suelto:
+        en un equipo recien formateado no hay JDK, asi que la primera vez no se
+        puede decidir, y hay que volver a preguntarlo despues de instalar. Sin
+        eso, el caso para el que existe este comando -portatil nuevo- se quedaba
+        sin comprobar la CA en silencio, y el primer 'mvn install' fallaba con
+        PKIX sin que nada lo hubiera avisado.
+    #>
+    if (Test-Path -LiteralPath $CorpCaFile) {
+        Write-Host "  Ya hay una CA guardada; se reaplica sola a lo que instales." -ForegroundColor Green
+        return $true
+    }
+
+    if (@(Get-KitJdkLines).Count -eq 0) { return $false }
+
+    $hallazgo = Find-CorpCa
+    if (-not $hallazgo.Interceptado) {
+        Write-Host "  No hace falta: $($hallazgo.Motivo)." -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host "  Tu red abre el HTTPS: $($hallazgo.Motivo)." -ForegroundColor Yellow
+    Write-Host "  Sin la CA, Maven fallara con PKIX path building failed, pip con" -ForegroundColor Yellow
+    Write-Host "  SSLCertVerificationError y git con 'SSL certificate problem'," -ForegroundColor Yellow
+    Write-Host "  aunque el navegador vaya bien." -ForegroundColor Yellow
+    if (Confirmar "Se la pongo a las herramientas del kit?") {
+        & (Join-Path $Kit "Use-CorpCert.bat") -Force
+    }
+    return $true
+}
+
 function Paso {
     param([int]$Numero, [string]$Titulo)
     Write-Host ""
@@ -93,43 +130,17 @@ else {
 }
 
 $jdks = @(Get-KitJdkLines)
-$interceptado = $null
 if ($jdks.Count -eq 0) {
-    Write-Dato "Interceptacion TLS" "no se puede saber todavia (hace falta un JDK con que comparar)"
-}
-else {
-    $hallazgo = Find-CorpCa
-    $interceptado = $hallazgo
-    if ($hallazgo.Interceptado) {
-        Write-Dato "Interceptacion TLS" "SI - $($hallazgo.Motivo)"
-    }
-    else {
-        Write-Dato "Interceptacion TLS" "no - $($hallazgo.Motivo)"
-    }
+    Write-Dato "Interceptacion TLS" "aun no se puede saber (hace falta un JDK con que comparar)"
 }
 
 # --------------------------------------------------------------------------
 Paso 2 "La CA de tu empresa"
 # --------------------------------------------------------------------------
 
-$yaHayCa = Test-Path -LiteralPath $CorpCaFile
-
-if ($yaHayCa) {
-    Write-Host "  Ya hay una CA guardada; se reaplica sola a lo que instales." -ForegroundColor Green
-}
-elseif ($jdks.Count -eq 0) {
+$caResuelta = Invoke-PasoCa
+if (-not $caResuelta) {
     Write-Host "  Se mira despues de instalar, cuando haya un JDK con que comparar." -ForegroundColor Gray
-}
-elseif ($interceptado -and $interceptado.Interceptado) {
-    Write-Host "  Tu red abre el HTTPS. Sin la CA, Maven fallara con PKIX path" -ForegroundColor Yellow
-    Write-Host "  building failed, pip con SSLCertVerificationError y git con" -ForegroundColor Yellow
-    Write-Host "  'SSL certificate problem', aunque el navegador vaya bien." -ForegroundColor Yellow
-    if (Confirmar "Se la pongo a las herramientas del kit?") {
-        & (Join-Path $Kit "Use-CorpCert.bat") -Force
-    }
-}
-else {
-    Write-Host "  No hace falta: tu red no esta abriendo el HTTPS." -ForegroundColor Green
 }
 
 # --------------------------------------------------------------------------
@@ -159,6 +170,17 @@ else {
     Write-Host "  Se instala a mano desde el menu, o con los Setup-*Env.bat." -ForegroundColor Gray
     if ($instalado.Count -eq 0 -and (Confirmar "Abro el menu para elegir?")) {
         & (Join-Path $Kit "Menu.bat")
+    }
+}
+
+# La pregunta de la CA que quedo en el aire por no haber JDK. Si ahora si lo
+# hay, se resuelve aqui; si no, se dice para que no se quede en el olvido.
+if (-not $caResuelta) {
+    Write-Host ""
+    Write-Host "  Vuelvo a lo de la CA, que antes no se podia mirar:" -ForegroundColor Cyan
+    if (-not (Invoke-PasoCa)) {
+        Write-Host "  Sigue sin haber ningun JDK. Cuando instales uno:" -ForegroundColor Gray
+        Write-Host "    .\Use-CorpCert.bat" -ForegroundColor White
     }
 }
 
