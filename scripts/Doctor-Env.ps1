@@ -1106,9 +1106,21 @@ function Test-LockDrift {
     foreach ($e in $plan.Errores) { Write-Check "Lock" $e 'fail' }
     if ($plan.Runtimes.Count -eq 0) { return }
 
+    $ataduras = Get-BuildToolJavaBindings
+
     foreach ($r in $plan.Runtimes) {
         $lineas = @(Get-InstalledRuntimeLines -Entrada $r.Entrada)
         $linea  = if ($r.Linea) { $r.Linea } else { $r.Version }
+
+        # El lock tambien fija a que JDK va el shell por defecto: reinstalar la
+        # herramienta sin -JavaVersion lo devolvia al mas alto en silencio.
+        if ($r.Java) {
+            $hoy = if ($ataduras.Contains($r.Clave)) { $ataduras[$r.Clave] } else { $null }
+            if ($hoy -ne $r.Java) {
+                Write-Check "$($r.Nombre) -> JDK" "$(if ($hoy) { $hoy } else { 'ninguno del kit' })  (lock: $($r.Java))" 'warn'
+                Write-Detail "Vuelve a atarlo con:  .\$($r.Entrada.Script -replace '\.ps1$', '.bat') -JavaVersion $($r.Java)"
+            }
+        }
 
         if ($lineas -notcontains $linea) {
             Write-Check $r.Nombre "el lock pide $($r.Version) y no esta instalado" 'fail'

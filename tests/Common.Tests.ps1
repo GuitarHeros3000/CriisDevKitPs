@@ -868,6 +868,91 @@ Describe "devenv.json (Read-DevEnvManifest)" {
         ($p.Runtimes | Where-Object { $_.Clave -eq 'python' }).Paquetes | Should Be 'django,flask'
     }
 
+    Context "varias versiones del mismo runtime" {
+
+        # Con un solo valor por runtime, una maquina con dos JDK -trabajar en
+        # proyectos con Javas distintos- no se podia reproducir desde su propio
+        # manifiesto. Es el motivo de admitir listas.
+        It "una lista instala las dos versiones" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "java": ["25", "21"] } }')
+            $p.Errores.Count  | Should Be 0
+            $p.Runtimes.Count | Should Be 2
+            ($p.Runtimes.Version -join ',') | Should Be '21,25'
+        }
+
+        It "un valor suelto sigue funcionando igual" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "java": "21" } }')
+            $p.Runtimes.Count   | Should Be 1
+            $p.Runtimes[0].Java | Should BeNullOrEmpty
+        }
+
+        It "sigue instalando Java antes que Maven con varias lineas" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "maven": "3.9", "java": ["25", "21"] } }')
+            ($p.Runtimes.Clave -join ',') | Should Be 'java,java,maven'
+        }
+
+        It "una lista vacia es un error, no un runtime sin version" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "java": [] } }')
+            $p.Errores.Count | Should BeGreaterThan 0
+        }
+
+        # Instalarla dos veces no rompe nada, pero es una errata: mas vale
+        # decirlo que ejecutar el mismo Setup dos veces sin explicacion.
+        It "una version repetida se senala" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "java": ["21", "21"] } }')
+            ($p.Errores -join ' ') | Should Match '21'
+        }
+    }
+
+    Context "seccion java: a que JDK va el shell de Maven y Gradle" {
+
+        It "ata Maven al JDK que se le diga" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "java": ["21", "25"], "maven": "3.9" }, "java": { "maven": "21" } }')
+            $p.Errores.Count | Should Be 0
+            ($p.Runtimes | Where-Object { $_.Clave -eq 'maven' }).Java | Should Be '21'
+        }
+
+        # Este es el error que justifica la validacion: sin ella, Restore-Env
+        # instalaba Java y Maven y solo al final fallaba el -JavaVersion, con el
+        # entorno ya a medias.
+        It "rechaza atar Maven a un JDK que el manifiesto no instala" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "java": "25", "maven": "3.9" }, "java": { "maven": "21" } }')
+            $p.Errores.Count | Should BeGreaterThan 0
+            ($p.Errores -join ' ') | Should Match '21'
+            ($p.Errores -join ' ') | Should Match 'instala: 25'
+        }
+
+        It "rechaza atar un runtime que no elige JDK" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "python": "3.12" }, "java": { "python": "21" } }')
+            ($p.Errores -join ' ') | Should Match 'python'
+        }
+
+        It "rechaza un runtime desconocido en la seccion java" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "maven": "3.9" }, "java": { "grade": "21" } }')
+            ($p.Errores -join ' ') | Should Match 'grade'
+        }
+
+        It "rechaza algo que no es una linea de JDK" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "java": "21", "maven": "3.9" }, "java": { "maven": "jdk-21" } }')
+            ($p.Errores -join ' ') | Should Match 'jdk-21'
+        }
+
+        # Sin Java en el manifiesto la atadura puede ser legitima -un JDK ya
+        # instalado a mano- asi que avisa en vez de parar.
+        It "avisa, sin parar, si el manifiesto no instala Java" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "maven": "3.9" }, "java": { "maven": "21" } }')
+            $p.Errores.Count | Should Be 0
+            $p.Avisos.Count  | Should BeGreaterThan 0
+            ($p.Runtimes | Where-Object { $_.Clave -eq 'maven' }).Java | Should Be '21'
+        }
+
+        It "avisa si se ata una herramienta que el manifiesto no instala" {
+            $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "java": "21" }, "java": { "gradle": "21" } }')
+            $p.Errores.Count | Should Be 0
+            $p.Avisos.Count  | Should BeGreaterThan 0
+        }
+    }
+
     It "sin paquetes, deja el campo vacio" {
         $p = Read-DevEnvManifest -Config (Manifiesto '{ "runtimes": { "python": "3.12" } }')
         $p.Runtimes[0].Paquetes | Should BeNullOrEmpty
@@ -965,6 +1050,25 @@ Describe "devenv.lock.json (Read-DevEnvLock)" {
     It "tolera un lock nulo o sin runtimes" {
         (Read-DevEnvLock -Config $null).Errores.Count | Should BeGreaterThan 0
         (Read-DevEnvLock -Config (Lock '{ "version": 1 }')).Errores.Count | Should BeGreaterThan 0
+    }
+
+    # Un lock que solo sabe anotar un Java no reproduce la maquina que tiene el
+    # 21 y el 25, que es justo lo que se queria fijar.
+    It "fija varias lineas del mismo runtime" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "java": [ { "linea": "21", "exacta": "jdk-21.0.12.1+1", "fijable": true }, { "linea": "25", "exacta": "jdk-25.0.4.1+1", "fijable": true } ] } }')
+        $p.Errores.Count  | Should Be 0
+        $p.Runtimes.Count | Should Be 2
+        ($p.Runtimes.Exacta -join ',') | Should Be 'jdk-21.0.12.1+1,jdk-25.0.4.1+1'
+    }
+
+    It "una entrada suelta sigue funcionando igual" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "java": { "linea": "25", "exacta": "jdk-25.0.4.1+1" } } }')
+        $p.Runtimes.Count | Should Be 1
+    }
+
+    It "recoge a que JDK va el shell por defecto de Maven" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "maven": { "linea": "3.9", "java": "21" } } }')
+        $p.Runtimes[0].Java | Should Be '21'
     }
 
     # Si esto se desalinea, el lock pediria versiones que el Setup rechaza.

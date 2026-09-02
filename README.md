@@ -939,6 +939,37 @@ justo lo contrario de para lo que existe.
 
 Si algo falla a mitad, sigue con el resto y al final te dice que entro y que no.
 
+### Varias versiones del mismo runtime, y a que JDK va Maven
+
+Un runtime admite una **lista**, y hay una seccion `java` que dice a que JDK va el
+shell por defecto de Maven o de Gradle:
+
+```json
+{
+  "version": 1,
+  "runtimes": { "java": ["21", "25"], "maven": "3.9" },
+  "java": { "maven": "21" }
+}
+```
+
+Hacia falta porque con un solo valor por runtime el manifiesto **no sabia describir
+tu maquina**: si trabajas en proyectos con Javas distintos, anotaba solo el mas alto
+y perdia el segundo. Y sin la seccion `java`, Maven se ataba al JDK mas alto al
+reproducirlo, que no tiene por que ser el del proyecto.
+
+La seccion `java` se valida **antes** de instalar nada: atar Maven al JDK 21 en un
+manifiesto que solo instala el 25 se para en seco, en vez de descargar medio entorno
+y fallar al final.
+
+`-Save` anota las dos cosas leyendo la maquina: todas las lineas instaladas, y a que
+JDK apunta hoy el shell de cada herramienta, leido del propio shell. `-Lock` hace lo
+mismo con las versiones exactas, y `Doctor` avisa si la atadura cambia:
+
+```
+[!]   Maven -> JDK              25  (lock: 21)
+        Vuelve a atarlo con:  .\Setup-MavenEnv.bat -JavaVersion 21
+```
+
 ### `devenv.lock.json`: que dos maquinas monten LO MISMO
 
 El manifiesto dice `"python": "3.12"`. Eso es una **linea**, no una version: hoy
@@ -973,6 +1004,13 @@ La carpeta y el nombre del shell siguen saliendo de la **linea** (`jdk-21`,
 
 Comprobado: con un lock pidiendo `jdk-21.0.9+10` y un manifiesto pidiendo la linea
 `21`, entra el `21.0.9+10` y `Doctor` confirma `= lock`.
+
+Maven y Gradle tambien aceptan ya la linea, y no solo la version exacta. Antes no:
+el manifiesto anotaba `"maven": "3.9"` y su Setup componia la URL de una version
+literal `3.9`, que no existe, asi que `Restore-Env` no podia reinstalar Maven y solo
+daba un 404. En Gradle era peor que un error visible: `9.7` y `9.7.1` existen las
+dos, o sea que la linea instalaba el **primer** parche en silencio. Ahora las dos
+resuelven al ultimo parche publicado de esa linea.
 
 > Al pedir a VS Code una version concreta se usa otra ruta de descarga que **no
 > publica checksum**. El kit lo dice antes de bajar en vez de dar por verificado lo

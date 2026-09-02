@@ -80,20 +80,32 @@ if ($Lock) {
     $runtimes = [ordered]@{}
     $noFijables = @()
 
+    $ataduras = Get-BuildToolJavaBindings
+
     foreach ($e in (Get-RuntimeCatalog)) {
         $lineas = @(Get-InstalledRuntimeLines -Entrada $e)
         if ($lineas.Count -eq 0) { continue }
 
-        $linea  = @($lineas | Sort-Object { try { [version]($_ -replace '^(\d+)$', '$1.0') } catch { [version]'0.0' } } -Descending)[0]
-        $exacta = Get-InstalledRuntimeVersion -Entrada $e -Linea $linea
-        $sha    = Get-InstalledRuntimeSha256 -Entrada $e -Linea $linea
+        # Todas las lineas, de menor a mayor. Antes se fijaba solo la mas alta:
+        # un lock que dice "Java 25" no reproduce una maquina que tiene el 21 y
+        # el 25, que es justo lo que se quiere fijar.
+        $ordenadas = @($lineas | Sort-Object { try { [version]($_ -replace '^(\d+)$', '$1.0') } catch { [version]'0.0' } })
 
-        $entrada = [ordered]@{ linea = $linea }
-        if ($exacta) { $entrada['exacta'] = $exacta }
-        if ($sha)    { $entrada['sha256'] = $sha }
-        $entrada['fijable'] = [bool]$e.Fijable
+        $entradas = @()
+        foreach ($linea in $ordenadas) {
+            $exacta = Get-InstalledRuntimeVersion -Entrada $e -Linea $linea
+            $sha    = Get-InstalledRuntimeSha256 -Entrada $e -Linea $linea
 
-        $runtimes[$e.Clave] = $entrada
+            $entrada = [ordered]@{ linea = $linea }
+            if ($exacta) { $entrada['exacta'] = $exacta }
+            if ($sha)    { $entrada['sha256'] = $sha }
+            $entrada['fijable'] = [bool]$e.Fijable
+            if ($ataduras.Contains($e.Clave)) { $entrada['java'] = $ataduras[$e.Clave] }
+
+            $entradas += $entrada
+        }
+
+        $runtimes[$e.Clave] = if ($entradas.Count -eq 1) { $entradas[0] } else { $entradas }
         if (-not $e.Fijable) { $noFijables += $e.Nombre }
     }
 
@@ -124,11 +136,13 @@ if ($Lock) {
     Write-Log "Escrito: $LockPath" "SUCCESS"
     Write-Host ""
     foreach ($k in $runtimes.Keys) {
-        $r = $runtimes[$k]
-        $ex = if ($r.exacta) { $r.exacta } else { '(sin determinar)' }
-        $marca = if ($r.fijable) { '' } else { '   <- solo se puede fijar su linea' }
-        Write-Host ("  {0,-10} {1,-18} {2}" -f $k, $ex, $marca) -ForegroundColor Gray
-        if ($r.sha256) { Write-Host ("             sha256 {0}" -f $r.sha256) -ForegroundColor DarkGray }
+        foreach ($r in @($runtimes[$k])) {
+            $ex = if ($r.exacta) { $r.exacta } else { '(sin determinar)' }
+            $marca = if ($r.fijable) { '' } else { '   <- solo se puede fijar su linea' }
+            Write-Host ("  {0,-10} {1,-18} {2}" -f $k, $ex, $marca) -ForegroundColor Gray
+            if ($r.sha256) { Write-Host ("             sha256 {0}" -f $r.sha256) -ForegroundColor DarkGray }
+            if ($r.java)   { Write-Host ("             su shell por defecto va al JDK {0}" -f $r.java) -ForegroundColor DarkGray }
+        }
     }
     Write-Host ""
     if ($noFijables.Count -gt 0) {
@@ -158,16 +172,15 @@ if ($Save) {
         $lineas = @(Get-InstalledRuntimeLines -Entrada $e)
         if ($lineas.Count -eq 0) { continue }
 
-        # Si hay varias lineas de un mismo runtime se anota la mas alta: un
-        # manifiesto describe UN entorno, no todo lo que llegaste a instalar.
-        $elegida = @($lineas | Sort-Object {
+        # Se anotan TODAS, de menor a mayor. Antes se guardaba solo la mas alta,
+        # y entonces una maquina con dos JDK -el caso de trabajar en proyectos
+        # con Javas distintos- no se podia reproducir a partir de su manifiesto.
+        $ordenadas = @($lineas | Sort-Object {
             try { [version]($_ -replace '^(\d+)$', '$1.0') } catch { [version]'0.0' }
-        } -Descending)[0]
+        })
 
-        $runtimes[$e.Clave] = $elegida
-        if ($lineas.Count -gt 1) {
-            Write-Log "$($e.Nombre): hay $($lineas.Count) lineas ($($lineas -join ', ')); se anota $elegida" "WARN"
-        }
+        # Una sola se escribe suelta: un array de un elemento seria ruido.
+        $runtimes[$e.Clave] = if ($ordenadas.Count -eq 1) { $ordenadas[0] } else { $ordenadas }
     }
 
     if ($runtimes.Count -eq 0) {
@@ -181,6 +194,11 @@ if ($Save) {
         descripcion = "Entorno de desarrollo. Reproducelo con:  Restore-Env.bat"
         runtimes    = $runtimes
     }
+
+    # A que JDK apunta hoy el shell por defecto de Maven y de Gradle. Se lee del
+    # propio shell y no se supone: es el dato que decide con que Java compilan.
+    $java = Get-BuildToolJavaBindings
+    if ($java.Count -gt 0) { $manifiesto['java'] = $java }
 
     if ($WhatIf) {
         Write-Host "Se escribiria en $Path :" -ForegroundColor Yellow
@@ -204,7 +222,12 @@ if ($Save) {
     ($manifiesto | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $Path -Encoding UTF8
     Write-Log "Escrito: $Path" "SUCCESS"
     Write-Host ""
-    foreach ($k in $runtimes.Keys) { Write-Host ("  {0,-10} {1}" -f $k, $runtimes[$k]) -ForegroundColor Gray }
+    foreach ($k in $runtimes.Keys) {
+        Write-Host ("  {0,-10} {1}" -f $k, (@($runtimes[$k]) -join ', ')) -ForegroundColor Gray
+        if ($manifiesto.java -and $manifiesto.java.Contains($k)) {
+            Write-Host ("             su shell por defecto va al JDK {0}" -f $manifiesto.java[$k]) -ForegroundColor DarkGray
+        }
+    }
     Write-Host ""
     Write-Host "Guardalo en el repositorio del proyecto: la receta viaja con el." -ForegroundColor Gray
     Write-Host "En otra maquina, con el kit al lado:  .\Restore-Env.bat" -ForegroundColor White
@@ -262,6 +285,8 @@ if ($plan.Errores.Count -gt 0) {
     exit 1
 }
 
+foreach ($a in $plan.Avisos) { Write-Log "  $a" "WARN" }
+
 if ($plan.Runtimes.Count -eq 0) {
     Write-Log "No pide ningun runtime." "WARN"
     exit 0
@@ -288,6 +313,7 @@ foreach ($r in $plan.Runtimes) {
         Write-Host ("               el lock anota {0}, pero su Setup solo acepta la linea" -f $r.Exacta) -ForegroundColor DarkYellow
     }
     if ($r.Paquetes) { Write-Host ("               paquetes: {0}" -f $r.Paquetes) -ForegroundColor DarkGray }
+    if ($r.Java)     { Write-Host ("               su shell por defecto ira al JDK {0}" -f $r.Java) -ForegroundColor DarkGray }
 }
 Write-Host ""
 Write-Host "Cada uno se instala con su propio Setup-*Env, asi que hereda el proxy," -ForegroundColor DarkGray
@@ -330,6 +356,11 @@ foreach ($r in $plan.Runtimes) {
     }
     if ($r.Paquetes -and $r.Entrada.ParamPaquetes) {
         $argumentos[$r.Entrada.ParamPaquetes] = $r.Paquetes
+    }
+    # A que JDK va el shell por defecto de Maven o Gradle. Sin esto se quedaban
+    # con el mas alto instalado, que no tiene por que ser el del proyecto.
+    if ($r.Java -and $r.Entrada.ParamJava) {
+        $argumentos[$r.Entrada.ParamJava] = $r.Java
     }
 
     try {

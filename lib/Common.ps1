@@ -1695,6 +1695,7 @@ function Write-GitShell {
 
 $MavenBaseUrl  = "https://dlcdn.apache.org/maven/maven-3/"
 $GradleVersionApi = "https://services.gradle.org/versions/current"
+$GradleAllVersionsApi = "https://services.gradle.org/versions/all"
 
 function Get-MavenRelease {
     <#
@@ -1703,16 +1704,24 @@ function Get-MavenRelease {
         Apache no tiene una API: se lee el listado de directorio de dlcdn y se
         coge la version mas alta. Y publica SHA-512, no SHA-256, que es la razon
         de que Invoke-Download admita los dos.
+
+        Admite tambien una LINEA ("3.9") y devuelve su ultimo parche. Hacia
+        falta porque el devenv.json anota la linea, igual que hace con Python:
+        pedir "3.9" componia la URL de una version que no existe y Restore-Env
+        no podia reinstalar Maven, solo daba un 404.
     #>
     param([string]$Version)
 
     $elegida = $Version
-    if ([string]::IsNullOrWhiteSpace($elegida)) {
+    $linea   = if ($Version -match '^\d+\.\d+$') { $Version } else { $null }
+
+    if ([string]::IsNullOrWhiteSpace($elegida) -or $linea) {
         $html = Get-WebText -Uri $MavenBaseUrl -Quiet
         if (-not $html) { return $null }
 
         $vs = @([regex]::Matches($html, 'href="(\d+\.\d+\.\d+)/"') |
                 ForEach-Object { $_.Groups[1].Value } |
+                Where-Object { -not $linea -or $_ -like "$linea.*" } |
                 Sort-Object { [version]$_ } -Descending)
         if ($vs.Count -eq 0) { return $null }
         $elegida = $vs[0]
@@ -1737,6 +1746,13 @@ function Get-GradleRelease {
     <#
         Gradle si publica una API con la version actual, su zip y su checksum.
         Para una version concreta se componen las URL, que siguen un patron fijo.
+
+        Una LINEA ("9.7") se resuelve a su ultimo parche consultando el listado
+        completo. Aqui no bastaba con componer la URL como con una version
+        exacta: Gradle publica tanto 9.7 como 9.7.1, asi que pedir la linea
+        habria instalado el primer parche en vez del ultimo, en silencio. Es lo
+        que anota el devenv.json, de modo que sin esto Restore-Env reproducia
+        una version distinta de la que se guardo.
     #>
     param([string]$Version)
 
@@ -1749,6 +1765,23 @@ function Get-GradleRelease {
     }
     else {
         $elegida = $Version.Trim()
+
+        if ($elegida -match '^\d+\.\d+$') {
+            $todas = Invoke-JsonApi -Uri $GradleAllVersionsApi -Quiet
+            if (-not $todas) { return $null }
+
+            # Fuera los candidatos y los rotos: un manifiesto pide una version
+            # publicada, no una release candidate.
+            $enLinea = @($todas |
+                Where-Object { -not $_.snapshot -and -not $_.broken -and -not $_.rcFor -and -not $_.milestoneFor } |
+                ForEach-Object { [string]$_.version } |
+                Where-Object { $_ -eq $elegida -or $_ -like "$elegida.*" } |
+                Sort-Object { try { [version]$_ } catch { [version]'0.0' } } -Descending)
+
+            if ($enLinea.Count -eq 0) { return $null }
+            $elegida = $enLinea[0]
+        }
+
         $url     = "https://services.gradle.org/distributions/gradle-$elegida-bin.zip"
         $shaUrl  = "$url.sha256"
     }
@@ -1985,6 +2018,43 @@ function Get-ShellJavaHome {
 
     if (-not (Test-Path -LiteralPath $ShellBat)) { return '' }
     return ([regex]::Match((Get-Content -LiteralPath $ShellBat -Raw), 'set "JAVA_HOME=([^"]+)"')).Groups[1].Value
+}
+
+function Get-BuildToolJavaBindings {
+    <#
+        A que linea de JDK del kit apunta hoy el shell por defecto de cada
+        herramienta: @{ maven = '21'; gradle = '25' }.
+
+        Se lee del shell y no se deduce del catalogo porque es el dato real: es
+        ese JAVA_HOME el que decide con que Java compilan. Solo se devuelven los
+        que apuntan a un JDK del kit; uno de fuera no lo sabria reproducir
+        Restore-Env en otra maquina.
+    #>
+    $bindings = [ordered]@{}
+    $javaRoot = (Join-Path $WorkspaceRoot "Java").TrimEnd('\')
+
+    foreach ($t in @(
+        @{ Clave = 'maven';  Root = 'Maven';  Exe = 'mvn';    Jar = 'lib\maven-core-*.jar';      Rx = 'maven-core-([\d.]+)\.jar' },
+        @{ Clave = 'gradle'; Root = 'Gradle'; Exe = 'gradle'; Jar = 'lib\gradle-launcher-*.jar'; Rx = 'gradle-launcher-([\d.]+)\.jar' }
+    )) {
+        $root = Join-Path $WorkspaceRoot $t.Root
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+
+        foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
+            $jars = @(Get-ChildItem -Path (Join-Path $d.FullName $t.Jar) -ErrorAction SilentlyContinue)
+            if ($jars.Count -eq 0 -or $jars[0].Name -notmatch $t.Rx) { continue }
+
+            $shell = Join-Path $d.FullName "$($t.Exe)$((Get-ToolLine -Version $Matches[1]) -replace '\.','')-shell.bat"
+            $jh = Get-ShellJavaHome -ShellBat $shell
+            if (-not $jh) { continue }
+
+            $padre = Split-Path -Parent $jh.TrimEnd('\')
+            if ($padre.TrimEnd('\') -ine $javaRoot) { continue }
+            if ((Split-Path -Leaf $jh) -match '^jdk-(\d+)$') { $bindings[$t.Clave] = $Matches[1] }
+        }
+    }
+
+    return $bindings
 }
 
 function Sync-BuildToolShells {
@@ -2319,7 +2389,7 @@ function Get-RuntimeCatalog {
         }
         [PSCustomObject]@{
             Clave = 'maven'; Nombre = 'Maven'; Script = 'Setup-MavenEnv.ps1'
-            ParamVersion = 'MavenVersion'; ParamPaquetes = $null
+            ParamVersion = 'MavenVersion'; ParamPaquetes = $null; ParamJava = 'JavaVersion'
             Carpeta = 'Maven'; Patron = '^maven-(\d+\.\d+)$'; AdmiteForce = $true
             ExeFirma = $null;           FirmanteEsperado = $null
             Bundle = $true; Envoltorio = $true;  Sfx = $false
@@ -2327,7 +2397,7 @@ function Get-RuntimeCatalog {
         }
         [PSCustomObject]@{
             Clave = 'gradle'; Nombre = 'Gradle'; Script = 'Setup-GradleEnv.ps1'
-            ParamVersion = 'GradleVersion'; ParamPaquetes = $null
+            ParamVersion = 'GradleVersion'; ParamPaquetes = $null; ParamJava = 'JavaVersion'
             Carpeta = 'Gradle'; Patron = '^gradle-(\d+\.\d+)$'; AdmiteForce = $true
             ExeFirma = $null;           FirmanteEsperado = $null
             Bundle = $true; Envoltorio = $true;  Sfx = $false
@@ -2696,14 +2766,23 @@ function Read-DevEnvManifest {
         Un runtime desconocido no se ignora en silencio: se devuelve como error.
         Un devenv.json con una errata dejaria el entorno a medias sin decir por
         que, y este comando existe justo para lo contrario.
+
+        El valor de un runtime puede ser una lista: "java": ["21", "25"] instala
+        las dos. Hacia falta para describir el caso real de trabajar en proyectos
+        con Javas distintos; con un solo valor por runtime, el manifiesto no
+        sabia reproducir esa maquina.
+
+        La seccion "java" ata el shell por defecto de Maven o Gradle a un JDK
+        concreto: sin ella se quedarian con el mas alto instalado.
     #>
     param([AllowNull()]$Config)
 
     $errores  = @()
+    $avisos   = @()
     $runtimes = @()
 
     if (-not $Config) {
-        return [PSCustomObject]@{ Runtimes = @(); Errores = @('el manifiesto esta vacio o no es JSON valido') }
+        return [PSCustomObject]@{ Runtimes = @(); Errores = @('el manifiesto esta vacio o no es JSON valido'); Avisos = @() }
     }
 
     if ($Config.version -and [int]$Config.version -gt 1) {
@@ -2712,7 +2791,7 @@ function Read-DevEnvManifest {
 
     if (-not $Config.runtimes) {
         $errores += "no hay ninguna seccion 'runtimes'"
-        return [PSCustomObject]@{ Runtimes = @(); Errores = $errores }
+        return [PSCustomObject]@{ Runtimes = @(); Errores = $errores; Avisos = $avisos }
     }
 
     $catalogo = Get-RuntimeCatalog
@@ -2723,7 +2802,62 @@ function Read-DevEnvManifest {
             $errores += "runtime desconocido: '$($p.Name)'  (conocidos: $(($catalogo.Clave) -join ', '))"
             continue
         }
-        $pedidos[$clave] = [string]$p.Value
+
+        # Un valor suelto y una lista se tratan igual a partir de aqui.
+        $lista = @(@($p.Value) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+                   ForEach-Object { ([string]$_).Trim() })
+        if ($lista.Count -eq 0) {
+            $errores += "$clave : no dice ninguna version"
+            continue
+        }
+
+        $repes = @($lista | Group-Object | Where-Object { $_.Count -gt 1 })
+        if ($repes.Count -gt 0) {
+            $errores += "$clave : la version $($repes[0].Name) esta repetida"
+            continue
+        }
+
+        $pedidos[$clave] = $lista
+    }
+
+    # La seccion java se valida contra lo que se va a instalar: atar Maven a un
+    # JDK que el manifiesto no instala fallaria a mitad de la reproduccion, y es
+    # justo lo que este validador existe para evitar.
+    $ataduras = @{}
+    if ($Config.java) {
+        foreach ($p in $Config.java.PSObject.Properties) {
+            $clave = $p.Name.ToLowerInvariant()
+            $e = @($catalogo | Where-Object { $_.Clave -eq $clave })
+
+            if ($e.Count -eq 0) {
+                $errores += "seccion 'java': runtime desconocido '$($p.Name)'"
+                continue
+            }
+            if (-not $e[0].ParamJava) {
+                $conJava = ($catalogo | Where-Object { $_.ParamJava }).Clave -join ', '
+                $errores += "seccion 'java': $clave no elige JDK  (solo lo hacen: $conJava)"
+                continue
+            }
+            if (-not $pedidos.ContainsKey($clave)) {
+                $avisos += "seccion 'java': se ata $clave a un JDK pero el manifiesto no instala $clave"
+                continue
+            }
+
+            $linea = ([string]$p.Value).Trim()
+            if ($linea -notmatch '^\d+$') {
+                $errores += "seccion 'java': '$linea' no es una linea de JDK (se espera 21, 25...)"
+                continue
+            }
+            if ($pedidos.ContainsKey('java') -and $pedidos['java'] -notcontains $linea) {
+                $errores += "seccion 'java': se ata $clave al JDK $linea, que el manifiesto no instala (instala: $($pedidos['java'] -join ', '))"
+                continue
+            }
+            if (-not $pedidos.ContainsKey('java')) {
+                $avisos += "seccion 'java': se ata $clave al JDK $linea, que el manifiesto no instala; tendra que estar ya en la maquina"
+            }
+
+            $ataduras[$clave] = $linea
+        }
     }
 
     # Se recorre el CATALOGO y no lo pedido, para que el orden de instalacion
@@ -2731,23 +2865,31 @@ function Read-DevEnvManifest {
     foreach ($e in $catalogo) {
         if (-not $pedidos.ContainsKey($e.Clave)) { continue }
 
-        $v = $pedidos[$e.Clave]
         $paquetes = $null
         if ($e.ParamPaquetes -and $Config.paquetes) {
             $prop = $Config.paquetes.PSObject.Properties[$e.Clave]
             if ($prop -and $prop.Value) { $paquetes = @($prop.Value) -join ',' }
         }
 
-        $runtimes += [PSCustomObject]@{
-            Clave    = $e.Clave
-            Nombre   = $e.Nombre
-            Version  = $v
-            Paquetes = $paquetes
-            Entrada  = $e
+        # De menor a mayor: si el Setup ordena el PATH por orden de llegada, la
+        # version mas alta acaba delante, que es la que se espera por defecto.
+        $ordenadas = @($pedidos[$e.Clave] | Sort-Object {
+            try { [version]($_ -replace '^(\d+)$', '$1.0') } catch { [version]'0.0' }
+        })
+
+        foreach ($v in $ordenadas) {
+            $runtimes += [PSCustomObject]@{
+                Clave    = $e.Clave
+                Nombre   = $e.Nombre
+                Version  = $v
+                Paquetes = $paquetes
+                Java     = $(if ($ataduras.ContainsKey($e.Clave)) { $ataduras[$e.Clave] } else { $null })
+                Entrada  = $e
+            }
         }
     }
 
-    return [PSCustomObject]@{ Runtimes = $runtimes; Errores = $errores }
+    return [PSCustomObject]@{ Runtimes = $runtimes; Errores = $errores; Avisos = $avisos }
 }
 
 function Read-DevEnvLock {
@@ -2763,6 +2905,9 @@ function Read-DevEnvLock {
         ese runtime la admite -lo dice Fijable en el catalogo-; si no, se cae a
         la linea y se avisa, porque prometer un pin que no se puede cumplir es
         peor que no tenerlo.
+
+        Un runtime puede traer varias entradas en una lista, igual que en el
+        manifiesto: una maquina con dos JDK no se describe con una sola.
     #>
     param([AllowNull()]$Config)
 
@@ -2789,34 +2934,37 @@ function Read-DevEnvLock {
             $errores += "runtime desconocido en el lock: '$($p.Name)'"
             continue
         }
-        $pedidos[$clave] = $p.Value
+        # Una entrada suelta y una lista se tratan igual a partir de aqui.
+        $pedidos[$clave] = @($p.Value)
     }
 
     foreach ($e in $catalogo) {
         if (-not $pedidos.ContainsKey($e.Clave)) { continue }
-        $v = $pedidos[$e.Clave]
 
-        $linea  = if ($v.linea)  { [string]$v.linea }  else { $null }
-        $exacta = if ($v.exacta) { [string]$v.exacta } else { $null }
+        foreach ($v in $pedidos[$e.Clave]) {
+            $linea  = if ($v.linea)  { [string]$v.linea }  else { $null }
+            $exacta = if ($v.exacta) { [string]$v.exacta } else { $null }
 
-        if (-not $linea -and -not $exacta) {
-            $errores += "$($e.Clave): la entrada del lock no trae ni linea ni exacta"
-            continue
-        }
+            if (-not $linea -and -not $exacta) {
+                $errores += "$($e.Clave): la entrada del lock no trae ni linea ni exacta"
+                continue
+            }
 
-        $usar = if ($e.Fijable -and $exacta) { $exacta } else { $linea }
-        if (-not $usar) { $usar = $exacta }
+            $usar = if ($e.Fijable -and $exacta) { $exacta } else { $linea }
+            if (-not $usar) { $usar = $exacta }
 
-        $runtimes += [PSCustomObject]@{
-            Clave    = $e.Clave
-            Nombre   = $e.Nombre
-            Version  = $usar
-            Exacta   = $exacta
-            Linea    = $linea
-            Fijado   = [bool]($e.Fijable -and $exacta)
-            Sha256   = if ($v.sha256) { [string]$v.sha256 } else { $null }
-            Paquetes = $null
-            Entrada  = $e
+            $runtimes += [PSCustomObject]@{
+                Clave    = $e.Clave
+                Nombre   = $e.Nombre
+                Version  = $usar
+                Exacta   = $exacta
+                Linea    = $linea
+                Fijado   = [bool]($e.Fijable -and $exacta)
+                Sha256   = if ($v.sha256) { [string]$v.sha256 } else { $null }
+                Paquetes = $null
+                Java     = $(if ($v.java) { [string]$v.java } else { $null })
+                Entrada  = $e
+            }
         }
     }
 

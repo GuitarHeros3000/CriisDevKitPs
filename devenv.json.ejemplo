@@ -16,15 +16,26 @@
   "_comentario_15": "Runtimes admitidos: python, java, node, angular, git, maven,",
   "_comentario_16": "gradle, dotnet, vscode. Una errata NO se ignora: el comando se",
   "_comentario_17": "niega a instalar nada y te dice cual no reconoce.",
+  "_comentario_18": "",
+  "_comentario_19": "Un runtime admite una LISTA: \"java\": [\"21\", \"25\"] instala los dos.",
+  "_comentario_20": "",
+  "_comentario_21": "La seccion \"java\" dice a que JDK va el shell por defecto de Maven",
+  "_comentario_22": "o Gradle; sin ella se quedan con el mas alto instalado. Solo puede",
+  "_comentario_23": "nombrar un JDK que este manifiesto instale, y se comprueba antes de",
+  "_comentario_24": "descargar nada.",
 
   "version": 1,
   "descripcion": "Backend Java con utilidades en Python",
 
   "runtimes": {
-    "java": "21",
+    "java": ["21", "25"],
     "maven": "3.9",
     "python": "3.12",
     "git": "latest"
+  },
+
+  "java": {
+    "maven": "21"
   },
 
   "paquetes": {
