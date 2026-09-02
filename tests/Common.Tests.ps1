@@ -1156,13 +1156,34 @@ Describe "Firma Authenticode" {
             finally { Remove-Item $e -Force -ErrorAction SilentlyContinue }
         }
 
-        # El cuarto camino -firma presente pero NO valida: caducada, revocada o
-        # alterada- se queda sin prueba automatica a proposito. Fabricar una
-        # firma invalida de verdad no es trivial: anadirle bytes al final a un
-        # binario firmado NO la rompe, porque Authenticode deja esa region fuera
-        # del hash (probado: sigue dando Valid). Falsear el estado obligaria a
-        # sustituir Get-AuthenticodeSignature, y entonces la prueba solo
-        # comprobaria el doble. Se deja anotado en vez de fingir cobertura.
+        # El caso mas importante y el que se escapaba: firmado por alguien en
+        # quien el equipo NO confia. Windows devuelve UnknownError igual que con
+        # un archivo que no es un ejecutable, y agrupar los dos hacia que un
+        # binario firmado por un desconocido se anunciara como "sin firma".
+        # Lo que los distingue es si hay certificado.
+        It "un editor desconocido se avisa, no se confunde con no tener firma" {
+            $cert = New-SelfSignedCertificate -Type CodeSigningCert `
+                        -Subject 'CN=Editor Desconocido De Prueba' `
+                        -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddDays(1)
+            $f = Join-Path ([System.IO.Path]::GetTempPath()) ("f-" + [Guid]::NewGuid().ToString('N') + ".ps1")
+            try {
+                Set-Content -LiteralPath $f -Value '"hola"' -Encoding ASCII
+                Set-AuthenticodeSignature -LiteralPath $f -Certificate $cert | Out-Null
+
+                $info = Get-FileSignerInfo -FilePath $f
+                $info.Firmante | Should Match 'Editor Desconocido De Prueba'
+
+                $t = Texto $f $null
+                $t | Should Match 'NO confia'
+                $t | Should Match 'Editor Desconocido De Prueba'
+                # Lo que NUNCA debe decir de un archivo que SI esta firmado:
+                $t | Should Not Match 'Sin firma'
+            }
+            finally {
+                Remove-Item $f -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 }
 

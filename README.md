@@ -923,6 +923,24 @@ otro se avisa. Un cambio de certificado puede ser legitimo, pero merece una mira
 > personal. Un tercero puede estar perfectamente firmado, y si no lo esta, el kit
 > te lo dice y sigue adelante.
 
+### Cuatro estados, no dos
+
+| Estado | Que significa |
+|---|---|
+| **Firmado por X** | firma valida y cadena de confianza correcta |
+| **Sin firma Authenticode** | no esta firmado. Ni error ni sospecha: pasa con software legitimo |
+| **Sin firma reconocible** | Windows no pudo determinarla; normalmente el archivo ni siquiera tiene formato firmable |
+| **Firmado por X, pero tu equipo NO confia en quien lo emitio** | **si esta firmado**, pero por un certificado autofirmado, caducado o de una entidad desconocida |
+
+El cuarto es el que importa y **el que se escapaba**: Windows devuelve `UnknownError`
+tanto para un archivo que no es un ejecutable como para uno firmado por un editor
+desconocido. Agrupar los dos hacia que un binario firmado por alguien en quien no
+confias se anunciara como *"sin firma"*, que es tapar justo lo que hay que decir. Los
+distingue si hay certificado o no.
+
+Salio al preguntarse como probar esa rama, y se reproduce firmando un script con un
+certificado autofirmado; hay una prueba que lo hace y se valido con un mutante.
+
 **Lo que NO te da:** dice **quien** firmo, no si el software es de fiar. Un mal actor
 puede comprar un certificado. Te da un nombre para que decidas tu, no un veredicto.
 

@@ -701,11 +701,20 @@ function Write-SignerReport {
         # empezando por el 7-Zip que usa este mismo kit.
         Write-Log "  Sin firma Authenticode (no todo el software se firma)" "INFO"
     }
-    elseif ($f.Estado -in @('UnknownError', 'NoSePudoLeer')) {
-        # No es lo mismo que una firma invalida, y confundirlos alarma de mas:
-        # Windows devuelve esto tambien cuando el archivo sencillamente no tiene
-        # el formato que sabe firmar.
+    elseif ($f.Estado -in @('UnknownError', 'NoSePudoLeer') -and -not $f.Firmante) {
+        # SIN certificado: Windows no pudo determinar nada, normalmente porque
+        # el archivo ni siquiera tiene el formato que sabe firmar. Ni error ni
+        # sospecha.
         Write-Log "  Sin firma reconocible (Windows no pudo determinarla)" "INFO"
+    }
+    elseif ($f.Estado -in @('UnknownError', 'NoSePudoLeer')) {
+        # CON certificado y aun asi UnknownError: esta firmado, pero la cadena
+        # no llega a una raiz de confianza de este equipo. Es lo que devuelve un
+        # archivo firmado por alguien desconocido, y agruparlo con "sin firma"
+        # seria taparlo justo cuando mas conviene decirlo. Comprobado firmando
+        # un script con un certificado autofirmado.
+        Write-Log "  Firmado por $($f.Firmante), pero tu equipo NO confia en quien lo emitio" "WARN"
+        Write-Log "  Certificado autofirmado, caducado, o de una entidad que no reconoces." "WARN"
     }
     else {
         # Aqui si conviene mirar: hay firma y NO valida. Caducada, revocada,
