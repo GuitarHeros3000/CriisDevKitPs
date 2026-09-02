@@ -80,6 +80,7 @@ function Get-Opciones {
     $ops += [PSCustomObject]@{ Num = 33; Grupo = 'MANTENER';  Texto = 'Ver actualizaciones';       Bat = 'Update-Env.bat';      Clave = $null; Pide = $null }
     $ops += [PSCustomObject]@{ Num = 34; Grupo = 'MANTENER';  Texto = 'Desinstalar';               Bat = 'Uninstall-Env.bat';   Clave = $null; Pide = 'desinstalar' }
 
+    $ops += [PSCustomObject]@{ Num = 39; Grupo = 'ENTORNO';   Texto = 'Empezar en un equipo nuevo'; Bat = 'Empezar.bat';        Clave = $null; Pide = $null }
     $ops += [PSCustomObject]@{ Num = 40; Grupo = 'ENTORNO';   Texto = 'Reproducir un devenv.json'; Bat = 'Restore-Env.bat';     Clave = $null; Pide = 'ruta' }
     $ops += [PSCustomObject]@{ Num = 41; Grupo = 'ENTORNO';   Texto = 'Guardar devenv.json';       Bat = 'Restore-Env.bat';     Clave = $null; Pide = 'save' }
     $ops += [PSCustomObject]@{ Num = 42; Grupo = 'ENTORNO';   Texto = 'Fijar versiones (lock)';    Bat = 'Restore-Env.bat';     Clave = $null; Pide = 'lock' }

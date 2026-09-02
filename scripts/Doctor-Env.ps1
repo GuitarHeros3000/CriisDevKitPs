@@ -29,6 +29,8 @@
 .EXAMPLE
     .\Doctor-Env.ps1 -Fix
 .EXAMPLE
+    .\Doctor-Env.ps1 -Fix -SkipUseEnv
+.EXAMPLE
     .\Doctor-Env.ps1 -Report
 .EXAMPLE
     .\Doctor-Env.ps1 -Report -ReportPath D:\ticket-4821.md
@@ -38,6 +40,10 @@ param(
     [switch]$SkipNetwork,
 
     [switch]$Fix,
+
+    # Deja fuera la unica reparacion que sale de las carpetas del kit: activar
+    # Use-Env, que se engancha al perfil de PowerShell y al AutoRun de cmd.
+    [switch]$SkipUseEnv,
 
     [switch]$Force,
 
@@ -78,12 +84,19 @@ function Add-Fix {
     param(
         [Parameter(Mandatory=$true)][string]$Description,
         [Parameter(Mandatory=$true)][scriptblock]$Action,
-        [hashtable]$Arguments = @{}
+        [hashtable]$Arguments = @{},
+
+        # Marca las que salen de las carpetas del kit y entran en el perfil del
+        # usuario. Son de otra categoria: reescribir un .bat del kit se deshace
+        # borrandolo, y engancharse al perfil de PowerShell y al AutoRun de cmd
+        # no. Con -SkipUseEnv se dejan fuera.
+        [switch]$TocaPerfil
     )
     $script:Fixes += [PSCustomObject]@{
         Description = $Description
         Action      = $Action
         Arguments   = $Arguments
+        TocaPerfil  = [bool]$TocaPerfil
     }
 }
 
@@ -1567,6 +1580,7 @@ function Test-PathConflicts {
                     Write-Detail "Se puede resolver activandolo:  .\Use-Env.bat -Runtime $($rt.Runtime) -Version $($rt.Version)"
                     $script:HayFixUseEnv = $true
                     Add-Fix -Description "activar $($rt.Nombre) $($rt.Version) con Use-Env (toca tu perfil de PowerShell y el AutoRun de cmd)" `
+                            -TocaPerfil `
                             -Arguments @{ Runtime = $rt.Runtime; Version = $rt.Version; Script = (Join-Path $PSScriptRoot 'Use-Env.ps1') } `
                             -Action {
                                 param($Runtime, $Version, $Script)
@@ -1655,6 +1669,8 @@ function Test-KitIntegrity {
         "scripts\Setup-GitEnv.ps1",
         "scripts\Start-GitEnv.ps1",
         "sources.json.ejemplo",
+        "Empezar.bat",
+        "scripts\Empezar.ps1",
         "Use-VSCodeJava.bat",
         "scripts\Use-VSCodeJava.ps1",
         "Use-CorpCert.bat",
@@ -1854,12 +1870,32 @@ if ($script:Fixes.Count -eq 0) {
     exit 0
 }
 
-Write-Host "Reparable automaticamente ($($script:Fixes.Count)):" -ForegroundColor Yellow
-foreach ($f in $script:Fixes) { Write-Host "  - $($f.Description)" }
+# -SkipUseEnv deja fuera lo unico que sale de las carpetas del kit. Existe
+# porque -Force se salta el aviso de mas abajo, y entonces "arreglame los
+# archivos" y "engancha algo a mi perfil" iban en el mismo paquete.
+$aplicables = @($script:Fixes | Where-Object { -not ($SkipUseEnv -and $_.TocaPerfil) })
+$omitidas   = @($script:Fixes | Where-Object { $SkipUseEnv -and $_.TocaPerfil })
+
+Write-Host "Reparable automaticamente ($($aplicables.Count)):" -ForegroundColor Yellow
+foreach ($f in $aplicables) { Write-Host "  - $($f.Description)" }
+foreach ($f in $omitidas)   { Write-Host "  - $($f.Description)" -ForegroundColor DarkGray }
+if ($omitidas.Count -gt 0) {
+    Write-Host "    (en gris: fuera por -SkipUseEnv)" -ForegroundColor DarkGray
+}
 Write-Host ""
 
 if (-not $Fix) {
     Write-Host "Para arreglarlo:  .\Doctor-Env.bat -Fix" -ForegroundColor Cyan
+    if (@($script:Fixes | Where-Object { $_.TocaPerfil }).Count -gt 0 -and -not $SkipUseEnv) {
+        Write-Host "Sin tocar tu perfil:  .\Doctor-Env.bat -Fix -SkipUseEnv" -ForegroundColor Cyan
+    }
+    Write-Host ""
+    if ($script:Problems -gt 0) { exit 1 }
+    exit 0
+}
+
+if ($aplicables.Count -eq 0) {
+    Write-Host "Con -SkipUseEnv no queda nada que aplicar." -ForegroundColor Gray
     Write-Host ""
     if ($script:Problems -gt 0) { exit 1 }
     exit 0
@@ -1868,12 +1904,13 @@ if (-not $Fix) {
 if (-not $Force) {
     Write-Host "Se modificara tu PATH de usuario y/o archivos del kit." -ForegroundColor Yellow
     Write-Host "Cada cambio del PATH deja copia en %LOCALAPPDATA%\AssassinSkipAdm." -ForegroundColor Gray
-    if ($script:HayFixUseEnv) {
+    if ($script:HayFixUseEnv -and -not $SkipUseEnv) {
         Write-Host ""
         Write-Host "ADEMAS, activar Use-Env toca dos cosas de tu perfil de usuario:" -ForegroundColor Yellow
         Write-Host "  1. $($PROFILE.CurrentUserAllHosts)" -ForegroundColor Gray
         Write-Host "  2. HKCU\Software\Microsoft\Command Processor  (valor AutoRun)" -ForegroundColor Gray
         Write-Host "Nunca del sistema, y se revierte con:  .\Use-Env.bat -Off" -ForegroundColor Gray
+        Write-Host "Para dejarlo fuera:  -SkipUseEnv" -ForegroundColor Gray
     }
     Write-Host ""
     $answer = Read-Host "Confirmas? (escribe SI)"
@@ -1886,7 +1923,7 @@ if (-not $Force) {
 
 $hechas = 0
 $fallidas = 0
-foreach ($f in $script:Fixes) {
+foreach ($f in $aplicables) {
     try {
         $fixArgs = $f.Arguments
         & $f.Action @fixArgs

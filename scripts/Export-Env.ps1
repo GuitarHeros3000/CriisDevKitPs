@@ -37,7 +37,10 @@ param(
     [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')]
     [string]$Runtime,
 
-    [switch]$SkipBinaries
+    [switch]$SkipBinaries,
+
+    # No metas la CA de la empresa en el bundle.
+    [switch]$SkipCert
 )
 
 $ErrorActionPreference = "Stop"
@@ -252,6 +255,28 @@ try {
         python          = @()
         java            = @()
         otros           = @()
+    }
+
+    # --- La CA de la empresa ---
+    #
+    # Viaja con el bundle a proposito: el segundo equipo suele ser de la MISMA
+    # empresa, con el mismo proxy inspeccionando, y sin esto habria que volver a
+    # pedirsela a IT para que Maven, pip o git funcionen alli.
+    #
+    # No es un secreto -es el certificado publico que la empresa presenta a todo
+    # el que navega- pero identifica a la empresa, asi que se dice en voz alta y
+    # se puede dejar fuera con -SkipCert.
+    if ((Test-Path -LiteralPath $CorpCaFile) -and -not $SkipCert) {
+        Copy-Item -LiteralPath $CorpCaFile -Destination (Join-Path $staging "corp-ca.cer") -Force
+        $x = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CorpCaFile)
+        $manifest.corpCa = [ordered]@{
+            archivo = "corp-ca.cer"
+            emisor  = $x.Subject
+            huella  = $x.Thumbprint
+            caduca  = $x.NotAfter.ToString('yyyy-MM-dd')
+        }
+        Write-Log "CA de la empresa incluida: $($x.Subject)" "WARN"
+        Write-Log "  Identifica a tu empresa. Para dejarla fuera:  -SkipCert" "WARN"
     }
 
     # --- Angular ---

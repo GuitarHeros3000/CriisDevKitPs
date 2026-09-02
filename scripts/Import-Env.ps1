@@ -178,6 +178,10 @@ try {
         $n = @(Get-RuntimeCatalog | Where-Object { $_.Clave -eq $o.clave })[0].Nombre
         Write-Host "  $n $($o.version)"
     }
+    if ($m.corpCa) {
+        Write-Host ("  + la CA de la empresa: {0}" -f $m.corpCa.emisor) -ForegroundColor Yellow
+        Write-Host ("    caduca el {0}; se pondra en los JDK, Git y pip" -f $m.corpCa.caduca) -ForegroundColor DarkGray
+    }
     Write-Host ""
     Write-Host "Destino: $WorkspaceRoot" -ForegroundColor Yellow
     Write-Host ""
@@ -447,6 +451,23 @@ try {
             default  { Join-Path $destino "bin" }
         }
         $pathsToAdd += $bin
+    }
+
+    # La CA de la empresa, si el bundle la trae. Antes que los shells: asi los
+    # de Node y Angular ya se escriben con NODE_EXTRA_CA_CERTS puesto.
+    if ($m.corpCa -and $m.corpCa.archivo) {
+        $origen = Join-Path $bundleDir $m.corpCa.archivo
+        if (Test-Path -LiteralPath $origen) {
+            $destino = Split-Path -Parent $CorpCaFile
+            if (-not (Test-Path -LiteralPath $destino)) { New-Item -ItemType Directory -Path $destino -Force | Out-Null }
+            Copy-Item -LiteralPath $origen -Destination $CorpCaFile -Force
+            Write-CorpCaPem | Out-Null
+            Write-Log "CA de la empresa: $($m.corpCa.emisor)" "SUCCESS"
+            foreach ($linea in @(Sync-CorpNet)) { Write-Log "  $linea" "SUCCESS" }
+        }
+        else {
+            Write-Log "El manifiesto anuncia una CA que no viene en el bundle" "WARN"
+        }
     }
 
     # Los shells por JDK de Maven y Gradle, una vez estan todos los runtimes en

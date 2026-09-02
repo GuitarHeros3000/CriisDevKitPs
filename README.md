@@ -848,6 +848,31 @@ solo en lo que dice `mvn -version`.
 > (`maven-toolchains-plugin` en el `pom.xml`, o un bloque `toolchain` en el
 > `build.gradle`) y el kit no la va a meter en proyectos ajenos.
 
+## Empezar en un equipo nuevo
+
+```powershell
+.\Empezar.bat
+```
+
+Los comandos ya estaban todos y `Doctor` ya te decia cual falta en cada caso. Lo que
+no habia era el **orden**, y en un portatil recien formateado eso es justo lo que no
+se sabe. Esto no instala nada por su cuenta: llama a los mismos `.bat` de siempre, en
+la secuencia que tiene sentido, preguntando antes de cada paso y dejando saltar
+cualquiera.
+
+```
+1. Como esta tu red        proxy, e interceptacion TLS
+2. La CA de tu empresa     solo si la red la necesita
+3. Las herramientas        desde tu devenv.json, o desde el menu
+4. VS Code                 que conozca los JDK
+5. Lo que el equipo tapa   explica Use-Env, sin activarlo
+6. Como ha quedado         Doctor
+```
+
+El paso 5 **no hace nada**: solo explica que `Use-Env` es lo unico que sale de las
+carpetas del kit, y deja que sea Doctor quien diga si de verdad hace falta. Activarlo
+sigue siendo una decision aparte y explicita.
+
 ## La CA de tu empresa dentro de los JDK
 
 ```powershell
@@ -906,6 +931,24 @@ Comprobado que cada una la lee **de verdad**, no solo que el archivo este escrit
 Node parsea el PEM y lo reconoce como CA, `pip config list` devuelve `global.cert`,
 `git config --system` la tiene y `--global` no, y la huella SHA-256 que guarda Java
 es identica a la del archivo.
+
+### La CA viaja en el bundle
+
+`Export-Env` la mete en el `.zip` y `Import-Env` la recupera y la aplica sola. El
+segundo equipo suele ser de la **misma empresa**, con el mismo proxy inspeccionando,
+asi que sin esto habria que volver a pedirsela a IT alli.
+
+No es un secreto -es el certificado publico que la empresa presenta a todo el que
+navega- pero identifica a tu empresa, asi que se dice en voz alta al exportar y se
+deja fuera con `-SkipCert`:
+
+```
+[WARN] CA de la empresa incluida: CN=Proxy Inspector SA, O=Empresa Falsa
+[WARN]   Identifica a tu empresa. Para dejarla fuera:  -SkipCert
+```
+
+Comprobado el viaje entero: se exporta, se retira de la maquina, se importa, y el
+certificado que acaba en el `cacerts` es el mismo de origen por SHA-256.
 
 ### Como decide si tu red intercepta
 
