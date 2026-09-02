@@ -484,6 +484,11 @@ Add-UserPathEntry -Path @($pythonPath, (Join-Path $pythonPath "Scripts"))
 
 Write-PythonShell -PythonPath $pythonPath -Version $EnvSetup.Version | Out-Null
 Write-Log "Shell creado: $pythonPath\py$($EnvSetup.MinorTag)-shell.bat" "SUCCESS"
+# La CA de la empresa y el proxy, si los hay guardados. Una herramienta recien
+# instalada nace sin ellos y falla con un error de certificado o de red que no
+# menciona nada de esto.
+foreach ($linea in @(Sync-CorpNet)) { Write-Log $linea "SUCCESS" }
+
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan

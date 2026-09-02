@@ -200,6 +200,11 @@ Add-UserPathEntry -Path (Join-Path $gitPath "cmd")
 
 Write-GitShell -GitPath $gitPath -Version $release.Version | Out-Null
 Write-Log "Shell creado: $gitPath\$shellName" "SUCCESS"
+# La CA de la empresa y el proxy, si los hay guardados. Una herramienta recien
+# instalada nace sin ellos y falla con un error de certificado o de red que no
+# menciona nada de esto.
+foreach ($linea in @(Sync-CorpNet)) { Write-Log $linea "SUCCESS" }
+
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan

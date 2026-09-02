@@ -886,41 +886,43 @@ function Test-BuildToolInstall {
     }
 }
 
-function Test-JdkCorpCa {
+function Test-CorpNet {
     <#
-        Si los JDK confian en la CA de la empresa.
+        Si las herramientas del kit estan preparadas para una red que inspecciona
+        el HTTPS.
 
         Solo se dice algo cuando hay una CA guardada: sin ella no se sabe si esta
-        red intercepta el HTTPS, y avisar de que "falta" un certificado que
-        quiza no haga falta seria ruido en la mayoria de los equipos.
+        red intercepta nada, y avisar de que "falta" un certificado que quiza no
+        haga falta seria ruido en la mayoria de los equipos.
     #>
     if (-not (Test-Path -LiteralPath $CorpCaFile)) { return }
 
-    $lineas = @(Get-KitJdkLines)
-    if ($lineas.Count -eq 0) { return }
+    $filas = @(Get-CorpNetStatus)
+    if ($filas.Count -eq 0) { return }
 
-    Write-Section "CA de la empresa en los JDK"
+    Write-Section "Red corporativa (CA y proxy)"
 
-    $alias = 'assassinskipadm-corp'
-    $faltan = @()
+    $faltan = @($filas | Where-Object { -not $_.Ok })
 
-    foreach ($l in $lineas) {
-        $jdk = Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$l"
-        if ((Get-JdkTrustedAliases -JdkPath $jdk) -contains $alias) {
-            Write-Check "jdk-$l" "confia en la CA de la empresa" 'ok'
+    foreach ($f in $filas) {
+        if ($f.Ok) {
+            Write-Check $f.Nombre "$($f.Que) en $($f.Donde)" 'ok'
         }
         else {
-            # Java no usa el almacen de Windows: sin esto, Maven y Gradle fallan
-            # con PKIX path building failed aunque el navegador vaya bien.
-            Write-Check "jdk-$l" "sin la CA de la empresa" 'warn'
-            $faltan += $l
+            Write-Check $f.Nombre "sin $($f.Que) ($($f.Donde))" 'warn'
         }
     }
 
     if ($faltan.Count -gt 0) {
-        Write-Detail "Maven y Gradle fallaran con 'PKIX path building failed'."
-        Add-Fix -Description "poner la CA de la empresa en $($faltan.Count) JDK (jdk-$($faltan -join ', jdk-'))" `
-                -Action { Sync-JdkCertificates | Out-Null }
+        # Cada herramienta falla distinto y ninguno de esos errores menciona el
+        # proxy ni la empresa, que es lo que hace esto dificil de relacionar.
+        Write-Detail "Java y Maven: 'PKIX path building failed'. Node: SELF_SIGNED_CERT_IN_CHAIN."
+        Write-Detail "pip: SSLCertVerificationError. Git: 'SSL certificate problem'."
+        Add-Fix -Description "poner la CA y el proxy en $($faltan.Count) herramienta(s) del kit" `
+                -Action {
+                    Sync-CorpNet | Out-Null
+                    Update-GeneratedShells | Out-Null
+                }
     }
 }
 
@@ -1724,7 +1726,7 @@ Test-BuildToolInstall -Titulo "Gradle" -Root $GradleRoot -Prefijo 'gradle' `
 Test-DotnetInstall
 Test-VSCodeInstall
 Test-VSCodeJavaRuntimes
-Test-JdkCorpCa
+Test-CorpNet
 Test-InstalledSignatures
 Test-LockDrift
 Test-PortableApps

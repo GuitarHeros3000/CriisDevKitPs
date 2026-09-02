@@ -211,6 +211,11 @@ Add-UserPathEntry -Path $nodePath
 Write-NodeShell -NodePath $nodePath -Version $version | Out-Null
 
 Write-Log "Shell creado: $nodePath\node$major-shell.bat" "SUCCESS"
+# La CA de la empresa y el proxy, si los hay guardados. Una herramienta recien
+# instalada nace sin ellos y falla con un error de certificado o de red que no
+# menciona nada de esto.
+foreach ($linea in @(Sync-CorpNet)) { Write-Log $linea "SUCCESS" }
+
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan

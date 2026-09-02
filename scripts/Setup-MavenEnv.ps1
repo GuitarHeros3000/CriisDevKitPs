@@ -220,6 +220,11 @@ Add-UserPathEntry -Path (Join-Path $mavenPath "bin")
 
 Write-BuildToolShell -Tool Maven -ToolPath $mavenPath -Version $release.Version -JavaHome $javaHome | Out-Null
 Write-Log "Shell creado: $mavenPath\$shellName" "SUCCESS"
+# La CA de la empresa y el proxy, si los hay guardados. Una herramienta recien
+# instalada nace sin ellos y falla con un error de certificado o de red que no
+# menciona nada de esto.
+foreach ($linea in @(Sync-CorpNet)) { Write-Log $linea "SUCCESS" }
+
 
 # Con varios JDK instalados, uno por cada uno: abrir el que toque es mas comodo
 # que reejecutar este comando para cambiar de Java.

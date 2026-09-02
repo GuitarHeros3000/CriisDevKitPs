@@ -485,6 +485,11 @@ if (-not $ngCmd) { exit 1 }
 
 Write-AngularShell -AngularPath $angularPath -NodePath $nodePath -Version $EnvSetup.AngularVersion -NodeVersion $EnvSetup.NodeVersion | Out-Null
 Write-Log "Shell creado: $angularPath\shell-v$($EnvSetup.AngularVersion).bat" "SUCCESS"
+# La CA de la empresa y el proxy, si los hay guardados. Una herramienta recien
+# instalada nace sin ellos y falla con un error de certificado o de red que no
+# menciona nada de esto.
+foreach ($linea in @(Sync-CorpNet)) { Write-Log $linea "SUCCESS" }
+
 
 New-AngularProject -NgCmd $ngCmd -AngularPath $angularPath -ProjectName $NewProject
 

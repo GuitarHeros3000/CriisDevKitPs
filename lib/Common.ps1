@@ -1257,7 +1257,11 @@ function Write-AngularShell {
         "@echo off",
         "set `"PATH=$nodeCmd;$prefixCmd;%PATH%`"",
         "set `"NPM_CONFIG_PREFIX=$prefixCmd`"",
-        "set `"NPM_CONFIG_CACHE=$cacheCmd`"",
+        "set `"NPM_CONFIG_CACHE=$cacheCmd`""
+    )
+    $lines += Get-NodeCaLine
+
+    $lines += @(
         "title Angular v$Version Development Shell",
         "echo.",
         "echo ============================================",
@@ -1460,6 +1464,46 @@ function Get-NodeLtsReleases {
     return @($result | Sort-Object Major)
 }
 
+function Get-GradleProxyLine {
+    <#
+        GRADLE_OPTS con el proxy, o nada si no hay proxy que pasar.
+
+        Gradle, como Maven, ignora HTTP_PROXY y HTTPS_PROXY: la JVM solo mira sus
+        propias propiedades de sistema. El TLS no se toca aqui porque Gradle
+        corre sobre el JDK y ya va por el cacerts.
+    #>
+    $proxy = Resolve-DownloadProxy -Uri ([Uri]"https://services.gradle.org")
+    if (-not $proxy) { return @() }
+
+    $u = [Uri]$proxy
+    $props = "-Dhttp.proxyHost=$($u.Host) -Dhttp.proxyPort=$($u.Port) " +
+             "-Dhttps.proxyHost=$($u.Host) -Dhttps.proxyPort=$($u.Port)"
+
+    $cred = Split-ProxyCredential -ProxyUrl $proxy
+    if ($cred -and $cred.Credential) {
+        $usuario = $cred.Credential.UserName
+        $clave   = $cred.Credential.GetNetworkCredential().Password
+        $props += " -Dhttp.proxyUser=$usuario -Dhttp.proxyPassword=$clave"
+        $props += " -Dhttps.proxyUser=$usuario -Dhttps.proxyPassword=$clave"
+    }
+
+    return @("set `"GRADLE_OPTS=$props %GRADLE_OPTS%`"")
+}
+
+function Get-NodeCaLine {
+    <#
+        La linea que hace que Node confie en la CA de la empresa, o nada si no
+        hay ninguna guardada.
+
+        Node no mira el almacen de Windows ni el del JDK: lleva su propia lista
+        compilada dentro del binario, y la unica forma de anadirle una CA sin
+        recompilarlo es NODE_EXTRA_CA_CERTS. npm, ng y todo lo que corra sobre
+        esa Node lo heredan por ser variable de entorno.
+    #>
+    if (-not (Test-Path -LiteralPath $CorpCaPem)) { return @() }
+    return @("set `"NODE_EXTRA_CA_CERTS=$(ConvertTo-CmdLiteral $CorpCaPem)`"")
+}
+
 function Write-NodeShell {
     <#
         Shell de una Node instalada suelta (sin Angular). No define
@@ -1476,7 +1520,11 @@ function Write-NodeShell {
 
     $lines = @(
         "@echo off",
-        "set `"PATH=$nodeCmd;%PATH%`"",
+        "set `"PATH=$nodeCmd;%PATH%`""
+    )
+    $lines += Get-NodeCaLine
+
+    $lines += @(
         "title Node v$Version Shell",
         "echo.",
         "echo ============================================",
@@ -1931,6 +1979,11 @@ function Write-BuildToolShell {
     }
 
     $titulo = if ($SufijoJdk) { "$Tool $Version  (Java $SufijoJdk)" } else { "$Tool $Version Shell" }
+    # Gradle tampoco lee HTTP_PROXY: se le pasa como propiedades de sistema por
+    # GRADLE_OPTS, que es lo mismo que hace su gradle.properties pero sin tocar
+    # el ~\.gradle del usuario.
+    if ($Tool -eq 'Gradle') { $lines += Get-GradleProxyLine }
+
     $lines += @(
         "title $titulo",
         "echo.",
@@ -2021,6 +2074,196 @@ function Get-ShellJavaHome {
 }
 
 $CorpCaFile = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\corp-ca.cer"
+
+# La misma CA en PEM. Hacen falta las dos: keytool importa DER, y Node, pip y
+# Git solo entienden PEM. Guardar una y convertir al vuelo cada vez seria peor:
+# estas rutas acaban dentro de archivos de configuracion que tienen que seguir
+# siendo validos cuando el kit no esta corriendo.
+$CorpCaPem = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\corp-ca.pem"
+
+function Write-CorpCaPem {
+    <#
+        Escribe el PEM a partir del .cer guardado. PEM es el DER en base64 entre
+        dos lineas de guiones, y se parte en lineas de 64 porque hay lectores
+        -entre ellos algunos de OpenSSL- que no aceptan una sola linea larga.
+    #>
+    param(
+        [string]$Origen = $CorpCaFile,
+        [string]$Destino = $CorpCaPem
+    )
+
+    if (-not (Test-Path -LiteralPath $Origen)) { return $null }
+
+    $x = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Origen)
+    $b64 = [Convert]::ToBase64String($x.RawData)
+    $lineas = @('-----BEGIN CERTIFICATE-----')
+    for ($i = 0; $i -lt $b64.Length; $i += 64) {
+        $lineas += $b64.Substring($i, [Math]::Min(64, $b64.Length - $i))
+    }
+    $lineas += '-----END CERTIFICATE-----'
+
+    Set-Content -LiteralPath $Destino -Value ($lineas -join "`n") -Encoding ASCII
+    return $Destino
+}
+
+function Set-GitCorpCa {
+    <#
+        Le dice al Git del kit en que CA confiar, escribiendo en SU PROPIO
+        etc\gitconfig y no en el ~\.gitconfig del usuario, que es personal.
+
+        Ese archivo es el nivel "system" de ese Git portable: aplica siempre que
+        se use ese git, tambien fuera de los shells del kit, y desaparece con el
+        si se desinstala.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$GitPath,
+        [string]$PemPath = $CorpCaPem,
+        [switch]$Quitar
+    )
+
+    $exe = Join-Path $GitPath "cmd\git.exe"
+    $cfg = Join-Path $GitPath "etc\gitconfig"
+    if (-not (Test-Path $exe)) { return $false }
+
+    if ($Quitar) {
+        & cmd /c "`"$exe`" config -f `"$cfg`" --unset http.sslCAInfo 2>&1" | Out-Null
+        return $true
+    }
+
+    if (-not (Test-Path -LiteralPath $PemPath)) { return $false }
+    & cmd /c "`"$exe`" config -f `"$cfg`" http.sslCAInfo `"$($PemPath -replace '\\','/')`" 2>&1" | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Get-GitCorpCa {
+    param([Parameter(Mandatory=$true)][string]$GitPath)
+
+    $exe = Join-Path $GitPath "cmd\git.exe"
+    $cfg = Join-Path $GitPath "etc\gitconfig"
+    if (-not (Test-Path $exe) -or -not (Test-Path $cfg)) { return $null }
+
+    $v = & cmd /c "`"$exe`" config -f `"$cfg`" --get http.sslCAInfo 2>&1"
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return ([string]$v).Trim()
+}
+
+function Set-PipCorpCa {
+    <#
+        pip.ini dentro de la propia carpeta de Python, que es el nivel de
+        configuracion de ESA instalacion. No se toca el pip.ini del usuario
+        (%APPDATA%\pip), que vale para todos sus Python y no es del kit.
+
+        Se escribe 'cert', que es lo que usa pip para verificar TLS.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$PythonPath,
+        [string]$PemPath = $CorpCaPem,
+        [switch]$Quitar
+    )
+
+    $ini = Join-Path $PythonPath "pip.ini"
+
+    if ($Quitar) {
+        Remove-Item -LiteralPath $ini -Force -ErrorAction SilentlyContinue
+        return $true
+    }
+
+    if (-not (Test-Path -LiteralPath $PemPath)) { return $false }
+
+    # Se reescribe entero y no se parchea: el kit es el unico que escribe aqui,
+    # y un .ini a medio parchear es peor que uno regenerado.
+    $lineas = @(
+        "# Escrito por AssassinSkipAdm (Use-CorpCert). Se puede borrar sin miedo.",
+        "[global]",
+        "cert = $PemPath"
+    )
+    $proxy = Resolve-DownloadProxy -Uri ([Uri]"https://pypi.org")
+    if ($proxy) { $lineas += "proxy = $proxy" }
+
+    Set-Content -LiteralPath $ini -Value ($lineas -join "`n") -Encoding ASCII
+    return $true
+}
+
+function Get-PipCorpCa {
+    param([Parameter(Mandatory=$true)][string]$PythonPath)
+
+    $ini = Join-Path $PythonPath "pip.ini"
+    if (-not (Test-Path -LiteralPath $ini)) { return $null }
+    $m = [regex]::Match((Get-Content -LiteralPath $ini -Raw), '(?m)^\s*cert\s*=\s*(.+)$')
+    if (-not $m.Success) { return $null }
+    return $m.Groups[1].Value.Trim()
+}
+
+function Set-MavenCorpProxy {
+    <#
+        Maven NO lee HTTP_PROXY ni HTTPS_PROXY. Es la diferencia con npm, pip y
+        git, que si las respetan y por eso no necesitan nada del kit para el
+        proxy: a Maven hay que decirselo en un settings.xml o no sale a la red.
+
+        Se escribe en conf\settings.xml de ESA instalacion de Maven, no en el
+        ~\.m2\settings.xml del usuario, que es personal y suele tener sus
+        credenciales de repositorio dentro.
+
+        El TLS no hace falta tocarlo: Maven corre sobre el JDK, asi que ya va por
+        el cacerts que arregla la parte de Java.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$MavenPath,
+        [switch]$Quitar
+    )
+
+    $cfg = Join-Path $MavenPath "conf\settings.xml"
+    if (-not (Test-Path -LiteralPath $cfg)) { return $false }
+
+    $texto = Get-Content -LiteralPath $cfg -Raw
+    $marcaIni = '<!-- assassinskipadm:proxy -->'
+    $marcaFin = '<!-- /assassinskipadm:proxy -->'
+
+    # Fuera el bloque anterior, si lo hubiera. Con marcas propias no se toca
+    # nada que hubiera escrito el usuario o la empresa en ese archivo.
+    $limpio = [regex]::Replace($texto, [regex]::Escape($marcaIni) + '.*?' + [regex]::Escape($marcaFin),
+                               '', 'Singleline')
+
+    if ($Quitar) {
+        if ($limpio -ne $texto) { Set-Content -LiteralPath $cfg -Value $limpio -Encoding UTF8 }
+        return $true
+    }
+
+    $proxy = Resolve-DownloadProxy -Uri ([Uri]"https://repo.maven.apache.org")
+    if (-not $proxy) { return $false }
+
+    $u = [Uri]$proxy
+    $cred = Split-ProxyCredential -ProxyUrl $proxy
+
+    $bloque = @($marcaIni, '  <proxies>', '    <proxy>',
+                '      <id>assassinskipadm</id>', '      <active>true</active>',
+                "      <protocol>$($u.Scheme)</protocol>",
+                "      <host>$($u.Host)</host>",
+                "      <port>$($u.Port)</port>")
+    if ($cred -and $cred.Credential) {
+        $bloque += "      <username>$($cred.Credential.UserName)</username>"
+        $bloque += "      <password>$($cred.Credential.GetNetworkCredential().Password)</password>"
+    }
+    $bloque += @('    </proxy>', '  </proxies>', $marcaFin)
+
+    # Va justo despues de <settings ...>, que es donde Maven espera <proxies>.
+    $nuevo = [regex]::Replace($limpio, '(<settings[^>]*>)', "`$1`n" + ($bloque -join "`n"), 'Singleline')
+    if ($nuevo -eq $limpio) { return $false }
+
+    Set-Content -LiteralPath $cfg -Value $nuevo -Encoding UTF8
+    return $true
+}
+
+function Get-MavenCorpProxy {
+    param([Parameter(Mandatory=$true)][string]$MavenPath)
+
+    $cfg = Join-Path $MavenPath "conf\settings.xml"
+    if (-not (Test-Path -LiteralPath $cfg)) { return $null }
+    $m = [regex]::Match((Get-Content -LiteralPath $cfg -Raw),
+                        '<!-- assassinskipadm:proxy -->.*?<host>([^<]+)</host>.*?<port>([^<]+)</port>', 'Singleline')
+    if (-not $m.Success) { return $null }
+    return "$($m.Groups[1].Value):$($m.Groups[2].Value)"
+}
 
 function Get-TlsChainRoot {
     <#
@@ -2227,6 +2470,179 @@ function Remove-JdkCertificate {
 
     & cmd /c "`"$keytool`" -delete -alias $Alias -keystore `"$store`" -storepass changeit 2>&1" | Out-Null
     return ($LASTEXITCODE -eq 0)
+}
+
+function Get-CorpNetStatus {
+    <#
+        Que herramientas del kit estan preparadas para una red que inspecciona el
+        HTTPS, y cuales no. Una fila por instalacion.
+
+        Cada una lo resuelve en un sitio distinto y por un motivo distinto, y esa
+        es justo la razon de que exista este comando: no hay un interruptor
+        unico que valga para todas.
+    #>
+    $filas = @()
+    $hayCa = Test-Path -LiteralPath $CorpCaPem
+
+    foreach ($l in @(Get-KitJdkLines)) {
+        $jdk = Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$l"
+        $filas += [PSCustomObject]@{
+            Nombre = "jdk-$l"; Que = 'CA'; Donde = 'cacerts'
+            Ok = ((Get-JdkTrustedAliases -JdkPath $jdk) -contains 'assassinskipadm-corp')
+        }
+    }
+
+    foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Git") -Directory -ErrorAction SilentlyContinue)) {
+        if (-not (Test-Path (Join-Path $d.FullName "cmd\git.exe"))) { continue }
+        $filas += [PSCustomObject]@{
+            Nombre = $d.Name; Que = 'CA'; Donde = 'etc\gitconfig'
+            Ok = (-not [string]::IsNullOrWhiteSpace((Get-GitCorpCa -GitPath $d.FullName)))
+        }
+    }
+
+    foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Python") -Directory -ErrorAction SilentlyContinue)) {
+        if (-not (Test-Path (Join-Path $d.FullName "python.exe"))) { continue }
+        $filas += [PSCustomObject]@{
+            Nombre = $d.Name; Que = 'CA'; Donde = 'pip.ini'
+            Ok = (-not [string]::IsNullOrWhiteSpace((Get-PipCorpCa -PythonPath $d.FullName)))
+        }
+    }
+
+    # Node y Angular lo llevan en su shell, que se regenera con la variable en
+    # cuanto hay PEM; basta con mirar si el shell la trae.
+    foreach ($par in @(
+        @{ Raiz = 'Node';    Patron = '*-shell.bat' },
+        @{ Raiz = 'Angular'; Patron = 'shell-v*.bat' }
+    )) {
+        foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot $par.Raiz) -Directory -ErrorAction SilentlyContinue)) {
+            $sh = @(Get-ChildItem -LiteralPath $d.FullName -Filter $par.Patron -ErrorAction SilentlyContinue)
+            if ($sh.Count -eq 0) { continue }
+            $filas += [PSCustomObject]@{
+                Nombre = $d.Name; Que = 'CA'; Donde = (Split-Path -Leaf $sh[0].FullName)
+                Ok = ((Get-Content -LiteralPath $sh[0].FullName -Raw) -match 'NODE_EXTRA_CA_CERTS')
+            }
+        }
+    }
+
+    # Maven y Gradle solo aparecen si HAY un proxy que configurarles. Sin proxy
+    # no les falta nada, y decir "sin proxy" en rojo en un equipo que sale
+    # directo a internet seria un aviso de algo que no es un problema.
+    $hayProxy = $null -ne (Resolve-DownloadProxy -Uri ([Uri]"https://repo.maven.apache.org"))
+
+    if ($hayProxy) {
+        foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Maven") -Directory -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path (Join-Path $d.FullName "bin\mvn.cmd"))) { continue }
+            $filas += [PSCustomObject]@{
+                Nombre = $d.Name; Que = 'proxy'; Donde = 'conf\settings.xml'
+                Ok = (-not [string]::IsNullOrWhiteSpace((Get-MavenCorpProxy -MavenPath $d.FullName)))
+            }
+        }
+
+        foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Gradle") -Directory -ErrorAction SilentlyContinue)) {
+            $sh = @(Get-ChildItem -LiteralPath $d.FullName -Filter 'gradle*-shell.bat' -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -notmatch '-java\d+-' })
+            if ($sh.Count -eq 0) { continue }
+            $filas += [PSCustomObject]@{
+                Nombre = $d.Name; Que = 'proxy'; Donde = (Split-Path -Leaf $sh[0].FullName)
+                Ok = ((Get-Content -LiteralPath $sh[0].FullName -Raw) -match 'GRADLE_OPTS')
+            }
+        }
+    }
+
+    return @($filas | ForEach-Object {
+        $_ | Add-Member -NotePropertyName HayCa -NotePropertyValue $hayCa -PassThru
+    })
+}
+
+function Update-GeneratedShells {
+    <#
+        Rehace los shells que llevan la CA o el proxy dentro: los de Node y
+        Angular por NODE_EXTRA_CA_CERTS, y los de Gradle por GRADLE_OPTS.
+
+        Hace falta porque en esos tres la configuracion no vive en un archivo
+        aparte sino en el propio .bat, asi que la unica forma de aplicarla es
+        volver a escribirlo.
+
+        Devuelve una linea por shell rehecho.
+    #>
+    $resumen = @()
+
+    foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Node") -Directory -ErrorAction SilentlyContinue)) {
+        if ($d.Name -notmatch '^node-(\d+)$') { continue }
+        $exe = Join-Path $d.FullName "node.exe"
+        if (-not (Test-Path $exe)) { continue }
+
+        $v = (& cmd /c "`"$exe`" --version 2>&1") -replace '^v', ''
+        if ([string]::IsNullOrWhiteSpace($v)) { continue }
+        Write-NodeShell -NodePath $d.FullName -Version $v | Out-Null
+        $resumen += "Shell rehecho: $($d.Name)"
+    }
+
+    # El Angular del kit guarda su Node al lado, en la misma carpeta Angular\.
+    $angularRoot = Join-Path $WorkspaceRoot "Angular"
+    $nodeDirs = @(Get-ChildItem -LiteralPath $angularRoot -Directory -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -match '^node-v(.+)-win-x64$' })
+    foreach ($d in @(Get-ChildItem -LiteralPath $angularRoot -Directory -ErrorAction SilentlyContinue |
+                     Where-Object { $_.Name -match '^angular-v(\d+)$' })) {
+        $num = $Matches[1]
+        # Con varias Node no se puede deducir con cual se instalo, y escribir el
+        # shell con la equivocada seria peor que no tocarlo.
+        if ($nodeDirs.Count -ne 1) { continue }
+        Write-AngularShell -AngularPath $d.FullName -NodePath $nodeDirs[0].FullName `
+                           -Version $num -NodeVersion ($nodeDirs[0].Name -replace '^node-v|-win-x64$', '') | Out-Null
+        $resumen += "Shell rehecho: $($d.Name)"
+    }
+
+    foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Gradle") -Directory -ErrorAction SilentlyContinue)) {
+        $jars = @(Get-ChildItem -Path (Join-Path $d.FullName "lib\gradle-launcher-*.jar") -ErrorAction SilentlyContinue)
+        if ($jars.Count -eq 0 -or $jars[0].Name -notmatch 'gradle-launcher-([\d.]+)\.jar') { continue }
+        $v = $Matches[1]
+
+        $porDefecto = Join-Path $d.FullName "gradle$((Get-ToolLine -Version $v) -replace '\.','')-shell.bat"
+        $jh = Get-ShellJavaHome -ShellBat $porDefecto
+        Write-BuildToolShell -Tool Gradle -ToolPath $d.FullName -Version $v -JavaHome $jh | Out-Null
+        Write-BuildToolShellsPorJdk -Tool Gradle -ToolPath $d.FullName -Version $v | Out-Null
+        $resumen += "Shell rehecho: $($d.Name)"
+    }
+
+    return $resumen
+}
+
+function Sync-CorpNet {
+    <#
+        Aplica la CA y el proxy a todas las herramientas del kit que lo
+        necesiten. Se llama despues de instalar cualquiera de ellas, por el mismo
+        motivo que los shells de Maven: una recien instalada nace sin nada de
+        esto y falla con un error de certificado o de red que no lo menciona.
+
+        Devuelve una linea por cosa tocada; nada si no hacia falta.
+    #>
+    $resumen = @()
+
+    $resumen += @(Sync-JdkCertificates)
+
+    if (Test-Path -LiteralPath $CorpCaPem) {
+        foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Git") -Directory -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path (Join-Path $d.FullName "cmd\git.exe"))) { continue }
+            if (Get-GitCorpCa -GitPath $d.FullName) { continue }
+            if (Set-GitCorpCa -GitPath $d.FullName) { $resumen += "CA de la empresa puesta en: $($d.Name)" }
+        }
+
+        foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Python") -Directory -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path (Join-Path $d.FullName "python.exe"))) { continue }
+            if (Get-PipCorpCa -PythonPath $d.FullName) { continue }
+            if (Set-PipCorpCa -PythonPath $d.FullName) { $resumen += "CA de la empresa puesta en: $($d.Name) (pip)" }
+        }
+    }
+
+    # Maven y Gradle solo si hay proxy: sin el, no hay nada que escribir.
+    foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Maven") -Directory -ErrorAction SilentlyContinue)) {
+        if (-not (Test-Path (Join-Path $d.FullName "bin\mvn.cmd"))) { continue }
+        if (Get-MavenCorpProxy -MavenPath $d.FullName) { continue }
+        if (Set-MavenCorpProxy -MavenPath $d.FullName) { $resumen += "Proxy puesto en: $($d.Name)" }
+    }
+
+    return $resumen
 }
 
 function Sync-JdkCertificates {

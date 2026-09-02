@@ -877,9 +877,35 @@ Arreglar el `cacerts` **arregla Maven, Gradle y cualquier herramienta Java a la 
 porque todas van por ahi. Y no pide admin: ese archivo esta dentro de la carpeta del
 JDK, que la puso el propio usuario.
 
-La CA se guarda en `%LOCALAPPDATA%\AssassinSkipAdm` y se **reaplica sola** al
-instalar otro JDK, igual que los shells de Maven o los JDK de VS Code. `Doctor` dice
+Y no solo Java: **cada herramienta lo resuelve en un sitio distinto**, que es la
+razon de que haga falta un comando y no baste con una variable de entorno.
+
+| Herramienta | Que se le pone | Donde | Por que ahi |
+|---|---|---|---|
+| Java, Maven, Gradle | la CA | `<jdk>\lib\security\cacerts` | Java tiene su propio almacen; Maven y Gradle corren sobre el |
+| Node, npm, Angular | la CA | `NODE_EXTRA_CA_CERTS` en su shell | Node lleva su lista compilada dentro; es la unica forma de anadirle una |
+| Python, pip | la CA | `pip.ini` de esa instalacion | el del usuario (`%APPDATA%\pip`) vale para todos sus Python y no es del kit |
+| Git | la CA | `etc\gitconfig` de ese Git | es su nivel *system*; el `~\.gitconfig` es personal |
+| Maven | el **proxy** | `conf\settings.xml` de ese Maven | no lee `HTTP_PROXY`; el `~\.m2\settings.xml` suele tener tus credenciales |
+| Gradle | el **proxy** | `GRADLE_OPTS` en su shell | tampoco lo lee; la JVM solo mira sus propiedades de sistema |
+| .NET | nada | -- | usa el almacen de Windows, que IT ya configuro |
+
+**Nada de eso toca tus archivos personales.** Comprobado: tras aplicarlo,
+`~\.gitconfig`, `%APPDATA%\pip\pip.ini` y `~\.m2\settings.xml` siguen byte a byte
+como estaban.
+
+El proxy solo se escribe **si lo hay**. npm, pip y git si respetan `HTTPS_PROXY`, asi
+que para ellos no hace falta nada; Maven y Gradle son la excepcion.
+
+La CA se guarda en `%LOCALAPPDATA%\AssassinSkipAdm` -en DER para `keytool` y en PEM
+para Node, pip y Git- y se **reaplica sola** al instalar cualquiera de esas
+herramientas, igual que los shells de Maven o los JDK de VS Code. `Doctor` dice
 cuales la tienen y lo repara con `-Fix`.
+
+Comprobado que cada una la lee **de verdad**, no solo que el archivo este escrito:
+Node parsea el PEM y lo reconoce como CA, `pip config list` devuelve `global.cert`,
+`git config --system` la tiene y `--global` no, y la huella SHA-256 que guarda Java
+es identica a la del archivo.
 
 ### Como decide si tu red intercepta
 

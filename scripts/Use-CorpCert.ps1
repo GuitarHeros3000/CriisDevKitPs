@@ -73,14 +73,16 @@ if ($Remove) {
     $conCa = @($lineas | Where-Object {
         (Get-JdkTrustedAliases -JdkPath (Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$_")) -contains $Alias
     })
+    $puestas = @(Get-CorpNetStatus | Where-Object { $_.Ok })
 
-    if ($conCa.Count -eq 0 -and -not (Test-Path -LiteralPath $CorpCaFile)) {
-        Write-Log "No hay ninguna CA del kit que quitar." "SUCCESS"
+    if ($puestas.Count -eq 0 -and -not (Test-Path -LiteralPath $CorpCaFile)) {
+        Write-Log "No hay ninguna CA ni proxy del kit que quitar." "SUCCESS"
         Write-Host ""
         exit 0
     }
 
-    Write-Host "Se retirara de:  $(if ($conCa.Count) { 'jdk-' + ($conCa -join ', jdk-') } else { '(ningun JDK)' })"
+    Write-Host "Se retirara de:"
+    foreach ($p in $puestas) { Write-Host ("  {0,-14} {1} en {2}" -f $p.Nombre, $p.Que, $p.Donde) }
     if (Test-Path -LiteralPath $CorpCaFile) { Write-Host "Y se olvidara:   $CorpCaFile" }
     Write-Host ""
 
@@ -97,10 +99,34 @@ if ($Remove) {
         if (Remove-JdkCertificate -JdkPath $jdk -Alias $Alias) { Write-Log "Retirada de jdk-$l" "SUCCESS" }
         else { Write-Log "No se pudo retirar de jdk-$l" "ERROR" }
     }
+
+    foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Git") -Directory -ErrorAction SilentlyContinue)) {
+        if (Get-GitCorpCa -GitPath $d.FullName) {
+            Set-GitCorpCa -GitPath $d.FullName -Quitar | Out-Null
+            Write-Log "Retirada de $($d.Name)" "SUCCESS"
+        }
+    }
+    foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Python") -Directory -ErrorAction SilentlyContinue)) {
+        if (Get-PipCorpCa -PythonPath $d.FullName) {
+            Set-PipCorpCa -PythonPath $d.FullName -Quitar | Out-Null
+            Write-Log "Retirada de $($d.Name) (pip.ini)" "SUCCESS"
+        }
+    }
+    foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Maven") -Directory -ErrorAction SilentlyContinue)) {
+        if (Get-MavenCorpProxy -MavenPath $d.FullName) {
+            Set-MavenCorpProxy -MavenPath $d.FullName -Quitar | Out-Null
+            Write-Log "Proxy retirado de $($d.Name)" "SUCCESS"
+        }
+    }
+
+    # Se borran los archivos ANTES de rehacer los shells: asi salen ya sin la
+    # linea de la CA, que es como estaban al principio.
     Remove-Item -LiteralPath $CorpCaFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $CorpCaPem  -Force -ErrorAction SilentlyContinue
+    foreach ($linea in @(Update-GeneratedShells)) { Write-Log $linea "SUCCESS" }
 
     Write-Host ""
-    Write-Host "Hecho. Los JDK vuelven a confiar solo en las CA publicas." -ForegroundColor Green
+    Write-Host "Hecho. Las herramientas del kit vuelven a su configuracion de fabrica." -ForegroundColor Green
     Write-Host ""
     exit 0
 }
@@ -167,16 +193,15 @@ Write-Host ""
 # Aplicar
 # --------------------------------------------------------------------------
 
-$faltan = @()
-foreach ($l in $lineas) {
-    $jdk = Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$l"
-    $tiene = (Get-JdkTrustedAliases -JdkPath $jdk) -contains $Alias
-    Write-Host ("  jdk-{0,-4} {1}" -f $l, $(if ($tiene) { "ya la tiene (se reemplaza)" } else { "se le anade" }))
-    $faltan += $l
+foreach ($f in @(Get-CorpNetStatus)) {
+    $estado = if ($f.Ok) { "ya lo tiene (se rehace)" } else { "se le anade" }
+    Write-Host ("  {0,-14} {1,-6} en {2,-18} {3}" -f $f.Nombre, $f.Que, $f.Donde, $estado)
 }
 
 Write-Host ""
-Write-Host "Se escribe en el cacerts de cada JDK, dentro de la carpeta del kit." -ForegroundColor DarkGray
+Write-Host "Todo dentro de carpetas del kit: el cacerts de cada JDK, el gitconfig" -ForegroundColor DarkGray
+Write-Host "de ese Git, un pip.ini de esa Python y los shells generados. Nunca tu" -ForegroundColor DarkGray
+Write-Host "~\.gitconfig, tu ~\.m2\settings.xml ni tu %APPDATA%\pip." -ForegroundColor DarkGray
 Write-Host "No hace falta admin, y se deshace con:  .\Use-CorpCert.bat -Remove" -ForegroundColor DarkGray
 Write-Host ""
 
@@ -194,11 +219,16 @@ if (-not $Force) {
 $destino = Split-Path -Parent $CorpCaFile
 if (-not (Test-Path -LiteralPath $destino)) { New-Item -ItemType Directory -Path $destino -Force | Out-Null }
 Copy-Item -LiteralPath $certPath -Destination $CorpCaFile -Force
+Write-CorpCaPem | Out-Null
 Write-Log "Guardada en $CorpCaFile" "INFO"
-Write-Log "  Desde aqui se reaplica sola cuando instales otro JDK." "INFO"
+Write-Log "  Y en PEM, que es lo que leen Node, pip y Git." "INFO"
+Write-Log "  Desde aqui se reaplica sola cuando instales otra herramienta." "INFO"
 
 $fallos = 0
-foreach ($l in $faltan) {
+
+# Los JDK se rehacen siempre, tambien los que ya la tenian: si la empresa
+# renovo su CA, el alias existe pero con el certificado viejo.
+foreach ($l in $lineas) {
     $jdk = Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$l"
     $r = Import-JdkCertificate -JdkPath $jdk -CertPath $CorpCaFile -Alias $Alias
     if ($r.Ok) {
@@ -210,6 +240,24 @@ foreach ($l in $faltan) {
         $fallos++
     }
 }
+
+# Git, Python, Node/Angular y el proxy de Maven y Gradle.
+foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Git") -Directory -ErrorAction SilentlyContinue)) {
+    if (-not (Test-Path (Join-Path $d.FullName "cmd\git.exe"))) { continue }
+    if (Set-GitCorpCa -GitPath $d.FullName) { Write-Log "$($d.Name) al dia (http.sslCAInfo)" "SUCCESS" }
+    else { Write-Log "No se pudo configurar $($d.Name)" "ERROR"; $fallos++ }
+}
+
+foreach ($d in @(Get-ChildItem (Join-Path $WorkspaceRoot "Python") -Directory -ErrorAction SilentlyContinue)) {
+    if (-not (Test-Path (Join-Path $d.FullName "python.exe"))) { continue }
+    if (Set-PipCorpCa -PythonPath $d.FullName) { Write-Log "$($d.Name) al dia (pip.ini)" "SUCCESS" }
+    else { Write-Log "No se pudo configurar $($d.Name)" "ERROR"; $fallos++ }
+}
+
+# Node y Angular llevan la CA en su shell, asi que hay que regenerarlos.
+foreach ($linea in @(Update-GeneratedShells)) { Write-Log $linea "SUCCESS" }
+
+foreach ($linea in @(Sync-CorpNet)) { Write-Log $linea "SUCCESS" }
 
 Write-Host ""
 if ($fallos -gt 0) { exit 1 }

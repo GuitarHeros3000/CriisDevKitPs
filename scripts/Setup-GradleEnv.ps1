@@ -216,6 +216,11 @@ Add-UserPathEntry -Path (Join-Path $gradlePath "bin")
 
 Write-BuildToolShell -Tool Gradle -ToolPath $gradlePath -Version $release.Version -JavaHome $javaHome | Out-Null
 Write-Log "Shell creado: $gradlePath\$shellName" "SUCCESS"
+# La CA de la empresa y el proxy, si los hay guardados. Una herramienta recien
+# instalada nace sin ellos y falla con un error de certificado o de red que no
+# menciona nada de esto.
+foreach ($linea in @(Sync-CorpNet)) { Write-Log $linea "SUCCESS" }
+
 
 # Con varios JDK instalados, uno por cada uno: abrir el que toque es mas comodo
 # que reejecutar este comando para cambiar de Java.
