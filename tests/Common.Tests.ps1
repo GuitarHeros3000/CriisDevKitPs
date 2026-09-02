@@ -1359,6 +1359,27 @@ Describe "Get-RuntimeCatalog" {
     It "no hay dos runtimes compartiendo carpeta" {
         ($catalogo.Carpeta | Sort-Object -Unique).Count | Should Be $catalogo.Count
     }
+
+    # Sin firmante esperado, Doctor solo puede DECIR quien firma; con el, puede
+    # detectar una suplantacion. Declarar uno sin el otro deja la comprobacion a
+    # medias sin que se note.
+    It "ExeFirma y FirmanteEsperado van juntos o no van" {
+        foreach ($e in $catalogo) {
+            if ($e.ExeFirma) {
+                [string]::IsNullOrWhiteSpace($e.FirmanteEsperado) | Should Be $false
+            }
+            else {
+                [string]::IsNullOrWhiteSpace($e.FirmanteEsperado) | Should Be $true
+            }
+        }
+    }
+
+    It "el ejecutable a firmar es una ruta relativa" {
+        foreach ($e in ($catalogo | Where-Object { $_.ExeFirma })) {
+            $e.ExeFirma | Should Not Match '^[A-Za-z]:'
+            $e.ExeFirma | Should Not Match '\.\.'
+        }
+    }
 }
 
 Describe "Version de un JDK" {

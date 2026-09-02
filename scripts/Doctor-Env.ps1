@@ -916,6 +916,100 @@ function Test-VSCodeInstall {
     }
 }
 
+function Test-InstalledSignatures {
+    <#
+        Comprueba la firma de lo que hay INSTALADO, no de lo que se descarga.
+
+        Son dos preguntas distintas y hasta ahora solo se respondia la primera:
+        el kit verifica la firma al descargar, pero nada comprobaba que lo que
+        esta en disco siga siendo aquello. Un binario reemplazado despues de
+        instalar -por malware, o por un "empujon" de IT- pasaba desapercibido.
+
+        No cubre los nueve y no se disimula: Maven y Gradle se lanzan con un
+        .cmd y un .bat, y Authenticode no aplica a un script por lotes.
+    #>
+    Write-Section "Firma de lo instalado"
+
+    $mirados = 0
+    foreach ($e in (Get-RuntimeCatalog)) {
+        if (-not $e.ExeFirma) { continue }
+
+        foreach ($linea in (Get-InstalledRuntimeLines -Entrada $e)) {
+            $nombre = switch ($e.Clave) {
+                'java' { "jdk-$linea" }
+                'node' { "node-$linea" }
+                default { "$($e.Clave)-$linea" }
+            }
+            $exe = Join-Path (Join-Path (Join-Path $WorkspaceRoot $e.Carpeta) $nombre) $e.ExeFirma
+            if (-not (Test-Path -LiteralPath $exe)) { continue }
+
+            $mirados++
+            $f = Get-FileSignerInfo -FilePath $exe
+            $etiqueta = "$($e.Nombre) $linea"
+
+            if ($f.Estado -eq 'Valid') {
+                if ($e.FirmanteEsperado -and $f.Firmante -notlike "*$($e.FirmanteEsperado)*") {
+                    # Firmado, valido, pero por OTRO. Es la senal que justifica
+                    # toda esta seccion.
+                    Write-Check $etiqueta "firmado por $($f.Firmante), NO por $($e.FirmanteEsperado)" 'fail'
+                    Write-Detail "Reinstala desde la fuente oficial:  .\Setup-$($e.Carpeta)Env.bat -Force"
+                }
+                else {
+                    Write-Check $etiqueta "firmado por $($f.Firmante)" 'ok'
+                }
+            }
+            elseif ($f.Estado -eq 'NotSigned') {
+                Write-Check $etiqueta "sin firma" 'warn'
+                Write-Detail "El proveedor firma sus binarios; que este no lo este es raro."
+            }
+            elseif ($f.Firmante) {
+                Write-Check $etiqueta "firmado por $($f.Firmante), en quien el equipo no confia" 'fail'
+            }
+            else {
+                Write-Check $etiqueta "sin firma reconocible" 'warn'
+            }
+        }
+    }
+
+    # La Node que Angular instala para si mismo vive en Angular\ con otro nombre
+    # de carpeta, asi que no la alcanza el recorrido del catalogo. Es un binario
+    # firmable como cualquier otro y dejarla fuera seria un hueco: se comprueba
+    # aparte.
+    if (Test-Path $AngularRoot) {
+        foreach ($d in (Get-ChildItem $AngularRoot -Directory -ErrorAction SilentlyContinue)) {
+            if ($d.Name -notmatch '^node-v(.+)-win-x64$') { continue }
+            $exe = Join-Path $d.FullName "node.exe"
+            if (-not (Test-Path -LiteralPath $exe)) { continue }
+
+            $mirados++
+            $f = Get-FileSignerInfo -FilePath $exe
+            $etiqueta = "Node $($Matches[1]) (de Angular)"
+
+            if ($f.Estado -eq 'Valid' -and $f.Firmante -like '*OpenJS Foundation*') {
+                Write-Check $etiqueta "firmado por $($f.Firmante)" 'ok'
+            }
+            elseif ($f.Estado -eq 'Valid') {
+                Write-Check $etiqueta "firmado por $($f.Firmante), NO por OpenJS Foundation" 'fail'
+            }
+            elseif ($f.Firmante) {
+                Write-Check $etiqueta "firmado por $($f.Firmante), en quien el equipo no confia" 'fail'
+            }
+            else {
+                Write-Check $etiqueta "sin firma reconocible" 'warn'
+            }
+        }
+    }
+
+    # Se dice siempre, tambien cuando no aplica: callarlo daria a entender que
+    # estan cubiertos.
+    $sinFirma = @((Get-RuntimeCatalog | Where-Object { -not $_.ExeFirma -and $_.Clave -ne 'angular' }).Nombre)
+    if ($mirados -eq 0) {
+        Write-Check "Comprobables" "nada instalado que tenga binario firmable" 'info'
+    }
+    Write-Detail "No se comprueban: $($sinFirma -join ', ') (se lanzan con .cmd o .bat, sin Authenticode)"
+    Write-Detail "De Angular se comprueba su Node; el CLI es un .cmd."
+}
+
 function Test-LockDrift {
     <#
         Compara lo instalado contra un devenv.lock.json.
@@ -1398,6 +1492,7 @@ Test-BuildToolInstall -Titulo "Gradle" -Root $GradleRoot -Prefijo 'gradle' `
                       -SetupBat '.\Setup-GradleEnv.bat'
 Test-DotnetInstall
 Test-VSCodeInstall
+Test-InstalledSignatures
 Test-LockDrift
 Test-PortableApps
 Test-UserPath

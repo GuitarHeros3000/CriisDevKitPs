@@ -61,7 +61,16 @@ catch {
 # captura toda la salida de consola sin tocar ni una de las 300 llamadas del kit.
 
 $KitLogDir = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\logs"
-$script:KitLogsToKeep = 20
+
+# Eran 20, y se quedaba corto de largo. Un solo rato de trabajo -instalar cuatro
+# runtimes, comprobar con Doctor, desinstalar- se come esos 20 y borra todo lo
+# anterior: al intentar auditar que comandos se habian ejecutado, el historial
+# solo cubria los ultimos 25 minutos y no servia para nada.
+#
+# 200 archivos son unos pocos MB y cubren semanas de uso normal. El limite sigue
+# siendo por CANTIDAD y no por antiguedad, para que la carpeta no pueda crecer
+# sin tope aunque el kit se use en bucle desde un script.
+$script:KitLogsToKeep = 200
 
 function Remove-OldKitLogs {
     try {
@@ -2093,6 +2102,7 @@ function Get-RuntimeCatalog {
             Clave = 'python'; Nombre = 'Python'; Script = 'Setup-PythonEnv.ps1'
             ParamVersion = 'PythonVersion'; ParamPaquetes = 'InstallPackages'
             Carpeta = 'Python'; Patron = '^python-(\d+\.\d+)$'; AdmiteForce = $true
+            ExeFirma = 'python.exe';   FirmanteEsperado = 'Python Software Foundation'
             Bundle = $false
             Fijable = $true
         }
@@ -2100,6 +2110,8 @@ function Get-RuntimeCatalog {
             Clave = 'java'; Nombre = 'Java'; Script = 'Setup-JavaEnv.ps1'
             ParamVersion = 'JavaVersion'; ParamPaquetes = $null
             Carpeta = 'Java'; Patron = '^jdk-(\d+)$'; AdmiteForce = $true
+            # El kit instala Eclipse Temurin, que firma como Eclipse Foundation.
+            ExeFirma = 'bin\java.exe'; FirmanteEsperado = 'Eclipse Foundation'
             Bundle = $false
             Fijable = $false
         }
@@ -2107,6 +2119,7 @@ function Get-RuntimeCatalog {
             Clave = 'node'; Nombre = 'Node'; Script = 'Setup-NodeEnv.ps1'
             ParamVersion = 'NodeVersion'; ParamPaquetes = $null
             Carpeta = 'Node'; Patron = '^node-(\d+)$'; AdmiteForce = $true
+            ExeFirma = 'node.exe';     FirmanteEsperado = 'OpenJS Foundation'
             Bundle = $true; Envoltorio = $true;  Sfx = $false
             Fijable = $true
         }
@@ -2114,6 +2127,7 @@ function Get-RuntimeCatalog {
             Clave = 'angular'; Nombre = 'Angular'; Script = 'Setup-AngularEnv.ps1'
             ParamVersion = 'AngularVersion'; ParamPaquetes = $null
             Carpeta = 'Angular'; Patron = '^angular-v(\d+)$'; AdmiteForce = $false
+            ExeFirma = $null;           FirmanteEsperado = $null
             Bundle = $false
             Fijable = $false
         }
@@ -2121,6 +2135,7 @@ function Get-RuntimeCatalog {
             Clave = 'git'; Nombre = 'Git'; Script = 'Setup-GitEnv.ps1'
             ParamVersion = 'GitVersion'; ParamPaquetes = $null
             Carpeta = 'Git'; Patron = '^git-(\d+\.\d+)$'; AdmiteForce = $true
+            ExeFirma = 'cmd\git.exe';  FirmanteEsperado = 'Johannes Schindelin'
             Bundle = $true; Envoltorio = $false; Sfx = $true
             Fijable = $true
         }
@@ -2128,6 +2143,7 @@ function Get-RuntimeCatalog {
             Clave = 'maven'; Nombre = 'Maven'; Script = 'Setup-MavenEnv.ps1'
             ParamVersion = 'MavenVersion'; ParamPaquetes = $null
             Carpeta = 'Maven'; Patron = '^maven-(\d+\.\d+)$'; AdmiteForce = $true
+            ExeFirma = $null;           FirmanteEsperado = $null
             Bundle = $true; Envoltorio = $true;  Sfx = $false
             Fijable = $true
         }
@@ -2135,6 +2151,7 @@ function Get-RuntimeCatalog {
             Clave = 'gradle'; Nombre = 'Gradle'; Script = 'Setup-GradleEnv.ps1'
             ParamVersion = 'GradleVersion'; ParamPaquetes = $null
             Carpeta = 'Gradle'; Patron = '^gradle-(\d+\.\d+)$'; AdmiteForce = $true
+            ExeFirma = $null;           FirmanteEsperado = $null
             Bundle = $true; Envoltorio = $true;  Sfx = $false
             Fijable = $true
         }
@@ -2142,6 +2159,7 @@ function Get-RuntimeCatalog {
             Clave = 'dotnet'; Nombre = '.NET SDK'; Script = 'Setup-DotnetEnv.ps1'
             ParamVersion = 'Channel'; ParamPaquetes = $null
             Carpeta = 'Dotnet'; Patron = '^dotnet-(\d+\.\d+)$'; AdmiteForce = $true
+            ExeFirma = 'dotnet.exe';   FirmanteEsperado = '.NET'
             Bundle = $true; Envoltorio = $false; Sfx = $false
             Fijable = $false
         }
@@ -2149,6 +2167,7 @@ function Get-RuntimeCatalog {
             Clave = 'vscode'; Nombre = 'VS Code'; Script = 'Setup-VSCodeEnv.ps1'
             ParamVersion = $null; ParamPaquetes = $null
             Carpeta = 'VSCode'; Patron = '^vscode-(\d+\.\d+)$'; AdmiteForce = $true
+            ExeFirma = 'Code.exe';     FirmanteEsperado = 'Microsoft Corporation'
             Bundle = $true; Envoltorio = $false; Sfx = $false
             Fijable = $false
         }

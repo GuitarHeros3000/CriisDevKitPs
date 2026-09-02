@@ -941,6 +941,33 @@ distingue si hay certificado o no.
 Salio al preguntarse como probar esa rama, y se reproduce firmando un script con un
 certificado autofirmado; hay una prueba que lo hace y se valido con un mutante.
 
+### Tambien de lo que ya esta instalado
+
+Comprobar la firma al descargar responde *"era legitimo cuando lo baje"*. `Doctor`
+responde la otra mitad: *"?lo sigue siendo?"*. Un binario reemplazado **despues** de
+instalar -por malware, o por un empujon de IT- pasaba desapercibido.
+
+```
+[ok]  Python 3.12               firmado por Python Software Foundation
+[ok]  Java 25                   firmado por Eclipse Foundation
+[ok]  Node 24                   firmado por OpenJS Foundation
+[ok]  Git 2.55                  firmado por Johannes Schindelin
+[ok]  Node 22.23.2 (de Angular) firmado por OpenJS Foundation
+```
+
+Y cuando no cuadra, lo dice con el nombre delante. Comprobado suplantando el
+`node.exe` instalado de tres formas y devolviendolo despues a su sitio:
+
+| Se sustituyo por | Que dice |
+|---|---|
+| otro binario firmado | `[X] firmado por Microsoft Windows, NO por OpenJS Foundation` |
+| algo sin firma | `[!] sin firma reconocible` |
+| uno firmado por un desconocido | `[X] firmado por Suplantador SL, en quien el equipo no confia` |
+
+**Maven y Gradle no se comprueban**, y no se disimula: se lanzan con un `.cmd` y un
+`.bat`, y Authenticode no aplica a un script por lotes. De Angular se comprueba su
+Node; su CLI tambien es un `.cmd`.
+
 **Lo que NO te da:** dice **quien** firmo, no si el software es de fiar. Un mal actor
 puede comprar un certificado. Te da un nombre para que decidas tu, no un veredicto.
 
