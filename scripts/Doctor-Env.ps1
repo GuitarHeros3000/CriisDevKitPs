@@ -835,7 +835,13 @@ function Test-BuildToolInstall {
                 # Apunta a un JDK borrado: la herramienta no arranca, y el error
                 # de Java no menciona la desinstalacion que lo provoco.
                 Write-Check "  JAVA_HOME del shell" "$(Split-Path -Leaf $jh) (ya no existe)" 'fail'
-                Write-Detail "Reapuntalo con:  $SetupBat -Force"
+                Add-Fix -Description "reapuntar $(Split-Path -Leaf $shell) al JDK mas alto que quede" `
+                        -Arguments @{ Tool = $Titulo; Path = $d.FullName; Version = $ver } `
+                        -Action {
+                            param($Tool, $Path, $Version)
+                            Write-BuildToolShell -Tool $Tool -ToolPath $Path -Version $Version `
+                                                 -JavaHome (Get-KitJavaHome) | Out-Null
+                        }
             }
             elseif ($jh) {
                 Write-Check "  JAVA_HOME del shell" (Split-Path -Leaf $jh) 'ok'
@@ -856,13 +862,26 @@ function Test-BuildToolInstall {
             }
             else {
                 Write-Check "  Shells por JDK" ("falta Java " + ($faltan -join ', ')) 'warn'
-                Write-Detail "Regeneralos con:  $SetupBat"
+                # Se repara aqui y no mandando reejecutar el Setup: escribir estos
+                # .bat es local, y el Setup consultaria la red para acabar
+                # haciendo lo mismo.
+                Add-Fix -Description "escribir los shells por JDK que faltan en $($d.Name) (Java $($faltan -join ', '))" `
+                        -Arguments @{ Tool = $Titulo; Path = $d.FullName; Version = $ver } `
+                        -Action {
+                            param($Tool, $Path, $Version)
+                            Write-BuildToolShellsPorJdk -Tool $Tool -ToolPath $Path -Version $Version | Out-Null
+                        }
             }
         }
         elseif ($porJdk.Count -gt 0) {
             # Sobra: quedo de cuando habia mas de un JDK.
             Write-Check "  Shells por JDK" ("sobran (Java " + ($porJdk -join ', ') + ")") 'warn'
-            Write-Detail "Solo hay un JDK. Limpialos con:  $SetupBat"
+            Add-Fix -Description "retirar $($porJdk.Count) shell(s) por JDK que sobran en $($d.Name)" `
+                    -Arguments @{ Tool = $Titulo; Path = $d.FullName; Version = $ver } `
+                    -Action {
+                        param($Tool, $Path, $Version)
+                        Write-BuildToolShellsPorJdk -Tool $Tool -ToolPath $Path -Version $Version | Out-Null
+                    }
         }
     }
 }
@@ -943,7 +962,14 @@ function Test-VSCodeJavaRuntimes {
             if ($faltan.Count -gt 0) { $q += "falta Java $($faltan -join ', ')" }
             if ($sobran.Count -gt 0) { $q += "sobra Java $($sobran -join ', ')" }
             Write-Check $t.Etiqueta ($q -join '; ') 'warn'
-            Write-Detail "Ponlo al dia con:  $cmd"
+            # Reescribir ese settings.json es local: no hace falta mandar al
+            # usuario a un comando aparte, ni menos a reinstalar nada.
+            Add-Fix -Description "poner al dia los JDK de $($t.Etiqueta)" `
+                    -Arguments @{ Ruta = $t.Ruta } `
+                    -Action {
+                        param($Ruta)
+                        Update-VSCodeJavaRuntimes -Ruta $Ruta | Out-Null
+                    }
         }
         else {
             $porDefecto = @($reg | Where-Object { $_.default }).name -join ','

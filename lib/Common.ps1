@@ -2348,47 +2348,66 @@ function Sync-VSCodeJavaRuntimes {
     $lineas  = @(Get-KitJdkLines)
 
     foreach ($t in @(Get-VSCodeSettingsTargets | Where-Object { $_.DelKit })) {
-        $s = Read-VSCodeSettings -Ruta $t.Ruta
-        if (-not $s.Legible) { continue }
-
-        $tieneClave = $s.Ajustes -and $s.Ajustes.PSObject.Properties['java.configuration.runtimes']
-        $yaHay = @(Get-RegisteredKitJdks -Ajustes $s.Ajustes)
-
-        if ($yaHay.Count -eq 0) {
-            # Sin nada anotado no se decide por el usuario, salvo al instalar el
-            # editor: ahi si, un portable nuevo debe nacer sabiendo que JDK hay.
-            if (-not $Inicializar -or $tieneClave -or $lineas.Count -eq 0) { continue }
+        if (Update-VSCodeJavaRuntimes -Ruta $t.Ruta -Inicializar:$Inicializar) {
+            $txt = if ($lineas.Count -gt 0) { "Java $($lineas -join ', ')" } else { "sin ningun JDK" }
+            $resumen += "$($t.Etiqueta) : $txt"
         }
-
-        # Se respeta el JDK por defecto que hubiera si sigue instalado: cambiarlo
-        # por instalar otra version seria decidir con que compila sin avisar.
-        $defActual = $null
-        if ($tieneClave) {
-            $d = @(@($s.Ajustes.'java.configuration.runtimes') | Where-Object { $_.default -and $_.path })
-            if ($d.Count -gt 0 -and (Split-Path -Leaf ([string]$d[0].path)) -match '^jdk-(\d+)$') {
-                $defActual = $Matches[1]
-            }
-        }
-        $porDefecto = if ($defActual -and $lineas -contains $defActual) { $defActual }
-                      elseif ($lineas.Count -gt 0) { $lineas[-1] }
-                      else { $null }
-
-        $delKit    = @(Get-KitJavaRuntimeEntries -Default $porDefecto)
-        $actual    = if ($tieneClave) { @($s.Ajustes.'java.configuration.runtimes') } else { @() }
-        $resultado = @(Merge-VSCodeJavaRuntimes -Actual $actual -DelKit $delKit `
-                                                -RaizJava (Join-Path $WorkspaceRoot "Java"))
-
-        $antes   = (@($actual)    | ForEach-Object { "$($_.name)=$($_.path)=$($_.default)" }) -join '|'
-        $despues = (@($resultado) | ForEach-Object { "$($_.name)=$($_.path)=$($_.default)" }) -join '|'
-        if ($antes -eq $despues) { continue }
-
-        Set-VSCodeJavaRuntimes -Ruta $t.Ruta -Ajustes $s.Ajustes -Runtimes $resultado
-
-        $txt = if ($lineas.Count -gt 0) { "Java $($lineas -join ', ')" } else { "sin ningun JDK" }
-        $resumen += "$($t.Etiqueta) : $txt"
     }
 
     return $resumen
+}
+
+function Update-VSCodeJavaRuntimes {
+    <#
+        Pone al dia UN settings.json con los JDK del kit. Devuelve $true si lo
+        cambio.
+
+        Aparte de Sync-VSCodeJavaRuntimes para que Doctor -Fix pueda reparar un
+        settings.json concreto -incluido el del VS Code del equipo, si el usuario
+        opto por gestionarlo- sin repetir la logica del JDK por defecto.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Ruta,
+        [switch]$Inicializar
+    )
+
+    $lineas = @(Get-KitJdkLines)
+    $s = Read-VSCodeSettings -Ruta $Ruta
+    if (-not $s.Legible) { return $false }
+
+    $tieneClave = $s.Ajustes -and $s.Ajustes.PSObject.Properties['java.configuration.runtimes']
+    $yaHay = @(Get-RegisteredKitJdks -Ajustes $s.Ajustes)
+
+    if ($yaHay.Count -eq 0) {
+        # Sin nada anotado no se decide por el usuario, salvo al instalar el
+        # editor: ahi si, un portable nuevo debe nacer sabiendo que JDK hay.
+        if (-not $Inicializar -or $tieneClave -or $lineas.Count -eq 0) { return $false }
+    }
+
+    # Se respeta el JDK por defecto que hubiera si sigue instalado: cambiarlo
+    # por instalar otra version seria decidir con que compila sin avisar.
+    $defActual = $null
+    if ($tieneClave) {
+        $d = @(@($s.Ajustes.'java.configuration.runtimes') | Where-Object { $_.default -and $_.path })
+        if ($d.Count -gt 0 -and (Split-Path -Leaf ([string]$d[0].path)) -match '^jdk-(\d+)$') {
+            $defActual = $Matches[1]
+        }
+    }
+    $porDefecto = if ($defActual -and $lineas -contains $defActual) { $defActual }
+                  elseif ($lineas.Count -gt 0) { $lineas[-1] }
+                  else { $null }
+
+    $delKit    = @(Get-KitJavaRuntimeEntries -Default $porDefecto)
+    $actual    = if ($tieneClave) { @($s.Ajustes.'java.configuration.runtimes') } else { @() }
+    $resultado = @(Merge-VSCodeJavaRuntimes -Actual $actual -DelKit $delKit `
+                                            -RaizJava (Join-Path $WorkspaceRoot "Java"))
+
+    $antes   = (@($actual)    | ForEach-Object { "$($_.name)=$($_.path)=$($_.default)" }) -join '|'
+    $despues = (@($resultado) | ForEach-Object { "$($_.name)=$($_.path)=$($_.default)" }) -join '|'
+    if ($antes -eq $despues) { return $false }
+
+    Set-VSCodeJavaRuntimes -Ruta $Ruta -Ajustes $s.Ajustes -Runtimes $resultado
+    return $true
 }
 
 function Get-BuildToolJavaBindings {

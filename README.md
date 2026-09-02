@@ -952,13 +952,20 @@ No toca `java.jdt.ls.java.home`, que es el JDK con el que arranca el servidor de
 extension. Ese lo resuelve ella sola, y cambiarlo puede dejar sin Java a un editor
 que funcionaba.
 
-`Doctor` dice si VS Code esta al dia y avisa si instalas un JDK nuevo que aun no
-conoce:
+`Doctor` dice si VS Code esta al dia, avisa si hay algun JDK que aun no conoce, y
+**lo arregla el mismo** con `-Fix`. Igual que con los shells por JDK de Maven y
+Gradle: son archivos locales, asi que reescribirlos no necesita red ni reinstalar
+nada.
 
 ```
-[ok]  VS Code del equipo        Java 21, 25   (por defecto JavaSE-25)
-[!]   VS Code del equipo        falta Java 21
-        Ponlo al dia con:  .\Use-VSCodeJava.bat
+[!]   VS Code 1.136 del kit     falta Java 21
+[!]     Shells por JDK          falta Java 21
+[X]     JAVA_HOME del shell     jdk-99 (ya no existe)
+
+Reparable automaticamente (3):
+  - reapuntar mvn39-shell.bat al JDK mas alto que quede
+  - escribir los shells por JDK que faltan en maven-3.9 (Java 21)
+  - poner al dia los JDK de VS Code 1.136 del kit
 ```
 
 ## .NET SDK
