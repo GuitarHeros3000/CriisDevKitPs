@@ -37,7 +37,13 @@ $WorkspaceRoot = Split-Path -Parent $DevKitRoot
 #
 # Subela al cambiar comportamiento visible; Doctor la muestra y Export-Env la
 # anota en el manifiesto.
-$KitVersion = "1.0.0"
+#
+# 2.0.0 y no 1.x: se quedo en 1.0.0 durante mucho tiempo mientras el kit pasaba
+# de 4 runtimes a 9, ganaba seis comandos y cambiaba el formato del bundle. Eso
+# no es cosmetico: Export-Env estampa este numero en cada bundle e Import-Env
+# avisa si no coincide con el suyo, asi que un bundle de hoy y uno de hace meses
+# decian ser lo mismo y ese aviso no podia funcionar.
+$KitVersion = "2.0.0"
 
 # Windows PowerShell 5.1 negocia TLS 1.0 por defecto, y python.org y nodejs.org
 # ya lo rechazan. Sin esto, las descargas fallan con un error de "conexion cerrada"

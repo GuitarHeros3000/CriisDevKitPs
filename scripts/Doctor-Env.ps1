@@ -1456,6 +1456,8 @@ function Test-KitIntegrity {
         "Restore-Env.bat",
         "scripts\Restore-Env.ps1",
         "devenv.json.ejemplo",
+        "Menu.bat",
+        "scripts\Menu.ps1",
         "tests\Common.Tests.ps1",
         "tests\Shells.Tests.ps1",
         "tests\UserPath.Tests.ps1",

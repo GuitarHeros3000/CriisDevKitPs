@@ -1346,6 +1346,36 @@ Describe "Cobertura del catalogo" {
         $txt = Get-Content (Join-Path $scripts "Restore-Env.ps1") -Raw
         $txt | Should Match 'Get-RuntimeCatalog'
     }
+
+    # El menu construye sus opciones de instalacion recorriendo el catalogo. Si
+    # alguien las escribiera a mano, un runtime nuevo no apareceria y nadie se
+    # enteraria hasta echarlo en falta.
+    It "el menu saca los runtimes del catalogo" {
+        $txt = Get-Content (Join-Path $scripts "Menu.ps1") -Raw
+        $txt | Should Match 'Get-RuntimeCatalog'
+    }
+
+    # Cada opcion del menu llama a un .bat de la raiz. Uno mal escrito solo se
+    # notaria al pulsarlo.
+    It "todos los .bat que invoca el menu existen" {
+        $raiz = Split-Path -Parent $PSScriptRoot
+        $txt = Get-Content (Join-Path $scripts "Menu.ps1") -Raw
+        $bats = @([regex]::Matches($txt, "Bat\s*=\s*'([^']+\.bat)'") | ForEach-Object { $_.Groups[1].Value })
+        $bats.Count | Should BeGreaterThan 5
+        foreach ($b in ($bats | Sort-Object -Unique)) {
+            Test-Path (Join-Path $raiz $b) | Should Be $true
+        }
+    }
+
+    # Los Setup y los Start se componen a partir del catalogo, asi que se
+    # comprueban aparte de los literales.
+    It "existen el Setup y el Start de cada runtime del catalogo" {
+        $raiz = Split-Path -Parent $PSScriptRoot
+        foreach ($e in $catalogo) {
+            Test-Path (Join-Path $raiz "Setup-$($e.Carpeta)Env.bat") | Should Be $true
+            Test-Path (Join-Path $raiz "Start-$($e.Carpeta)Env.bat") | Should Be $true
+        }
+    }
 }
 
 Describe "Resolve-RuntimeFromPath" {
