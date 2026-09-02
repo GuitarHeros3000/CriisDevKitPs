@@ -23,6 +23,12 @@
     Ruta del devenv.json. Por defecto, devenv.json en la carpeta actual.
 .PARAMETER Save
     En vez de instalar, escribe un devenv.json con lo que hay instalado ahora.
+.PARAMETER Lock
+    En vez de instalar, escribe un devenv.lock.json con las versiones EXACTAS
+    instaladas. El manifiesto dice "Python 3.12"; el lock dice "3.12.10". Es lo
+    que hace que dos maquinas monten lo mismo y no dos parches distintos.
+.PARAMETER NoLock
+    Ignora el devenv.lock.json aunque exista, y usa solo el devenv.json.
 .PARAMETER Force
     No pide confirmacion.
 .PARAMETER WhatIf
@@ -39,6 +45,10 @@ param(
     [string]$Path,
 
     [switch]$Save,
+
+    [switch]$Lock,
+
+    [switch]$NoLock,
 
     [switch]$Force,
 
@@ -59,6 +69,84 @@ Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  Restore-Env - Entorno desde devenv.json" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
+
+$LockPath = Join-Path (Split-Path -Parent $Path) "devenv.lock.json"
+
+# --------------------------------------------------------------------------
+# -Lock: escribir el lockfile con las versiones exactas
+# --------------------------------------------------------------------------
+
+if ($Lock) {
+    $runtimes = [ordered]@{}
+    $noFijables = @()
+
+    foreach ($e in (Get-RuntimeCatalog)) {
+        $lineas = @(Get-InstalledRuntimeLines -Entrada $e)
+        if ($lineas.Count -eq 0) { continue }
+
+        $linea  = @($lineas | Sort-Object { try { [version]($_ -replace '^(\d+)$', '$1.0') } catch { [version]'0.0' } } -Descending)[0]
+        $exacta = Get-InstalledRuntimeVersion -Entrada $e -Linea $linea
+        $sha    = Get-InstalledRuntimeSha256 -Entrada $e -Linea $linea
+
+        $entrada = [ordered]@{ linea = $linea }
+        if ($exacta) { $entrada['exacta'] = $exacta }
+        if ($sha)    { $entrada['sha256'] = $sha }
+        $entrada['fijable'] = [bool]$e.Fijable
+
+        $runtimes[$e.Clave] = $entrada
+        if (-not $e.Fijable) { $noFijables += $e.Nombre }
+    }
+
+    if ($runtimes.Count -eq 0) {
+        Write-Log "No hay nada instalado por el kit que fijar." "ERROR"
+        exit 1
+    }
+
+    $lockObj = [ordered]@{
+        version  = 1
+        generado = (Get-Date -Format "o")
+        maquina  = $env:COMPUTERNAME
+        _nota    = "Versiones exactas instaladas. Restore-Env lo usa antes que devenv.json. 'fijable' dice si el Setup de ese runtime admite fijar la version exacta o solo su linea."
+        runtimes = $runtimes
+    }
+
+    if ($WhatIf) {
+        Write-Host "Se escribiria en $LockPath :" -ForegroundColor Yellow
+        Write-Host ""
+        ($lockObj | ConvertTo-Json -Depth 5) -split "`n" | ForEach-Object { Write-Host "  $_" }
+        Write-Host ""
+        Write-Host "-WhatIf: no se ha tocado nada." -ForegroundColor Cyan
+        Write-Host ""
+        exit 0
+    }
+
+    ($lockObj | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $LockPath -Encoding UTF8
+    Write-Log "Escrito: $LockPath" "SUCCESS"
+    Write-Host ""
+    foreach ($k in $runtimes.Keys) {
+        $r = $runtimes[$k]
+        $ex = if ($r.exacta) { $r.exacta } else { '(sin determinar)' }
+        $marca = if ($r.fijable) { '' } else { '   <- solo se puede fijar su linea' }
+        Write-Host ("  {0,-10} {1,-18} {2}" -f $k, $ex, $marca) -ForegroundColor Gray
+        if ($r.sha256) { Write-Host ("             sha256 {0}" -f $r.sha256) -ForegroundColor DarkGray }
+    }
+    Write-Host ""
+    if ($noFijables.Count -gt 0) {
+        $verbo = if ($noFijables.Count -eq 1) { "no admite" } else { "no admiten" }
+        Write-Host "Aviso honesto: $($noFijables -join ', ') $verbo fijar la version exacta." -ForegroundColor Yellow
+        Write-Host "Su Setup solo acepta la linea (o el canal), asi que en otra maquina" -ForegroundColor Gray
+        Write-Host "podria quedar en un parche distinto. Queda anotado en el lock para" -ForegroundColor Gray
+        Write-Host "que al menos se vea la diferencia." -ForegroundColor Gray
+        Write-Host ""
+    }
+    Write-Host "El checksum solo consta donde el kit lo anoto al instalar (hoy, Python)." -ForegroundColor DarkGray
+    Write-Host "Los demas se verifican al descargar contra la fuente oficial, que es lo" -ForegroundColor DarkGray
+    Write-Host "que garantiza la integridad; el lock garantiza la VERSION." -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "Guardalo junto al devenv.json, en el repositorio del proyecto." -ForegroundColor Gray
+    Write-Host ""
+    exit 0
+}
 
 # --------------------------------------------------------------------------
 # -Save: escribir el manifiesto a partir de lo instalado
@@ -128,27 +216,46 @@ if ($Save) {
 # Restaurar
 # --------------------------------------------------------------------------
 
-if (-not (Test-Path -LiteralPath $Path)) {
+# El lock manda sobre el manifiesto cuando existe, igual que un package-lock
+# sobre un package.json: es lo que hace que dos maquinas monten lo mismo. Con
+# -NoLock se ignora a proposito.
+$usandoLock = (-not $NoLock) -and (Test-Path -LiteralPath $LockPath)
+$archivo    = if ($usandoLock) { $LockPath } else { $Path }
+
+if (-not (Test-Path -LiteralPath $archivo)) {
     Write-Log "No existe el manifiesto: $Path" "ERROR"
     Write-Log "  Crea uno a partir de lo que ya tengas instalado:" "WARN"
     Write-Log "    .\Restore-Env.bat -Save" "WARN"
     exit 1
 }
 
-Write-Log "Manifiesto: $Path"
+if ($usandoLock) {
+    Write-Log "Lock: $LockPath" "SUCCESS"
+    Write-Log "  Manda sobre el devenv.json. Para ignorarlo:  -NoLock"
+}
+else {
+    Write-Log "Manifiesto: $archivo"
+    if ($NoLock -and (Test-Path -LiteralPath $LockPath)) {
+        Write-Log "  -NoLock: hay un devenv.lock.json y se esta ignorando." "WARN"
+    }
+    elseif (-not (Test-Path -LiteralPath $LockPath)) {
+        Write-Log "  Sin lock: se instalara la ultima version de cada linea."
+        Write-Log "  Para fijar las exactas:  .\Restore-Env.bat -Lock"
+    }
+}
 
 try {
-    $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    $config = Get-Content -LiteralPath $archivo -Raw | ConvertFrom-Json
 }
 catch {
-    Write-Log "El manifiesto no es JSON valido: $($_.Exception.Message)" "ERROR"
+    Write-Log "El archivo no es JSON valido: $($_.Exception.Message)" "ERROR"
     exit 1
 }
 
-$plan = Read-DevEnvManifest -Config $config
+$plan = if ($usandoLock) { Read-DevEnvLock -Config $config } else { Read-DevEnvManifest -Config $config }
 
 if ($plan.Errores.Count -gt 0) {
-    Write-Log "El manifiesto tiene problemas:" "ERROR"
+    Write-Log "$(if ($usandoLock) { 'El lock' } else { 'El manifiesto' }) tiene problemas:" "ERROR"
     foreach ($e in $plan.Errores) { Write-Log "  $e" "ERROR" }
     # Se para en vez de instalar lo que si se entiende: dejar el entorno a
     # medias sin decir por que es justo lo contrario de para lo que sirve esto.
@@ -156,7 +263,7 @@ if ($plan.Errores.Count -gt 0) {
 }
 
 if ($plan.Runtimes.Count -eq 0) {
-    Write-Log "El manifiesto no pide ningun runtime." "WARN"
+    Write-Log "No pide ningun runtime." "WARN"
     exit 0
 }
 
@@ -170,11 +277,16 @@ Write-Host "Se va a instalar:" -ForegroundColor Yellow
 Write-Host ""
 foreach ($r in $plan.Runtimes) {
     $yaHay = @(Get-InstalledRuntimeLines -Entrada $r.Entrada)
-    $estado = if ($yaHay -contains $r.Version) { "ya instalado" }
-              elseif ($yaHay.Count -gt 0)      { "hay $($yaHay -join ', ')" }
-              else                             { "" }
+    $linea = if ($r.Linea) { $r.Linea } else { $r.Version }
+    $estado = if ($yaHay -contains $linea) { "ya instalado" }
+              elseif ($yaHay.Count -gt 0)  { "hay $($yaHay -join ', ')" }
+              else                         { "" }
 
-    Write-Host ("  {0,-12} {1,-10} {2}" -f $r.Nombre, $r.Version, $estado) -ForegroundColor White
+    Write-Host ("  {0,-12} {1,-14} {2}" -f $r.Nombre, $r.Version, $estado) -ForegroundColor White
+    if ($usandoLock -and -not $r.Fijado) {
+        # No se puede prometer un pin que el Setup no admite.
+        Write-Host ("               el lock anota {0}, pero su Setup solo acepta la linea" -f $r.Exacta) -ForegroundColor DarkYellow
+    }
     if ($r.Paquetes) { Write-Host ("               paquetes: {0}" -f $r.Paquetes) -ForegroundColor DarkGray }
 }
 Write-Host ""

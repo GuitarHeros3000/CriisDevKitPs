@@ -899,6 +899,82 @@ Describe "devenv.json (Read-DevEnvManifest)" {
     }
 }
 
+Describe "devenv.lock.json (Read-DevEnvLock)" {
+
+    function Lock($json) { return (ConvertFrom-Json $json) }
+
+    # El lock es al devenv.json lo que un package-lock.json al package.json: el
+    # manifiesto dice "3.12", el lock dice "3.12.10".
+    It "usa la version exacta cuando el Setup la admite" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "python": { "linea": "3.12", "exacta": "3.12.10", "fijable": true } } }')
+        $p.Errores.Count      | Should Be 0
+        $p.Runtimes[0].Version | Should Be '3.12.10'
+        $p.Runtimes[0].Fijado  | Should Be $true
+    }
+
+    # Java se instala con -JavaVersion, que es un entero: no hay forma de pedir
+    # 25.0.4.1. Prometer un pin que no se puede cumplir seria peor que no
+    # tenerlo, asi que se cae a la linea y se marca.
+    It "cae a la linea cuando el Setup no admite la exacta" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "java": { "linea": "25", "exacta": "25.0.4.1+1" } } }')
+        $p.Runtimes[0].Version | Should Be '25'
+        $p.Runtimes[0].Exacta  | Should Be '25.0.4.1+1'
+        $p.Runtimes[0].Fijado  | Should Be $false
+    }
+
+    It "conserva el checksum cuando el lock lo trae" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "python": { "linea": "3.12", "exacta": "3.12.10", "sha256": "abc123" } } }')
+        $p.Runtimes[0].Sha256 | Should Be 'abc123'
+    }
+
+    It "respeta el orden del catalogo, no el del archivo" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "maven": { "linea": "3.9" }, "java": { "linea": "25" } } }')
+        $p.Runtimes[0].Clave | Should Be 'java'
+        $p.Runtimes[1].Clave | Should Be 'maven'
+    }
+
+    It "senala un runtime desconocido" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "rust": { "linea": "1.0" } } }')
+        ($p.Errores -join ' ') | Should Match 'rust'
+    }
+
+    It "senala una entrada sin linea ni exacta" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "python": { "fijable": true } } }')
+        ($p.Errores -join ' ') | Should Match 'ni linea ni exacta'
+    }
+
+    It "con solo exacta y sin linea, la usa igualmente" {
+        $p = Read-DevEnvLock -Config (Lock '{ "runtimes": { "git": { "exacta": "2.55.0.5" } } }')
+        $p.Errores.Count       | Should Be 0
+        $p.Runtimes[0].Version | Should Be '2.55.0.5'
+    }
+
+    It "rechaza un lock de una version mas nueva que el kit" {
+        $p = Read-DevEnvLock -Config (Lock '{ "version": 99, "runtimes": { "python": { "linea": "3.12" } } }')
+        ($p.Errores -join ' ') | Should Match 'version 99'
+    }
+
+    It "tolera un lock nulo o sin runtimes" {
+        (Read-DevEnvLock -Config $null).Errores.Count | Should BeGreaterThan 0
+        (Read-DevEnvLock -Config (Lock '{ "version": 1 }')).Errores.Count | Should BeGreaterThan 0
+    }
+
+    # Si esto se desalinea, el lock pediria versiones que el Setup rechaza.
+    It "Fijable coincide con lo que admite cada Setup" {
+        $c = Get-RuntimeCatalog
+        ($c | Where-Object { $_.Clave -eq 'python' }).Fijable | Should Be $true
+        ($c | Where-Object { $_.Clave -eq 'node'   }).Fijable | Should Be $true
+        ($c | Where-Object { $_.Clave -eq 'git'    }).Fijable | Should Be $true
+        ($c | Where-Object { $_.Clave -eq 'maven'  }).Fijable | Should Be $true
+        ($c | Where-Object { $_.Clave -eq 'gradle' }).Fijable | Should Be $true
+        # Estos tienen la version como entero, como canal, o no la tienen.
+        ($c | Where-Object { $_.Clave -eq 'java'    }).Fijable | Should Be $false
+        ($c | Where-Object { $_.Clave -eq 'angular' }).Fijable | Should Be $false
+        ($c | Where-Object { $_.Clave -eq 'dotnet'  }).Fijable | Should Be $false
+        ($c | Where-Object { $_.Clave -eq 'vscode'  }).Fijable | Should Be $false
+    }
+}
+
 Describe "Resolve-RuntimeFromPath" {
 
     # Traduce "esta carpeta esta tapada en el PATH" a "esto se arregla con

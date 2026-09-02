@@ -335,6 +335,22 @@ $env:ASSASSINSKIPADM_NOPAUSE = "1"
 if ($LASTEXITCODE -ne 0) { "revisa el entorno antes de seguir" }
 ```
 
+## JAVA_HOME: el descuadre que no se ve
+
+`java` en consola lo decide el **PATH**. Pero Maven, Gradle y los IDE leen
+**`JAVA_HOME`**, que es otra variable. Cuando las dos apuntan a JDK distintos,
+compilas con uno creyendo que usas el otro, y nada te lo dice.
+
+`Doctor` compara las dos y avisa. Caso real de un equipo de pruebas: `java`
+respondia **24.0.2** y `JAVA_HOME` apuntaba a un **`jdk1.8.0_202` de 2019**, asi
+que todo se compilaba contra Java 8.
+
+Alinearlo **no necesita admin**: el `JAVA_HOME` de usuario le gana al de maquina
+(comprobado). Lo hace `.\Setup-JavaEnv.bat -SetJavaHome`.
+
+> Cambia con que JDK compilan **todos** tus proyectos. Si algo corporativo
+> depende de un Java antiguo, se entera.
+
 ## Desinstalacion
 
 ```powershell
@@ -343,7 +359,17 @@ if ($LASTEXITCODE -ne 0) { "revisa el entorno antes de seguir" }
 .\Uninstall-Env.bat -Runtime Python -Version 3.12              Retira esa version
 .\Uninstall-Env.bat -Runtime Angular -Version 20 -Node 22.23.2 Angular y su Node
 .\Uninstall-Env.bat -Runtime Angular -All                      Todo el runtime
+.\Uninstall-Env.bat -Everything                                TODO, de todos
 ```
+
+`-Everything` recorre el catalogo de runtimes, asi que uno nuevo queda cubierto por
+estar en el catalogo y no por acordarse de tocar este comando. Sustituye a ejecutarlo
+nueve veces para dejar limpia una maquina.
+
+> Nunca toca la carpeta madre del workspace, la que contiene el kit y tus proyectos.
+> Con `-Everything` esa era la ruta que quedaba en la variable de "retirar la carpeta
+> si queda vacia", asi que hay una guarda explicita y una prueba de que ninguna
+> entrada del catalogo puede componerla.
 
 Retira la carpeta **y** limpia las entradas del PATH que apuntaban ahi. Sin esto,
 borrar la carpeta a mano dejaba rutas muertas en el PATH del usuario para siempre.
@@ -384,6 +410,16 @@ Ejemplo real con Node 24 instalado por el kit y Node 22 en Program Files:
 Los shells generados hacen `set PATH=<kit>;%PATH%`, que antepone al PATH **ya
 compuesto**, y por eso si ganan. `.\Doctor-Env.bat` diagnostica esto en su seccion
 *Que version responde* y dice cual arranca de verdad.
+
+Y no se limita a contarlo: cuando detecta un `[X] NO es la del kit`, **ofrece
+activarlo con `Use-Env`** y `-Fix` lo aplica, con el runtime y la version ya
+resueltos. Comprobado en un equipo con un Oracle Java 24 de maquina tapando el JDK
+25 del kit: antes de `-Fix` respondia 24.0.2 y despues 25.0.4.1, en cmd y en
+PowerShell.
+
+> Esa reparacion es distinta de las demas: toca tu perfil de PowerShell y el
+> AutoRun de cmd. `-Fix` te lo dice aparte antes de pedir confirmacion, y se
+> revierte con `.\Use-Env.bat -Off`.
 
 ### Use-Env: ganar tambien en terminales normales
 
@@ -798,6 +834,39 @@ nada y te dice cuales reconoce. Dejar el entorno a medias sin decir por que seri
 justo lo contrario de para lo que existe.
 
 Si algo falla a mitad, sigue con el resto y al final te dice que entro y que no.
+
+### `devenv.lock.json`: que dos maquinas monten LO MISMO
+
+El manifiesto dice `"python": "3.12"`. Eso es una **linea**, no una version: hoy
+instala 3.12.10 y dentro de un mes 3.12.11. Dos maquinas que restauren el mismo
+`devenv.json` con semanas de diferencia acaban con parches distintos.
+
+El lock cierra esa puerta, igual que un `package-lock.json`:
+
+```powershell
+.\Restore-Env.bat -Lock      Escribe devenv.lock.json con las versiones exactas
+.\Restore-Env.bat            Si hay lock, MANDA el lock
+.\Restore-Env.bat -NoLock    Ignora el lock a proposito
+```
+
+Comprobado: con un lock que pedia `3.12.9` y un manifiesto que pedia `3.12`,
+restauro **3.12.9** y no el 3.12.10 disponible.
+
+**Hasta donde llega, dicho sin adornos.** Fijar la version exacta depende de que
+el `Setup` de cada runtime la acepte, y no todos lo hacen:
+
+| Se fija exacto | Solo su linea |
+|---|---|
+| Python, Node, Git, Maven, Gradle | Java y Angular (`-Version` es un entero), .NET (solo canal), VS Code (sin parametro) |
+
+El lock **anota igualmente** la version exacta de los cuatro de la derecha, para que
+al menos la diferencia se vea, y `Restore-Env` avisa por cada uno de que no puede
+fijarlo. Prometer un pin que no se puede cumplir seria peor que no tenerlo.
+
+**Y sobre los checksums:** el lock guarda el SHA-256 solo donde el kit lo anoto al
+instalar, que hoy es Python. Los demas se verifican **al descargar** contra la
+fuente oficial, y eso es lo que garantiza la integridad. Lo que garantiza el lock
+es la **version**.
 
 ## Install-NoAdmin
 

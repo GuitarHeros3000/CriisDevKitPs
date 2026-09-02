@@ -1955,53 +1955,181 @@ function Write-VSCodeShell {
 # --------------------------------------------------------------------------
 
 function Get-RuntimeCatalog {
+    <#
+        Fijable indica si el Setup de ese runtime acepta una version EXACTA o
+        solo su linea. Es lo que decide hasta donde puede fijar un lockfile, y
+        no es una eleccion nuestra sino una limitacion de cada script:
+
+          python, node, git, maven, gradle   admiten X.Y.Z  -> exacto
+          java, angular                      -Version es un entero: solo la mayor
+          dotnet                             -Channel: solo el canal
+          vscode                             no tiene parametro: siempre la ultima
+    #>
     return @(
         [PSCustomObject]@{
             Clave = 'python'; Nombre = 'Python'; Script = 'Setup-PythonEnv.ps1'
             ParamVersion = 'PythonVersion'; ParamPaquetes = 'InstallPackages'
             Carpeta = 'Python'; Patron = '^python-(\d+\.\d+)$'; AdmiteForce = $true
+            Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'java'; Nombre = 'Java'; Script = 'Setup-JavaEnv.ps1'
             ParamVersion = 'JavaVersion'; ParamPaquetes = $null
             Carpeta = 'Java'; Patron = '^jdk-(\d+)$'; AdmiteForce = $true
+            Fijable = $false
         }
         [PSCustomObject]@{
             Clave = 'node'; Nombre = 'Node'; Script = 'Setup-NodeEnv.ps1'
             ParamVersion = 'NodeVersion'; ParamPaquetes = $null
             Carpeta = 'Node'; Patron = '^node-(\d+)$'; AdmiteForce = $true
+            Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'angular'; Nombre = 'Angular'; Script = 'Setup-AngularEnv.ps1'
             ParamVersion = 'AngularVersion'; ParamPaquetes = $null
             Carpeta = 'Angular'; Patron = '^angular-v(\d+)$'; AdmiteForce = $false
+            Fijable = $false
         }
         [PSCustomObject]@{
             Clave = 'git'; Nombre = 'Git'; Script = 'Setup-GitEnv.ps1'
             ParamVersion = 'GitVersion'; ParamPaquetes = $null
             Carpeta = 'Git'; Patron = '^git-(\d+\.\d+)$'; AdmiteForce = $true
+            Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'maven'; Nombre = 'Maven'; Script = 'Setup-MavenEnv.ps1'
             ParamVersion = 'MavenVersion'; ParamPaquetes = $null
             Carpeta = 'Maven'; Patron = '^maven-(\d+\.\d+)$'; AdmiteForce = $true
+            Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'gradle'; Nombre = 'Gradle'; Script = 'Setup-GradleEnv.ps1'
             ParamVersion = 'GradleVersion'; ParamPaquetes = $null
             Carpeta = 'Gradle'; Patron = '^gradle-(\d+\.\d+)$'; AdmiteForce = $true
+            Fijable = $true
         }
         [PSCustomObject]@{
             Clave = 'dotnet'; Nombre = '.NET SDK'; Script = 'Setup-DotnetEnv.ps1'
             ParamVersion = 'Channel'; ParamPaquetes = $null
             Carpeta = 'Dotnet'; Patron = '^dotnet-(\d+\.\d+)$'; AdmiteForce = $true
+            Fijable = $false
         }
         [PSCustomObject]@{
             Clave = 'vscode'; Nombre = 'VS Code'; Script = 'Setup-VSCodeEnv.ps1'
             ParamVersion = $null; ParamPaquetes = $null
             Carpeta = 'VSCode'; Patron = '^vscode-(\d+\.\d+)$'; AdmiteForce = $true
+            Fijable = $false
         }
     )
+}
+
+function Get-InstalledRuntimeVersion {
+    <#
+    .SYNOPSIS
+        La version EXACTA instalada de un runtime, no la linea de su carpeta.
+    .DESCRIPTION
+        Cada runtime la guarda en un sitio distinto, y hasta ahora esa logica
+        estaba repartida entre Doctor, Update-Env y los Start-*. Este es el sitio
+        designado para averiguarlo; lo demas deberia acabar leyendo de aqui.
+
+        Se prefiere leer un archivo a ejecutar el binario siempre que se pueda:
+        es mas rapido y no depende de que haya variables de entorno puestas.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][PSCustomObject]$Entrada,
+        [Parameter(Mandatory=$true)][string]$Linea
+    )
+
+    # El nombre de carpeta se compone aparte: un switch entre parentesis no es
+    # una expresion valida en PowerShell 5.1 y rompe el archivo entero al
+    # cargarlo.
+    $nombre = switch ($Entrada.Clave) {
+        'angular' { "angular-v$Linea" }
+        'java'    { "jdk-$Linea" }
+        'node'    { "node-$Linea" }
+        default   { "$($Entrada.Clave)-$Linea" }
+    }
+
+    $dir = Join-Path (Join-Path $WorkspaceRoot $Entrada.Carpeta) $nombre
+    if (-not (Test-Path -LiteralPath $dir)) { return $null }
+
+    switch ($Entrada.Clave) {
+        'python' {
+            $exe = Join-Path $dir "python.exe"
+            if (-not (Test-Path $exe)) { return $null }
+            $run = Invoke-NativeCommand -FilePath $exe -Arguments @('-V') -Quiet
+            if ($run.Output -match 'Python (\d+\.\d+\.\d+)') { return $Matches[1] }
+            return $null
+        }
+        'java' {
+            # El release exacto (jdk-25.0.4.1+1) lo deja Setup-JavaEnv en un
+            # marcador, porque el numero de build no sale de java -version.
+            $mk = Join-Path $dir ".assassinskipadm-release"
+            if (Test-Path $mk) { return (Get-Content $mk -Raw).Trim() }
+            return (Get-JdkVersionAt -JavaHome $dir)
+        }
+        'node' {
+            $exe = Join-Path $dir "node.exe"
+            if (-not (Test-Path $exe)) { return $null }
+            $run = Invoke-NativeCommand -FilePath $exe -Arguments @('--version') -Quiet
+            if ($run.Output -match 'v?(\d+\.\d+\.\d+)') { return $Matches[1] }
+            return $null
+        }
+        'angular' {
+            $pkg = Join-Path $dir "npm-global\node_modules\@angular\cli\package.json"
+            if (-not (Test-Path $pkg)) { return $null }
+            try { return (Get-Content $pkg -Raw | ConvertFrom-Json).version } catch { return $null }
+        }
+        'git' {
+            $exe = Join-Path $dir "cmd\git.exe"
+            if (-not (Test-Path $exe)) { return $null }
+            $run = Invoke-NativeCommand -FilePath $exe -Arguments @('--version') -Quiet
+            return (ConvertFrom-GitVersionOutput -Output $run.Output)
+        }
+        'maven' {
+            $jar = @(Get-ChildItem -Path (Join-Path $dir "lib\maven-core-*.jar") -ErrorAction SilentlyContinue)
+            if ($jar.Count -gt 0 -and $jar[0].Name -match 'maven-core-([\d.]+)\.jar') { return $Matches[1] }
+            return $null
+        }
+        'gradle' {
+            $jar = @(Get-ChildItem -Path (Join-Path $dir "lib\gradle-launcher-*.jar") -ErrorAction SilentlyContinue)
+            if ($jar.Count -gt 0 -and $jar[0].Name -match 'gradle-launcher-([\d.]+)\.jar') { return $Matches[1] }
+            return $null
+        }
+        'dotnet' {
+            $sdks = @(Get-ChildItem -LiteralPath (Join-Path $dir "sdk") -Directory -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Name -match '^\d+\.\d+\.\d+' })
+            if ($sdks.Count -gt 0) { return @($sdks | Sort-Object Name -Descending)[0].Name }
+            return $null
+        }
+        'vscode' {
+            $exe = Join-Path $dir "Code.exe"
+            if (-not (Test-Path $exe)) { return $null }
+            $v = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion
+            if ($v -match '(\d+\.\d+\.\d+)') { return $Matches[1] }
+            return $v
+        }
+    }
+    return $null
+}
+
+function Get-InstalledRuntimeSha256 {
+    <#
+        El SHA-256 del archivo con que se instalo, si el kit lo anoto. Hoy solo
+        lo deja Setup-PythonEnv; los demas verifican el checksum al descargar
+        pero no lo guardan. Devuelve $null cuando no consta, y quien llama debe
+        decirlo en vez de dar a entender que hay una garantia que no hay.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][PSCustomObject]$Entrada,
+        [Parameter(Mandatory=$true)][string]$Linea
+    )
+
+    if ($Entrada.Clave -ne 'python') { return $null }
+
+    $mk = Join-Path (Join-Path $WorkspaceRoot "Python\python-$Linea") ".assassinskipadm-sha256"
+    if (Test-Path -LiteralPath $mk) { return (Get-Content $mk -Raw).Trim() }
+    return $null
 }
 
 function Resolve-RuntimeFromPath {
@@ -2112,6 +2240,79 @@ function Read-DevEnvManifest {
             Nombre   = $e.Nombre
             Version  = $v
             Paquetes = $paquetes
+            Entrada  = $e
+        }
+    }
+
+    return [PSCustomObject]@{ Runtimes = $runtimes; Errores = $errores }
+}
+
+function Read-DevEnvLock {
+    <#
+    .SYNOPSIS
+        Valida un devenv.lock.json ya cargado y devuelve que instalar.
+    .DESCRIPTION
+        El lockfile es al devenv.json lo que un package-lock.json al package.json:
+        el manifiesto dice "Python 3.12", el lock dice "3.12.10". Sirve para que
+        dos maquinas monten lo MISMO y no dos parches distintos de la misma linea.
+
+        Cada entrada trae linea y exacta. Se usa la exacta solo si el Setup de
+        ese runtime la admite -lo dice Fijable en el catalogo-; si no, se cae a
+        la linea y se avisa, porque prometer un pin que no se puede cumplir es
+        peor que no tenerlo.
+    #>
+    param([AllowNull()]$Config)
+
+    $errores  = @()
+    $runtimes = @()
+
+    if (-not $Config) {
+        return [PSCustomObject]@{ Runtimes = @(); Errores = @('el lock esta vacio o no es JSON valido') }
+    }
+    if ($Config.version -and [int]$Config.version -gt 1) {
+        $errores += "el lock declara version $($Config.version) y este kit entiende hasta la 1"
+    }
+    if (-not $Config.runtimes) {
+        $errores += "el lock no tiene seccion 'runtimes'"
+        return [PSCustomObject]@{ Runtimes = @(); Errores = $errores }
+    }
+
+    $catalogo = Get-RuntimeCatalog
+    $pedidos  = @{}
+    foreach ($p in $Config.runtimes.PSObject.Properties) {
+        $clave = $p.Name.ToLowerInvariant()
+        $e = @($catalogo | Where-Object { $_.Clave -eq $clave })
+        if ($e.Count -eq 0) {
+            $errores += "runtime desconocido en el lock: '$($p.Name)'"
+            continue
+        }
+        $pedidos[$clave] = $p.Value
+    }
+
+    foreach ($e in $catalogo) {
+        if (-not $pedidos.ContainsKey($e.Clave)) { continue }
+        $v = $pedidos[$e.Clave]
+
+        $linea  = if ($v.linea)  { [string]$v.linea }  else { $null }
+        $exacta = if ($v.exacta) { [string]$v.exacta } else { $null }
+
+        if (-not $linea -and -not $exacta) {
+            $errores += "$($e.Clave): la entrada del lock no trae ni linea ni exacta"
+            continue
+        }
+
+        $usar = if ($e.Fijable -and $exacta) { $exacta } else { $linea }
+        if (-not $usar) { $usar = $exacta }
+
+        $runtimes += [PSCustomObject]@{
+            Clave    = $e.Clave
+            Nombre   = $e.Nombre
+            Version  = $usar
+            Exacta   = $exacta
+            Linea    = $linea
+            Fijado   = [bool]($e.Fijable -and $exacta)
+            Sha256   = if ($v.sha256) { [string]$v.sha256 } else { $null }
+            Paquetes = $null
             Entrada  = $e
         }
     }
