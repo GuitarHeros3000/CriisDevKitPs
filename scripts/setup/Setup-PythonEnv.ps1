@@ -50,7 +50,7 @@ $ShaMarker = ".criisdevkit-sha256"
 
 function Get-EmbedZipUrl {
     param([string]$FullVersion)
-    return "$PythonFtpUrl$FullVersion/python-$FullVersion-embed-amd64.zip"
+    return "$PythonFtpUrl$FullVersion/python-$FullVersion-embed-$(Get-ArchToken -Fuente python).zip"
 }
 
 function Resolve-PythonVersion {

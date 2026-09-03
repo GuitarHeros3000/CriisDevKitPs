@@ -64,7 +64,7 @@ function Get-NodeArchiveInfo {
     param([Parameter(Mandatory=$true)][string]$Version)
 
     $v = $Version.TrimStart('v')
-    $folder = "node-v$v-win-x64"
+    $folder = "node-v$v-win-$(Get-ArchToken -Fuente node)"
     $file = "$folder.zip"
 
     return [PSCustomObject]@{
@@ -79,7 +79,7 @@ $NodeIndexUrl = "https://nodejs.org/dist/index.json"
 
 function Get-NodeLtsReleases {
     <#
-        Ultima release de cada linea LTS de Node que tenga zip para win-x64.
+        Ultima release de cada linea LTS de Node con zip para esta arquitectura.
         El indice viene ordenado de mas nueva a mas vieja.
 
         Vive aqui y no en Setup-AngularEnv porque lo usan tres sitios: la
@@ -92,7 +92,7 @@ function Get-NodeLtsReleases {
     $result = @()
     foreach ($rel in $index) {
         if (-not $rel.lts -or $rel.lts -eq $false) { continue }
-        if ($rel.files -notcontains 'win-x64-zip') { continue }
+        if ($rel.files -notcontains "win-$(Get-ArchToken -Fuente node)-zip") { continue }
 
         $major = [int](($rel.version.TrimStart('v')).Split('.')[0])
         if ($seen.ContainsKey($major)) { continue }

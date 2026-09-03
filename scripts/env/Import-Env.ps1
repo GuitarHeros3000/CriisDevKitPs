@@ -213,7 +213,7 @@ try {
     foreach ($a in $angular) {
         Write-Log "Instalando Angular v$($a.version)..."
 
-        $nodeFolder = "node-v$($a.node)-win-x64"
+        $nodeFolder = "node-v$($a.node)-win-$(Get-ArchToken -Fuente node)"
         $nodePath = Join-Path $AngularRoot $nodeFolder
 
         if (Test-Path (Join-Path $nodePath "node.exe")) {

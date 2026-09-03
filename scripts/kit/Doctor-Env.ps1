@@ -266,7 +266,26 @@ function Test-Host {
 
     Write-Check "PowerShell" "$($PSVersionTable.PSVersion)" 'ok'
     Write-Check "Windows" "$([Environment]::OSVersion.Version)" 'info'
-    Write-Check "Arquitectura" "$env:PROCESSOR_ARCHITECTURE" 'info'
+    # La del SISTEMA, no la del proceso. En Windows on ARM un PowerShell x64
+    # emulado pone "AMD64" en PROCESSOR_ARCHITECTURE, y por ahi es por donde el
+    # kit se bajaria binarios x64 en una maquina ARM sin que nadie lo notara.
+    $arch = Get-KitArchitecture
+    if ($env:CRIISDEVKIT_ARCH) {
+        Write-Check "Arquitectura" "$arch (forzada con CRIISDEVKIT_ARCH)" 'warn'
+        Write-Detail "El kit se descargara binarios de $arch aunque la maquina sea otra cosa."
+    }
+    else {
+        Write-Check "Arquitectura" $arch 'info'
+    }
+
+    if ($arch -eq 'arm64') {
+        # Se dice aqui y no solo al instalar: quien mire este informe dentro de
+        # un mes tiene que poder saber que su Git no es nativo.
+        $noNativos = @(Get-RuntimeCatalog | Where-Object { -not (Test-ArchSoportada -Clave $_.Clave -Arch $arch).Soportada })
+        foreach ($e in $noNativos) {
+            Write-Detail "$($e.Nombre): $((Test-ArchSoportada -Clave $e.Clave -Arch $arch).Motivo)"
+        }
+    }
     Write-Check "Usuario" "$env:USERNAME" 'info'
 
     # ExecutionPolicy persistida. OJO: no se usa Get-ExecutionPolicy a secas
@@ -414,7 +433,7 @@ function Test-AngularInstall {
     }
 
     $nodes = @(Get-ChildItem $AngularRoot -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^node-v(.+)-win-x64$' })
+        Where-Object { $_.Name -match '^node-v(.+)-win-(?:x64|arm64)$' })
 
     if ($nodes.Count -eq 0) {
         Write-Check "Node.js" "ninguno en $AngularRoot" 'fail'
@@ -463,10 +482,10 @@ function Test-AngularInstall {
             # El Node con el que se instalo esta en el nombre de su carpeta; si
             # hay varias, se usa la unica que quede o se deja sin reparar.
             $nodeDirs = @(Get-ChildItem $AngularRoot -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match '^node-v(.+)-win-x64$' })
+                Where-Object { $_.Name -match '^node-v(.+)-win-(?:x64|arm64)$' })
             if ($nodeDirs.Count -eq 1) {
                 $nodePath = $nodeDirs[0].FullName
-                $nodeVer  = $nodeDirs[0].Name -replace '^node-v|-win-x64$', ''
+                $nodeVer  = $nodeDirs[0].Name -replace '^node-v|-win-(?:x64|arm64)$', ''
                 Add-Fix -Description "regenerar shell-v$num.bat de Angular" `
                         -Arguments @{ AngularPath = $v.FullName; NodePath = $nodePath; Version = $num; NodeVersion = $nodeVer } `
                         -Action {
@@ -1259,7 +1278,7 @@ function Test-InstalledSignatures {
     # aparte.
     if (Test-Path $AngularRoot) {
         foreach ($d in (Get-ChildItem $AngularRoot -Directory -ErrorAction SilentlyContinue)) {
-            if ($d.Name -notmatch '^node-v(.+)-win-x64$') { continue }
+            if ($d.Name -notmatch '^node-v(.+)-win-(?:x64|arm64)$') { continue }
             $exe = Join-Path $d.FullName "node.exe"
             if (-not (Test-Path -LiteralPath $exe)) { continue }
 

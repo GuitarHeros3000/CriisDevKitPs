@@ -81,6 +81,7 @@ CriisDevKitPs/
 │   ├── Common.ps1           Rutas base y carga de los demas (es el unico que
 │   │                        cargan los scripts; los otros salen de aqui)
 │   ├── Log.ps1              Registro en archivo y en consola
+│   ├── Arch.ps1             x64 o arm64, y como lo llama cada fuente
 │   ├── Proxy.ps1            Proxy corporativo y espejo interno
 │   ├── Download.ps1         Descargas, checksums, firmas, reintentos
 │   ├── Semver.ps1           Rangos de version de npm
@@ -117,6 +118,40 @@ CriisDevKitPs/
 Los dos en negrita son los que de verdad esquivan algo. El resto ya tenian un
 camino limpio; lo que aporta el kit ahi es colocarlos, resolverles las versiones,
 el PATH, los checksums y el proxy.
+
+### x64 y arm64
+
+Los portatiles corporativos ya llegan con Windows on ARM, asi que el kit detecta la
+arquitectura y **descarga el binario nativo**. No hay nada que configurar.
+
+| Runtime | arm64 |
+|---|---|
+| Java, Node, Angular, Python, .NET, VS Code | nativo |
+| Maven, Gradle | Java puro: el mismo zip vale para las dos |
+| **Git** | **no hay build arm64; se usa el x64 emulado** |
+
+Git for Windows no publica un PortableGit para arm64. En una maquina ARM se coge el
+x64 y Windows lo emula: funciona, y para Git -procesos cortos- no se nota. `Doctor`
+lo dice en vez de callarlo, porque quien mida rendimiento tiene derecho a saber cual
+de sus runtimes no es nativo.
+
+La arquitectura se detecta con `OSArchitecture` y **no** con `PROCESSOR_ARCHITECTURE`.
+Esa variable la lee el PROCESO, y en Windows on ARM un PowerShell x64 emulado responde
+`AMD64`: preguntando asi, el kit se bajaria binarios x64 en una maquina ARM y nadie
+sabria por que va lento.
+
+```powershell
+$env:CRIISDEVKIT_ARCH = 'arm64'    # forzarla
+```
+
+Sirve para dos cosas: probar las descargas de una arquitectura sin tener esa maquina
+delante, y bajarse los x64 a proposito en una ARM si algo fallara. `Doctor` avisa
+cuando esta forzada, para que nadie diagnostique a ciegas.
+
+**Cada fuente llama a las arquitecturas como le da la gana**, y equivocarse da un 404
+que no explica nada. Los nombres estan en un solo sitio (`lib\Arch.ps1`) y
+comprobados contra las APIs reales; los dos raros son `Adoptium: aarch64` (no
+`arm64`) y `python.org: amd64` (no `x64`).
 
 Los `.bat` de la raiz son la interfaz publica: siempre se ejecutan desde ahi.
 La logica vive en `scripts\`, y lo compartido en `lib\Common.ps1`.

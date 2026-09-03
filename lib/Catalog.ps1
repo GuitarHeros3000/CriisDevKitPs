@@ -214,8 +214,8 @@ function Get-BundleArchiveInfo {
             # El SDK tiene URL predecible. Se comprobo con dotnet-install
             # -DryRun, que imprime exactamente esta.
             return [PSCustomObject]@{
-                Url      = "https://builds.dotnet.microsoft.com/dotnet/Sdk/$Version/dotnet-sdk-$Version-win-x64.zip"
-                FileName = "dotnet-sdk-$Version-win-x64.zip"
+                Url      = "https://builds.dotnet.microsoft.com/dotnet/Sdk/$Version/dotnet-sdk-$Version-win-$(Get-ArchToken -Fuente dotnet).zip"
+                FileName = "dotnet-sdk-$Version-win-$(Get-ArchToken -Fuente dotnet).zip"
                 Sha256   = $null
             }
         }
@@ -223,8 +223,8 @@ function Get-BundleArchiveInfo {
             # La API de actualizacion solo da la ULTIMA, pero esta otra ruta
             # sirve cualquier version concreta y redirige al zip.
             return [PSCustomObject]@{
-                Url      = "https://update.code.visualstudio.com/$Version/win32-x64-archive/stable"
-                FileName = "VSCode-win32-x64-$Version.zip"
+                Url      = "https://update.code.visualstudio.com/$Version/win32-$(Get-ArchToken -Fuente vscode)-archive/stable"
+                FileName = "VSCode-win32-$(Get-ArchToken -Fuente vscode)-$Version.zip"
                 Sha256   = $null
             }
         }
@@ -750,7 +750,7 @@ $PythonFtpIndexUrl = "https://www.python.org/ftp/python/"
 function Get-PythonArchiveInfo {
     param([Parameter(Mandatory=$true)][string]$FullVersion)
 
-    $file = "python-$FullVersion-embed-amd64.zip"
+    $file = "python-$FullVersion-embed-$(Get-ArchToken -Fuente python).zip"
     return [PSCustomObject]@{
         FileName = $file
         Url      = "https://www.python.org/ftp/python/$FullVersion/$file"
@@ -845,7 +845,7 @@ function Get-JavaArchiveInfo {
     if (-not [string]::IsNullOrWhiteSpace($Release)) {
         $uri = "https://api.adoptium.net/v3/assets/release_name/eclipse/" +
                [Uri]::EscapeDataString($Release) +
-               "?architecture=x64&image_type=jdk&os=windows"
+               "?architecture=$(Get-ArchToken -Fuente adoptium)&image_type=jdk&os=windows"
 
         $r = Invoke-JsonApi -Uri $uri -TimeoutSec 120 -Quiet
         if (-not $r) { return $null }
@@ -866,7 +866,7 @@ function Get-JavaArchiveInfo {
     if ($Major -le 0) { return $null }
 
     $uri = "https://api.adoptium.net/v3/assets/latest/$Major/hotspot" +
-           "?architecture=x64&image_type=jdk&os=windows&vendor=eclipse"
+           "?architecture=$(Get-ArchToken -Fuente adoptium)&image_type=jdk&os=windows&vendor=eclipse"
 
     $assets = Invoke-JsonApi -Uri $uri -TimeoutSec 120 -Quiet
     if (-not $assets -or $assets.Count -eq 0) { return $null }

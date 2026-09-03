@@ -135,7 +135,7 @@ function Get-NodePortable {
     }
 
     Write-Log "Extrayendo..."
-    # El zip trae dentro una carpeta node-vX.Y.Z-win-x64, pero la instalacion se
+    # El zip trae dentro una carpeta node-vX.Y.Z-win-<arch>, pero la instalacion se
     # guarda como node-<mayor>. Es la misma convencion que python-3.12 y jdk-21:
     # una carpeta por linea, y -Force actualiza el patch DENTRO. Con el nombre
     # completo del zip, cada patch creaba una carpeta nueva y -Force instalaba al

@@ -130,7 +130,7 @@ function Get-AdoptiumBinary {
     }
 
     $uri = "$AdoptiumApi/assets/latest/$Major/hotspot" +
-           "?architecture=x64&image_type=jdk&os=windows&vendor=eclipse"
+           "?architecture=$(Get-ArchToken -Fuente adoptium)&image_type=jdk&os=windows&vendor=eclipse"
 
     Write-Log "Consultando Adoptium por el JDK $Major..."
     $assets = Invoke-JsonApi -Uri $uri -TimeoutSec 120

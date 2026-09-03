@@ -752,7 +752,7 @@ function Write-DotnetShell {
 # ajustes y extensiones en vez de en %APPDATA%. Sin registro y sin admin.
 # --------------------------------------------------------------------------
 
-$VSCodeUpdateApi = "https://update.code.visualstudio.com/api/update/win32-x64-archive/stable/latest"
+$VSCodeUpdateApi = "https://update.code.visualstudio.com/api/update/win32-$(Get-ArchToken -Fuente vscode)-archive/stable/latest"
 
 function Get-VSCodeRelease {
     <#
@@ -770,9 +770,9 @@ function Get-VSCodeRelease {
         $v = $Version.Trim()
         return [PSCustomObject]@{
             Version  = $v
-            Url      = "https://update.code.visualstudio.com/$v/win32-x64-archive/stable"
+            Url      = "https://update.code.visualstudio.com/$v/win32-$(Get-ArchToken -Fuente vscode)-archive/stable"
             Sha256   = $null
-            FileName = "VSCode-win32-x64-$v.zip"
+            FileName = "VSCode-win32-$(Get-ArchToken -Fuente vscode)-$v.zip"
         }
     }
 
@@ -785,7 +785,7 @@ function Get-VSCodeRelease {
         Version  = $version
         Url      = $api.url
         Sha256   = $api.sha256hash
-        FileName = "VSCode-win32-x64-$version.zip"
+        FileName = "VSCode-win32-$(Get-ArchToken -Fuente vscode)-$version.zip"
     }
 }
 

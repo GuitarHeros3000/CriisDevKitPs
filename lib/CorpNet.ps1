@@ -537,7 +537,7 @@ function Update-GeneratedShells {
     # El Angular del kit guarda su Node al lado, en la misma carpeta Angular\.
     $angularRoot = Join-Path $WorkspaceRoot "Angular"
     $nodeDirs = @(Get-ChildItem -LiteralPath $angularRoot -Directory -ErrorAction SilentlyContinue |
-                  Where-Object { $_.Name -match '^node-v(.+)-win-x64$' })
+                  Where-Object { $_.Name -match '^node-v(.+)-win-(?:x64|arm64)$' })
 
     foreach ($d in @(Get-ChildItem -LiteralPath $angularRoot -Directory -ErrorAction SilentlyContinue)) {
         # El -match va AQUI y no en un Where-Object: dentro de Where-Object,
@@ -552,7 +552,7 @@ function Update-GeneratedShells {
         if ($nodeDirs.Count -ne 1) { continue }
 
         Write-AngularShell -AngularPath $d.FullName -NodePath $nodeDirs[0].FullName `
-                           -Version $num -NodeVersion ($nodeDirs[0].Name -replace '^node-v|-win-x64$', '') | Out-Null
+                           -Version $num -NodeVersion ($nodeDirs[0].Name -replace '^node-v|-win-(?:x64|arm64)$', '') | Out-Null
         $resumen += "Shell rehecho: $($d.Name)"
     }
 

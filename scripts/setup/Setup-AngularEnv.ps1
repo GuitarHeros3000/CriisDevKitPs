@@ -426,7 +426,7 @@ if (-not $resolvedNode) { exit 1 }
 Test-NodeSatisfiesAngular -NodeVer $resolvedNode -Version $AngularVersion
 Write-Log ""
 
-$nodeFolderName = "node-v$resolvedNode-win-x64"
+$nodeFolderName = "node-v$resolvedNode-win-$(Get-ArchToken -Fuente node)"
 
 $EnvSetup = @{
     AngularRoot       = $AngularRoot

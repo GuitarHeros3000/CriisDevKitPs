@@ -88,7 +88,7 @@ function Get-ItemsDe {
             if ($dir.Name -match '^angular-v(\d+)$') {
                 $items += [PSCustomObject]@{ Kind = 'Angular'; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
             }
-            elseif ($dir.Name -match '^node-v(.+)-win-x64$') {
+            elseif ($dir.Name -match '^node-v(.+)-win-(?:x64|arm64)$') {
                 $items += [PSCustomObject]@{ Kind = 'Node'; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }
             }
             elseif ($dir.Name -eq 'npm-cache') {
@@ -102,7 +102,7 @@ function Get-ItemsDe {
         }
         elseif ($Runtime -eq 'Node') {
             # Solo la Node SUELTA, la de Node\ y con nombre node-<mayor>. La que
-            # vive dentro de Angular\ se llama node-vX.Y.Z-win-x64 y la gestiona
+            # vive dentro de Angular\ se llama node-vX.Y.Z-win-<arch> y la gestiona
             # -Runtime Angular: son instalaciones independientes.
             if ($dir.Name -match '^node-(\d+)$') {
                 $items += [PSCustomObject]@{ Kind = 'Node'; Version = $Matches[1]; Path = $dir.FullName; Name = $dir.Name }

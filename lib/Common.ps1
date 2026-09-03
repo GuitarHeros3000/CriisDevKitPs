@@ -78,6 +78,7 @@ catch {
 
 foreach ($modulo in @(
     'Log.ps1',        # registro en archivo y en consola
+    'Arch.ps1',       # x64 o arm64, y como lo llama cada fuente
     'Proxy.ps1',      # proxy corporativo y espejo interno
     'Download.ps1',   # descargas, checksums, firmas
     'Semver.ps1',     # rangos de version de npm

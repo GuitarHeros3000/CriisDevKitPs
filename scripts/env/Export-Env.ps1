@@ -80,7 +80,7 @@ function Get-AngularEntries {
         $node = $null
         if (Test-Path $shell) {
             foreach ($line in (Get-Content $shell)) {
-                if ($line -match 'node-v([\d\.]+)-win-x64') { $node = $Matches[1]; break }
+                if ($line -match 'node-v([\d\.]+)-win-(?:x64|arm64)') { $node = $Matches[1]; break }
             }
         }
 
