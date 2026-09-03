@@ -93,6 +93,46 @@ Describe "Referencias a comandos del kit" {
         $rotas.Count | Should Be 0
     }
 
+    # El tercer caso que se escapo, y el mas escurridizo: el nombre del comando
+    # se COMPONE. En "Instalalo con: .\Setup-$($Runtime)Env.bat" no hay ningun
+    # nombre literal que buscar, asi que las dos pruebas de arriba pasan de
+    # largo, y ese mensaje llevaba mandando a la raiz desde que los comandos se
+    # fueron a bin\setup\. Dos mensajes, en Use-Env y en Doctor.
+    #
+    # Aqui no se puede comprobar el archivo -depende de una variable- pero si la
+    # CARPETA, que es justo lo que se rompe al reorganizar. Y la carpeta vacia no
+    # vale: en la raiz solo quedaron Empezar y Menu, que nadie compone.
+    It "toda referencia a un comando compuesto apunta a una carpeta de comandos" {
+        $validas = @('bin\setup', 'bin\start', 'bin\env', 'bin\kit')
+
+        # Los shells que GENERA el kit -java21-shell.bat, node22-shell.bat- se
+        # nombran igual de compuestos, pero no son comandos del kit: viven en la
+        # carpeta del runtime, fuera de bin\, y ahi es donde tienen que estar.
+        # Se reconocen porque su primer tramo es una carpeta del catalogo.
+        $deRuntime = @((Get-RuntimeCatalog).Carpeta)
+        $rotas = @()
+
+        foreach ($f in (Get-ArchivosDelKit)) {
+            $texto = Get-TextoNormalizado -Texto (Get-Content -LiteralPath $f.FullName -Raw)
+            if (-not $texto) { continue }
+
+            foreach ($m in ([regex]::Matches($texto, '\.\\([^\s"'']*\$[^\s"'']*\.bat)'))) {
+                $ref = $m.Groups[1].Value
+                $carpeta = Split-Path -Parent $ref
+                if ($validas -contains $carpeta) { continue }
+
+                $primero = @($ref -split '\\')[0]
+                if ($deRuntime -contains $primero) { continue }
+
+                $donde = if ($carpeta) { "la carpeta '$carpeta'" } else { "la raiz" }
+                $rotas += "$($f.Name) -> .\$ref  (apunta a $donde)"
+            }
+        }
+
+        if ($rotas.Count -gt 0) { throw ("Comandos compuestos mal ubicados:`n  " + ($rotas -join "`n  ")) }
+        $rotas.Count | Should Be 0
+    }
+
     # El caso que se escapo: invocar por Join-Path en vez de por texto.
     It "toda invocacion por Join-Path apunta a un archivo que existe" {
         $rotas = @()

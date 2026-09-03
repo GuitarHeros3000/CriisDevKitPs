@@ -503,7 +503,7 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 $shellBat = Get-RuntimeShell -Rt $Runtime -Ver $Version
 if (-not (Test-Path -LiteralPath $shellBat)) {
     Write-Log "$Runtime v$Version no esta instalado (falta $shellBat)" "ERROR"
-    Write-Log "  Instalalo con:  .\Setup-$($Runtime)Env.bat" "WARN"
+    Write-Log "  Instalalo con:  .\bin\setup\Setup-$($Runtime)Env.bat" "WARN"
     exit 1
 }
 

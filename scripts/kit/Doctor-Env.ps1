@@ -1237,7 +1237,7 @@ function Test-InstalledSignatures {
                     # Firmado, valido, pero por OTRO. Es la senal que justifica
                     # toda esta seccion.
                     Write-Check $etiqueta "firmado por $($f.Firmante), NO por $($esperados -join ' ni ')" 'fail'
-                    Write-Detail "Reinstala desde la fuente oficial:  .\Setup-$($e.Carpeta)Env.bat -Force"
+                    Write-Detail "Reinstala desde la fuente oficial:  .\bin\setup\Setup-$($e.Carpeta)Env.bat -Force"
                 }
                 else {
                     Write-Check $etiqueta "firmado por $($f.Firmante)" 'ok'
