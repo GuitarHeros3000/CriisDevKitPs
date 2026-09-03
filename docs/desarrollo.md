@@ -26,7 +26,11 @@ porque la sintaxis de asercion cambio (`Should Be` paso a `Should -Be`).
 
 | Archivo | Que prueba |
 |---|---|
+| `Arch.Tests.ps1` | x64 y arm64: como llama cada fuente a cada arquitectura, y que ningun patron se quede en x64 |
 | `Catalog.Tests.ps1` | El catalogo, `devenv.json` y el lockfile, y que ningun comando se quede sin un runtime |
+| `CorpNet.Tests.ps1` | Lo que se escribe en la configuracion del usuario: el `settings.xml` de Maven, el `pip.ini`, el PEM de la CA |
+| `Doctor.Tests.ps1` | La tuberia de `-Json`: que cada detalle cuelgue de su comprobacion y el archivo tenga la forma prometida |
+| `Documentacion.Tests.ps1` | Que la documentacion no contradiga al codigo: version, opciones del menu, cuenta de comandos y enlaces |
 | `Download.Tests.ps1` | El diagnostico de un 407 y los cuatro estados de la firma Authenticode |
 | `InstallNoAdmin.Tests.ps1` | El ambito de una instalacion y si de verdad se evito el admin |
 | `Proxy.Tests.ps1` | Enmascarado de la clave, reglas de espejo y la URL del proxy |
@@ -34,7 +38,11 @@ porque la sintaxis de asercion cambio (`Should Be` paso a `Should -Be`).
 | `Runtimes.Tests.ps1` | Resolver la version de Git y de los JDK, y el shell por cada JDK |
 | `Semver.Tests.ps1` | `Test-SemverRange` contra los `engines` reales del CLI |
 | `Shells.Tests.ps1` | Que el `.bat` generado **funciona al ejecutarlo en cmd**, incluso con una ruta hostil, y que `Use-Env` recupera de el la ruta exacta |
+| `UpdateEnv.Tests.ps1` | Que el comando que `-Apply` ejecuta sea el mismo que se imprime |
 | `UserPath.Tests.ps1` | `Add-UserPathEntry` y `Remove-UserPathEntry` |
+
+Esta tabla la vigila una prueba: un archivo de pruebas que no aparezca aqui pone la
+suite en rojo. Se quedo desfasada dos veces antes de que la hubiera.
 
 Ninguna prueba toca el registro, el PATH real ni la red. Las del PATH sustituyen por
 mocks sus dos unicas puertas al sistema, `Get-RawUserPath` y `Save-UserPath`.

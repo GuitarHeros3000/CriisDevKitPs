@@ -167,6 +167,23 @@ Describe "La documentacion no contradice al codigo" {
         $sinEnlace.Count | Should Be 0
     }
 
+    # La tabla de "Que se cubre" se desfaso DOS veces: primero nombraba un
+    # Common.Tests.ps1 partido hacia meses, y despues se quedo sin los cinco
+    # archivos que llegaron detras. Una tabla de cobertura incompleta es peor
+    # que no tenerla: dice que algo no se prueba cuando si, o al reves.
+    It "la documentacion nombra todos los archivos de prueba" {
+        $archivos = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter *.Tests.ps1 -File)
+        $archivos.Count | Should BeGreaterThan 0
+
+        $docs = (Get-DocumentosDelKit | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+        $faltan = @($archivos | Where-Object { $docs -notmatch [regex]::Escape($_.Name) })
+
+        if ($faltan.Count -gt 0) {
+            throw ("La documentacion no nombra:`n  " + (($faltan | ForEach-Object { $_.Name }) -join "`n  "))
+        }
+        $faltan.Count | Should Be 0
+    }
+
     # "El kit tiene N comandos" aparece en el README y en la cabecera de
     # Menu.ps1, y las dos se quedaron en 21 mientras bin\ crecia hasta 29.
     It "el numero de comandos que se anuncia es el que hay" {

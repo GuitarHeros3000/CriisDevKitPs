@@ -37,6 +37,17 @@ En un equipo fuera del dominio esa identidad va vacia, SSPI corta el dialogo y .
 responde "no hay credenciales disponibles en el paquete de seguridad". El kit ya
 traduce ese error, pero nadie ha visto todavia el camino bueno.
 
+**Lo que ya no depende de esto:** `lib\CorpNet.ps1` estuvo sin una sola prueba
+durante mucho tiempo, siendo las 635 lineas que escriben dentro de la configuracion
+del usuario. Ahora tiene 30, y cubren 13 de sus 19 funciones: el `settings.xml` de
+Maven, el `pip.ini`, el PEM de la CA, y que las demas se nieguen a actuar cuando
+falta `keytool` o `git.exe` en vez de reventar.
+
+Las **seis que siguen sin cubrir** son justo las que necesitan esta maquina:
+`Get-TlsChainRoot`, `Find-CorpCa`, `Get-CorpNetStatus`, `Update-GeneratedShells`,
+`Sync-CorpNet` y `Sync-JdkCertificates`. Necesitan red que intercepte TLS, o un JDK
+con su `keytool`, o las dos cosas.
+
 ### 3. VS Code respetando `java.configuration.runtimes`
 
 `Use-VSCodeJava` escribe ese ajuste. Lo que falta es comprobar que **la extension de
