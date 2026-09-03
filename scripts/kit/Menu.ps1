@@ -3,7 +3,7 @@
 .SYNOPSIS
     Menu.ps1 - Menu de consola del kit.
 .DESCRIPTION
-    El kit tiene 29 comandos y nadie se los sabe de memoria. Esto los reune en
+    El kit tiene 30 comandos y nadie se los sabe de memoria. Esto los reune en
     una pantalla que ademas dice QUE HAY INSTALADO, que es la pregunta con la
     que uno llega.
 
@@ -79,6 +79,7 @@ function Get-Opciones {
     $ops += [PSCustomObject]@{ Num = 32; Grupo = 'MANTENER';  Texto = 'Informe para un ticket';    Bat = 'Doctor-Env.bat';      Clave = $null; Pide = 'report' }
     $ops += [PSCustomObject]@{ Num = 33; Grupo = 'MANTENER';  Texto = 'Ver actualizaciones';       Bat = 'Update-Env.bat';      Clave = $null; Pide = $null }
     $ops += [PSCustomObject]@{ Num = 34; Grupo = 'MANTENER';  Texto = 'Desinstalar';               Bat = 'Uninstall-Env.bat';   Clave = $null; Pide = 'desinstalar' }
+    $ops += [PSCustomObject]@{ Num = 35; Grupo = 'MANTENER';  Texto = 'Verificar lo instalado';    Bat = 'Verify-Env.bat';      Clave = $null; Pide = $null }
 
     # Empezar va aparte y con el 0: es lo primero que hace falta en un equipo
     # nuevo, y enterrado en ENTORNO no lo encontraba nadie. Ademas, meterlo con

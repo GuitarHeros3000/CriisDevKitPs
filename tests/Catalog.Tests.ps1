@@ -462,8 +462,38 @@ Describe "Cobertura del catalogo" {
         }
     }
 
+    # Get-RuntimeFolderName y Patron son las dos mitades de lo mismo: uno compone
+    # el nombre de la carpeta y el otro lo reconoce. Si dejan de encajar, el kit
+    # instala en un sitio y busca en otro.
+    #
+    # La linea de prueba se saca del propio Patron en vez de escribirla aqui, para
+    # que un runtime nuevo entre en la prueba por existir en el catalogo.
+    #
+    # Esta es la comprobacion que le faltaba a la copia del switch que habia en
+    # Doctor: componia "angular-20" cuando la carpeta es "angular-v20".
+    It "el nombre de carpeta que se compone es el que el catalogo reconoce" {
+        foreach ($e in $catalogo) {
+            $linea = if ($e.Patron -match '\\d\+\\\.\\d\+') { '9.9' } else { '9' }
+
+            $carpeta = Get-RuntimeFolderName -Entrada $e -Linea $linea
+            if ($carpeta -notmatch $e.Patron) {
+                throw "$($e.Nombre): compone '$carpeta' y su patron es '$($e.Patron)'"
+            }
+            $Matches[1] | Should Be $linea
+        }
+    }
+
+    It "la ruta de instalacion cuelga de la carpeta del runtime" {
+        foreach ($e in $catalogo) {
+            $linea = if ($e.Patron -match '\\d\+\\\.\\d\+') { '9.9' } else { '9' }
+            $ruta = Get-RuntimeInstallPath -Entrada $e -Linea $linea
+
+            $ruta | Should Be (Join-Path (Join-Path $WorkspaceRoot $e.Carpeta) (Get-RuntimeFolderName -Entrada $e -Linea $linea))
+        }
+    }
+
     # Los comandos que deben admitir -Runtime con TODOS los del catalogo.
-    $conValidateSet = @('Doctor-Env', 'Update-Env', 'Uninstall-Env', 'Use-Env', 'Export-Env', 'Import-Env')
+    $conValidateSet = @('Doctor-Env', 'Update-Env', 'Uninstall-Env', 'Use-Env', 'Export-Env', 'Import-Env', 'Verify-Env')
 
     foreach ($nombre in $conValidateSet) {
         It "$nombre admite los $($catalogo.Count) runtimes del catalogo" {

@@ -1211,12 +1211,9 @@ function Test-InstalledSignatures {
         if (-not $e.ExeFirma) { continue }
 
         foreach ($linea in (Get-InstalledRuntimeLines -Entrada $e)) {
-            $nombre = switch ($e.Clave) {
-                'java' { "jdk-$linea" }
-                'node' { "node-$linea" }
-                default { "$($e.Clave)-$linea" }
-            }
-            $exe = Join-Path (Join-Path (Join-Path $WorkspaceRoot $e.Carpeta) $nombre) $e.ExeFirma
+            # Por Get-RuntimeInstallPath: esta copia del switch no tenia el caso
+            # de Angular y componia "angular-20" en vez de "angular-v20".
+            $exe = Join-Path (Get-RuntimeInstallPath -Entrada $e -Linea $linea) $e.ExeFirma
             if (-not (Test-Path -LiteralPath $exe)) { continue }
 
             $mirados++

@@ -6,7 +6,7 @@ Configura entornos de desarrollo en laptops corporativas sin permisos de adminis
 
 ## Por donde entrar: `Menu.bat`
 
-El kit tiene 29 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
+El kit tiene 30 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
 pantalla que ademas responde la pregunta con la que uno llega: **que hay instalado**.
 
 ```
@@ -38,6 +38,7 @@ pantalla que ademas responde la pregunta con la que uno llega: **que hay instala
     32  Informe para un ticket
     33  Ver actualizaciones
     34  Desinstalar
+    35  Verificar lo instalado
 
    ENTORNO
     40  Reproducir un devenv.json
@@ -69,11 +70,11 @@ del trabajo, no la ventana**.
 CriisDevKitPs/
 ├── Empezar.bat               Empieza por aqui en un equipo nuevo
 ├── Menu.bat                  Todo lo que sabe hacer el kit
-├── bin/                      Los 29 comandos, agrupados igual que scripts/
+├── bin/                      Los 30 comandos, agrupados igual que scripts/
 │   ├── setup/                Setup-*.bat   instalar un runtime
 │   ├── start/                Start-*.bat   abrir su shell
 │   ├── env/                  Export, Import, Restore, Uninstall, Update,
-│   │                         Use-Env, Use-CorpCert, Use-VSCodeJava
+│   │                         Use-Env, Use-CorpCert, Use-VSCodeJava, Verify-Env
 │   └── kit/                  Doctor-Env, Install-NoAdmin, Run-Tests
 ├── lib/                     La libreria, un archivo por responsabilidad
 │   ├── Common.ps1           Rutas base y carga de los demas (es el unico que
@@ -466,6 +467,47 @@ $env:CRIISDEVKIT_NOPAUSE = "1"
 .\bin\kit\Doctor-Env.bat -SkipNetwork
 if ($LASTEXITCODE -ne 0) { "revisa el entorno antes de seguir" }
 ```
+
+## Verificar lo instalado
+
+`Doctor` mira la maquina entera y por encima. `Verify-Env` mira **un runtime y mas
+hondo**: si su firma sigue siendo la de siempre, si la instalacion esta completa, si
+lo que hay dentro es de la version que dice la carpeta, y si el shell y el PATH
+siguen en su sitio.
+
+```powershell
+.\bin\env\Verify-Env.bat                          todo lo instalado
+.\bin\env\Verify-Env.bat -Runtime Java            solo Java
+.\bin\env\Verify-Env.bat -Runtime Java -Version 21 solo esa linea
+```
+
+```
+  Java 21
+  ...\Java\jdk-21
+[ok]  version                 21.0.12.1+1
+[ok]  firma                   Eclipse Foundation
+      sha-256 al instalar     no consta
+        Se verifico al descargar, pero no se guardo: no hay contra que comparar.
+[ok]  shell                   java21-shell.bat
+[ok]  PATH de usuario         1 entrada(s)
+```
+
+Es de solo lectura: no descarga, no repara y no toca nada. Cuando encuentra algo,
+dice con que comando se arregla. Sale con **1 si hay algo grave**, para encadenarlo.
+
+### Lo que NO puede comprobar
+
+**El SHA-256 de los archivos instalados.** Los `Setup-*` verifican el checksum al
+descargar y despues **borran el archivo**, asi que no queda contra que comparar. La
+unica excepcion es Python, que si anota el suyo.
+
+Por eso se dice `no consta` en vez de callarlo: dar a entender una garantia que no
+existe es peor que no darla.
+
+Lo que si detecta un binario **cambiado despues de instalar** es la firma
+Authenticode, y esa si se comprueba. Es la diferencia entre "este archivo es el que
+descargue" (que ya no se puede saber) y "este archivo lo sigue firmando quien tiene
+que firmarlo" (que si).
 
 ## JAVA_HOME: el descuadre que no se ve
 

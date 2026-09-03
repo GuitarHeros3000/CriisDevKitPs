@@ -343,6 +343,43 @@ function Write-RuntimeShell {
     return $null
 }
 
+function Get-RuntimeFolderName {
+    <#
+        Como se llama la carpeta de una linea: 21 -> jdk-21, 3.12 -> python-3.12.
+
+        Este switch estaba copiado en tres sitios (aqui, en Doctor y en la
+        cabeza de cada comando que compone rutas), y las copias no coincidian:
+        la de Doctor no tenia el caso de Angular, asi que componia "angular-20"
+        en vez de "angular-v20". No llego a fallar porque Angular no tiene
+        binario firmable y esa rama nunca se ejecutaba, pero estaba puesta la
+        trampa para el siguiente que la usara.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][PSCustomObject]$Entrada,
+        [Parameter(Mandatory=$true)][string]$Linea
+    )
+
+    switch ($Entrada.Clave) {
+        'angular' { return "angular-v$Linea" }
+        'java'    { return "jdk-$Linea" }
+        'node'    { return "node-$Linea" }
+        default   { return "$($Entrada.Clave)-$Linea" }
+    }
+}
+
+function Get-RuntimeInstallPath {
+    <#
+        Donde vive una linea instalada. No comprueba que exista: eso lo decide
+        quien llama, que muchas veces pregunta justo para saberlo.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][PSCustomObject]$Entrada,
+        [Parameter(Mandatory=$true)][string]$Linea
+    )
+
+    return (Join-Path (Join-Path $WorkspaceRoot $Entrada.Carpeta) (Get-RuntimeFolderName -Entrada $Entrada -Linea $Linea))
+}
+
 function Get-InstalledRuntimeVersion {
     <#
     .SYNOPSIS
@@ -360,17 +397,7 @@ function Get-InstalledRuntimeVersion {
         [Parameter(Mandatory=$true)][string]$Linea
     )
 
-    # El nombre de carpeta se compone aparte: un switch entre parentesis no es
-    # una expresion valida en PowerShell 5.1 y rompe el archivo entero al
-    # cargarlo.
-    $nombre = switch ($Entrada.Clave) {
-        'angular' { "angular-v$Linea" }
-        'java'    { "jdk-$Linea" }
-        'node'    { "node-$Linea" }
-        default   { "$($Entrada.Clave)-$Linea" }
-    }
-
-    $dir = Join-Path (Join-Path $WorkspaceRoot $Entrada.Carpeta) $nombre
+    $dir = Get-RuntimeInstallPath -Entrada $Entrada -Linea $Linea
     if (-not (Test-Path -LiteralPath $dir)) { return $null }
 
     switch ($Entrada.Clave) {
