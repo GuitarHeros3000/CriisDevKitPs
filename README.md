@@ -18,6 +18,7 @@ lo encontraba nadie -y se desfasaba sin que se notara.
 | [Llevarse el entorno](docs/portabilidad.md) | El bundle para una maquina sin internet, y reproducir un entorno con `devenv.json` |
 | [Install-NoAdmin](docs/install-noadmin.md) | Instalar software de terceros en modo portable |
 | [Trabajar en el kit](docs/desarrollo.md) | Las pruebas, el CI y como anadir un runtime nuevo |
+| [Pendientes y decisiones](docs/pendientes.md) | Lo que falta comprobar en otra maquina, y lo que se decidio NO hacer |
 
 ## Por donde entrar: `Menu.bat`
 
