@@ -197,3 +197,76 @@ Describe "Get-ShellEnvironment con shells del formato antiguo" {
         Get-ShellEnvironment -ShellBat (Join-Path $env:TEMP "no-existe-jamas.bat") | Should BeNullOrEmpty
     }
 }
+
+Describe "Escapado de codigo generado" {
+
+    Context "ConvertTo-PsLiteral (comillas simples de PowerShell)" {
+
+        # Sintoma: un usuario llamado O'Brien producia un activate.ps1 roto, y
+        # como lo carga el perfil, TODAS las terminales nuevas fallaban al abrir.
+        It "duplica la comilla simple" {
+            ConvertTo-PsLiteral "C:\Users\O'Brien" | Should Be "C:\Users\O''Brien"
+        }
+
+        It "deja intacto lo que no lleva comilla" {
+            ConvertTo-PsLiteral 'C:\Users\crisr' | Should Be 'C:\Users\crisr'
+        }
+
+        # Lo escapado tiene que volver a valer EXACTAMENTE lo de partida al
+        # evaluarlo como literal de PowerShell.
+        It "el literal resultante vale lo mismo que la entrada" -TestCases @(
+            @{ Ruta = "C:\Users\O'Brien\activate.ps1" }
+            @{ Ruta = 'C:\Users\dev$user\activate.ps1' }
+            @{ Ruta = 'C:\Users\a`b\activate.ps1' }
+        ) {
+            param($Ruta)
+            $codigo = "'{0}'" -f (ConvertTo-PsLiteral $Ruta)
+            (& ([scriptblock]::Create($codigo))) | Should Be $Ruta
+        }
+    }
+
+    Context "ConvertTo-CmdLiteral (dentro de set `"VAR=...`")" {
+
+        It "duplica el porcentaje" {
+            ConvertTo-CmdLiteral 'C:\datos 100%' | Should Be 'C:\datos 100%%'
+        }
+
+        # Las comillas del set ya cubren estos, asi que NO deben tocarse: si se
+        # escaparan, el valor final llevaria circunflejos de mas.
+        It "no toca & ^ ni los espacios, que ya cubren las comillas" {
+            ConvertTo-CmdLiteral 'C:\Marks & Spencer ^dev' | Should Be 'C:\Marks & Spencer ^dev'
+        }
+    }
+
+    Context "ConvertFrom-CmdLiteral (al releer un shell generado)" {
+
+        # Sin esto, una ruta con porcentaje se reescapaba en cada pasada de
+        # Use-Env: %% -> %%%% -> %%%%%%%%
+        It "deshace exactamente lo que hizo ConvertTo-CmdLiteral" -TestCases @(
+            @{ Ruta = 'C:\datos 100%' }
+            @{ Ruta = 'C:\Marks & Spencer 100% ^dev' }
+            @{ Ruta = 'C:\normal\sin\nada' }
+        ) {
+            param($Ruta)
+            ConvertFrom-CmdLiteral (ConvertTo-CmdLiteral $Ruta) | Should Be $Ruta
+        }
+    }
+
+    Context "ConvertTo-CmdEchoText (linea echo, sin comillas posibles)" {
+
+        It "escapa los especiales de cmd" {
+            ConvertTo-CmdEchoText 'Marks & Spencer' | Should Be 'Marks ^& Spencer'
+            ConvertTo-CmdEchoText 'a|b' | Should Be 'a^|b'
+            ConvertTo-CmdEchoText 'a<b>c' | Should Be 'a^<b^>c'
+            ConvertTo-CmdEchoText '100%' | Should Be '100%%'
+        }
+
+        # El circunflejo va PRIMERO por ser el propio caracter de escape. Si se
+        # hiciera al final, escaparia los que se acaban de anadir y saldria
+        # "Marks ^^& Spencer", que imprime un circunflejo de mas.
+        It "escapa el circunflejo antes que el resto" {
+            ConvertTo-CmdEchoText '^' | Should Be '^^'
+            ConvertTo-CmdEchoText '^&' | Should Be '^^^&'
+        }
+    }
+}

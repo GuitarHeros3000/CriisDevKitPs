@@ -146,3 +146,14 @@ Describe "Remove-UserPathEntry" {
         $script:guardado | Should Be '%USERPROFILE%\bin'
     }
 }
+
+Describe "Split-UserPath" {
+
+    It "descarta entradas vacias y solo-espacios" {
+        (Split-UserPath -Value 'C:\a;;C:\b;   ;C:\c').Count | Should Be 3
+    }
+
+    It "devuelve coleccion vacia para un PATH vacio" {
+        (Split-UserPath -Value '').Count | Should Be 0
+    }
+}

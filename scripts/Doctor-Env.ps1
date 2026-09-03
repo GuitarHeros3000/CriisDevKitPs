@@ -1632,6 +1632,17 @@ function Test-KitIntegrity {
     # usuario aunque los .ps1 esten todos.
     $expected = @(
         "lib\Common.ps1",
+        "lib\Log.ps1",
+        "lib\Proxy.ps1",
+        "lib\Download.ps1",
+        "lib\Semver.ps1",
+        "lib\Shells.ps1",
+        "lib\Tools.ps1",
+        "lib\Runtimes.ps1",
+        "lib\CorpNet.ps1",
+        "lib\VSCode.ps1",
+        "lib\Catalog.ps1",
+        "lib\UserPath.ps1",
         "scripts\Setup-AngularEnv.ps1",
         "scripts\Setup-PythonEnv.ps1",
         "scripts\Start-AngularEnv.ps1",
@@ -1696,7 +1707,6 @@ function Test-KitIntegrity {
         "devenv.json.ejemplo",
         "Menu.bat",
         "scripts\Menu.ps1",
-        "tests\Common.Tests.ps1",
         "tests\Shells.Tests.ps1",
         "tests\UserPath.Tests.ps1",
         "tests\InstallNoAdmin.Tests.ps1"

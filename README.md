@@ -49,8 +49,20 @@ del trabajo, no la ventana**.
 ```
 AssassinSkipAdmPy/
 ├── *.bat                    Puntos de entrada (doble clic o linea de comandos)
-├── lib/
-│   └── Common.ps1           Descargas, proxy, checksums, semver, PATH, log
+├── lib/                     La libreria, un archivo por responsabilidad
+│   ├── Common.ps1           Rutas base y carga de los demas (es el unico que
+│   │                        cargan los scripts; los otros salen de aqui)
+│   ├── Log.ps1              Registro en archivo y en consola
+│   ├── Proxy.ps1            Proxy corporativo y espejo interno
+│   ├── Download.ps1         Descargas, checksums, firmas, reintentos
+│   ├── Semver.ps1           Rangos de version de npm
+│   ├── Shells.ps1           Los .bat que genera el kit
+│   ├── Tools.ps1            7z, innoextract, Node
+│   ├── Runtimes.ps1         Git, Maven, Gradle, .NET, VS Code
+│   ├── CorpNet.ps1          La CA de la empresa y el proxy por herramienta
+│   ├── VSCode.ps1           Ajustes, extensiones y los JDK que conoce
+│   ├── Catalog.ps1          Catalogo, devenv.json y lockfile
+│   └── UserPath.ps1         PATH de usuario
 ├── sources.json.ejemplo         Espejo interno (opcional)
 ├── devenv.json.ejemplo          Manifiesto de entorno (para tus proyectos)
 ├── scripts/
