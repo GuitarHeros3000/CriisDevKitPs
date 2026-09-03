@@ -1,5 +1,7 @@
 # Dev Environment (Sin Permisos de Administrador)
 
+[![Pruebas](https://github.com/GuitarHeros3000/CriisDevKitPs/actions/workflows/pruebas.yml/badge.svg)](https://github.com/GuitarHeros3000/CriisDevKitPs/actions/workflows/pruebas.yml)
+
 Configura entornos de desarrollo en laptops corporativas sin permisos de administrador.
 
 ## Por donde entrar: `Menu.bat`
@@ -1674,12 +1676,41 @@ porque la sintaxis de asercion cambio (`Should Be` paso a `Should -Be`).
 
 | Archivo | Que prueba |
 |---|---|
-| `Common.Tests.ps1` | Funciones puras: enmascarado del proxy, los cuatro escapados, `Test-SemverRange` contra los `engines` reales del CLI, semver, URLs |
-| `Shells.Tests.ps1` | Los tres shells generados: que el `.bat` **funciona al ejecutarlo en cmd** y que `Use-Env` recupera de el la ruta exacta |
+| `Catalog.Tests.ps1` | El catalogo, `devenv.json` y el lockfile, y que ningun comando se quede sin un runtime |
+| `Download.Tests.ps1` | El diagnostico de un 407 y los cuatro estados de la firma Authenticode |
+| `InstallNoAdmin.Tests.ps1` | El ambito de una instalacion y si de verdad se evito el admin |
+| `Proxy.Tests.ps1` | Enmascarado de la clave, reglas de espejo y la URL del proxy |
+| `Referencias.Tests.ps1` | Que ningun archivo mencione un comando que no esta donde dice |
+| `Runtimes.Tests.ps1` | Resolver la version de Git y de los JDK, y el shell por cada JDK |
+| `Semver.Tests.ps1` | `Test-SemverRange` contra los `engines` reales del CLI |
+| `Shells.Tests.ps1` | Que el `.bat` generado **funciona al ejecutarlo en cmd**, incluso con una ruta hostil, y que `Use-Env` recupera de el la ruta exacta |
 | `UserPath.Tests.ps1` | `Add-UserPathEntry` y `Remove-UserPathEntry` |
 
 Ninguna prueba toca el registro, el PATH real ni la red. Las del PATH sustituyen por
 mocks sus dos unicas puertas al sistema, `Get-RawUserPath` y `Save-UserPath`.
+
+### En cada push: un Windows que nadie ha tocado
+
+`.github\workflows\pruebas.yml` corre la suite en `windows-latest` en cada push y en
+cada pull request. Lo que aporta no es ejecutar las pruebas -eso ya lo hace
+`Run-Tests.bat`- sino **donde** las ejecuta.
+
+La maquina de desarrollo tiene Node, Java, Python y npm instalados de antes. Una
+prueba que dependiera sin querer de algo de ahi pasaria siempre en local y fallaria
+en cuanto alguien clonara el repositorio; el runner es esa segunda maquina, y no hay
+otra forma de tenerla.
+
+De paso comprueba la premisa de la que cuelga todo lo anterior: **que Pester 3.x
+venga de fabrica**. Si una imagen de Windows deja de traerlo, el job lo dice con un
+aviso en vez de instalarlo sin mas y seguir como si nada, porque eso cambiaria el
+argumento de la seccion anterior.
+
+Y antes de las pruebas pasa los 52 `.ps1` por el analizador de sintaxis. Las pruebas
+cargan `lib\` entera, pero de `scripts\` solo leen el texto de unos cuantos: un error
+de sintaxis en un comando poco visitado no lo notaba nadie hasta ejecutarlo.
+
+Lo que el CI **no** da: una prueba que no comprueba nada pasa en verde tambien alli.
+Eso solo lo caza romperla a proposito y ver que se pone en rojo.
 
 ### El caso que justifica todo esto
 

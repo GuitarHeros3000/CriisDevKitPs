@@ -1,0 +1,88 @@
+# Ejecuta la suite del kit en un Windows que nadie ha tocado.
+#
+# El valor no es "correr las pruebas" -eso ya lo hace Run-Tests.bat- sino DONDE
+# las corre. La maquina de desarrollo tiene Node, Java, Python y npm instalados
+# de antes, asi que una prueba que dependiera sin querer de algo de ahi pasaria
+# siempre en local y fallaria en cuanto alguien clonara el repositorio. Este
+# runner es esa segunda maquina.
+#
+# Y de paso comprueba la premisa en la que se apoya Run-Tests.ps1: que Pester 3.x
+# viene de fabrica con Windows, que es lo que permite no depender de PSGallery.
+
+name: Pruebas
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    name: Pester en un Windows limpio
+    runs-on: windows-latest
+
+    env:
+      # Los .bat del kit hacen pause al terminar. Sin esto el job se queda
+      # esperando una tecla que aqui no va a pulsar nadie, hasta agotar el
+      # tiempo limite.
+      CRIISDEVKIT_NOPAUSE: "1"
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Pester 3.x, el que trae Windows
+        shell: powershell
+        run: |
+          $todas = @(Get-Module -ListAvailable -Name Pester)
+          Write-Host "Pester en la imagen: $(($todas | ForEach-Object { $_.Version }) -join ', ')"
+
+          if (@($todas | Where-Object { $_.Version.Major -eq 3 }).Count -gt 0) {
+            Write-Host "Pester 3.x esta de fabrica: la premisa del kit se sostiene."
+            exit 0
+          }
+
+          # Si esto salta, la decision documentada en Run-Tests.ps1 -usar el
+          # Pester que viene con Windows para no tener que salir a PSGallery,
+          # que es justo lo que bloquea el proxy corporativo- ha dejado de ser
+          # cierta, y hay que enterarse. Se instala igualmente para que la suite
+          # corra, pero con el aviso a la vista.
+          Write-Host "::warning::Esta imagen de Windows ya no trae Pester 3.x. El kit cuenta con que venga de fabrica: revisar la nota de Run-Tests.ps1."
+          Install-Module Pester -RequiredVersion 3.4.0 -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Todos los .ps1 compilan
+        shell: powershell
+        run: |
+          # Las pruebas cargan lib\ entera, pero de scripts\ solo leen el TEXTO
+          # de unos cuantos. Un error de sintaxis en, por ejemplo, Export-Env.ps1
+          # no lo nota nadie hasta que alguien ejecuta ese comando. Esto lo pasa
+          # todo por el analizador, que es barato y no ejecuta nada.
+          $rotos = @()
+
+          foreach ($f in (Get-ChildItem -Path lib, scripts, tests -Filter *.ps1 -File -Recurse)) {
+            $errores = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errores)
+            if ($errores) {
+              $rel = $f.FullName.Substring($PWD.Path.Length + 1)
+              foreach ($e in $errores) {
+                Write-Host "::error file=$rel,line=$($e.Extent.StartLineNumber)::$($e.Message)"
+              }
+              $rotos += $rel
+            }
+          }
+
+          if ($rotos.Count -gt 0) {
+            Write-Host "No compilan: $($rotos -join ', ')"
+            exit 1
+          }
+          Write-Host "Sintaxis correcta en los $((Get-ChildItem -Path lib, scripts, tests -Filter *.ps1 -File -Recurse).Count) archivos."
+
+      - name: Suite del kit
+        shell: powershell
+        # Por el .bat y no por el .ps1: es la interfaz publica del kit, y asi se
+        # comprueba tambien que el comando arranca y devuelve su codigo de salida.
+        run: .\bin\kit\Run-Tests.bat
