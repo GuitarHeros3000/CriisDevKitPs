@@ -40,7 +40,7 @@ $versions = @(Get-JavaVersions | Sort-Object { [int]$_.Version } -Descending)
 if ($versions.Count -eq 0) {
     Write-Host "No hay versiones instaladas." -ForegroundColor Red
     Write-Host ""
-    Write-Host "Ejecuta: .\Setup-JavaEnv.bat -JavaVersion 21" -ForegroundColor White
+    Write-Host "Ejecuta: .\bin\Setup-JavaEnv.bat -JavaVersion 21" -ForegroundColor White
     Write-Host ""
     exit 1
 }

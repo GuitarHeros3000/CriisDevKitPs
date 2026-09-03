@@ -100,7 +100,7 @@ function Get-NodePortable {
         elseif ($instalada) {
             Write-Log "Ya hay Node $instalada instalado en $FolderName" "WARN"
             Write-Log "  Disponible: $($Archive.Version)" "WARN"
-            Write-Log "  Para actualizarlo:  .\Setup-NodeEnv.bat -NodeVersion $($Archive.Version) -Force" "WARN"
+            Write-Log "  Para actualizarlo:  .\bin\Setup-NodeEnv.bat -NodeVersion $($Archive.Version) -Force" "WARN"
             return $nodePath
         }
         else {
@@ -232,5 +232,5 @@ Write-Host "Node v$version agregado al PATH." -ForegroundColor Green
 Write-Host ""
 Write-Host "Para comenzar:" -ForegroundColor Yellow
 Write-Host "  Usa el shell: ..\Node\$FolderName\node$major-shell.bat" -ForegroundColor White
-Write-Host "  Comprueba con: .\Doctor-Env.bat" -ForegroundColor Gray
+Write-Host "  Comprueba con: .\bin\Doctor-Env.bat" -ForegroundColor Gray
 Write-Host ""

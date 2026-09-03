@@ -92,7 +92,7 @@ function Get-GradlePortable {
         elseif ($instalada) {
             Write-Log "Ya hay Gradle $instalada instalado en $FolderName" "WARN"
             Write-Log "  Disponible: $($Release.Version)" "WARN"
-            Write-Log "  Para actualizarlo:  .\Setup-GradleEnv.bat -GradleVersion $($Release.Version) -Force" "WARN"
+            Write-Log "  Para actualizarlo:  .\bin\Setup-GradleEnv.bat -GradleVersion $($Release.Version) -Force" "WARN"
             return $gradlePath
         }
         else {
@@ -154,7 +154,7 @@ $release = Get-GradleRelease -Version $GradleVersion
 if (-not $release) {
     Write-Log "No se pudo determinar que Gradle instalar." "ERROR"
     Write-Log "  No se pudo leer $GradleVersionApi. Reintenta, o indica la version:" "WARN"
-    Write-Log "    .\Setup-GradleEnv.bat -GradleVersion 9.7.1" "WARN"
+    Write-Log "    .\bin\Setup-GradleEnv.bat -GradleVersion 9.7.1" "WARN"
     exit 1
 }
 
@@ -168,13 +168,13 @@ if ($JavaVersion -and -not $javaHome) {
     $hay = @(Get-KitJdkLines)
     Write-Log "El kit no tiene instalado el JDK $JavaVersion." "ERROR"
     Write-Log "  Instalado: $(if ($hay.Count) { $hay -join ', ' } else { '(ninguno)' })" "WARN"
-    Write-Log "  Instalalo con:  .\Setup-JavaEnv.bat -JavaVersion $JavaVersion" "WARN"
+    Write-Log "  Instalalo con:  .\bin\Setup-JavaEnv.bat -JavaVersion $JavaVersion" "WARN"
     exit 1
 }
 
 Write-Log "Carpeta destino: $GradleRoot" "INFO"
 if ($javaHome) { Write-Log "JDK del kit:     $javaHome" "INFO" }
-else           { Write-Log "Sin JDK del kit: instala uno con .\Setup-JavaEnv.bat" "WARN" }
+else           { Write-Log "Sin JDK del kit: instala uno con .\bin\Setup-JavaEnv.bat" "WARN" }
 Write-Log ""
 
 if ($WhatIf) {
@@ -243,11 +243,11 @@ Write-Host "Gradle $($release.Version) agregado al PATH." -ForegroundColor Green
 if (-not $javaHome) {
     Write-Host ""
     Write-Host "Gradle NO arrancara sin un JDK. Instala uno con:" -ForegroundColor Yellow
-    Write-Host "  .\Setup-JavaEnv.bat" -ForegroundColor White
+    Write-Host "  .\bin\Setup-JavaEnv.bat" -ForegroundColor White
     Write-Host "y vuelve a ejecutar este comando para que el shell lo recoja." -ForegroundColor Gray
 }
 Write-Host ""
 Write-Host "Para comenzar:" -ForegroundColor Yellow
 Write-Host "  Usa el shell: ..\Gradle\$FolderName\$shellName" -ForegroundColor White
-Write-Host "  Comprueba con: .\Doctor-Env.bat" -ForegroundColor Gray
+Write-Host "  Comprueba con: .\bin\Doctor-Env.bat" -ForegroundColor Gray
 Write-Host ""

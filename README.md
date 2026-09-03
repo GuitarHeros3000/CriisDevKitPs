@@ -48,7 +48,9 @@ del trabajo, no la ventana**.
 
 ```
 AssassinSkipAdmPy/
-├── *.bat                    Puntos de entrada (doble clic o linea de comandos)
+├── Empezar.bat               Empieza por aqui en un equipo nuevo
+├── Menu.bat                  Todo lo que sabe hacer el kit
+├── bin/                      Los 29 comandos (Setup-*, Start-*, Doctor, ...)
 ├── lib/                     La libreria, un archivo por responsabilidad
 │   ├── Common.ps1           Rutas base y carga de los demas (es el unico que
 │   │                        cargan los scripts; los otros salen de aqui)
@@ -150,7 +152,7 @@ Todos los `Setup-*Env` aceptan `-WhatIf`. Resuelven la version por red (solo lec
 te dicen exactamente que pasaria, **sin tocar nada**:
 
 ```powershell
-.\Setup-JavaEnv.bat -JavaVersion 21 -WhatIf
+.\bin\Setup-JavaEnv.bat -JavaVersion 21 -WhatIf
 ```
 ```
 Se va a instalar:
@@ -175,9 +177,9 @@ El flujo depende de si en esa maquina ya hay algo instalado con permisos de
 administrador. `Doctor` te lo dice, asi que el orden es siempre el mismo:
 
 ```
-1. .\Doctor-Env.bat                          Ver como esta la maquina
-2. .\Setup-PythonEnv.bat -PythonVersion 3.12 Instalar lo que necesites
-3. .\Doctor-Env.bat                          Comprobar quien responde
+1. .\bin\Doctor-Env.bat                          Ver como esta la maquina
+2. .\bin\Setup-PythonEnv.bat -PythonVersion 3.12 Instalar lo que necesites
+3. .\bin\Doctor-Env.bat                          Comprobar quien responde
 ```
 
 En el paso 3, mira la seccion **Que version responde**:
@@ -204,8 +206,8 @@ Ahi el PATH de maquina va por delante y tapa al del kit. Dos salidas:
 ### Desinstalar
 
 ```
-1. .\Use-Env.bat -Off                        Si lo habias activado
-2. .\Uninstall-Env.bat -Runtime Python -All  Retira carpetas y limpia el PATH
+1. .\bin\Use-Env.bat -Off                        Si lo habias activado
+2. .\bin\Uninstall-Env.bat -Runtime Python -All  Retira carpetas y limpia el PATH
 ```
 
 ## Llevarlo a una maquina sin internet
@@ -215,8 +217,8 @@ El kit depende de seis dominios: `nodejs.org`, `registry.npmjs.org`, `python.org
 que bloqueen **uno** para que ese runtime sea inalcanzable.
 
 ```powershell
-.\Export-Env.bat -Output D:\usb\entorno.zip     En la maquina CON internet
-.\Import-Env.bat -Path D:\usb\entorno.zip       En la maquina SIN internet
+.\bin\Export-Env.bat -Output D:\usb\entorno.zip     En la maquina CON internet
+.\bin\Import-Env.bat -Path D:\usb\entorno.zip       En la maquina SIN internet
 ```
 
 ### Que lleva el bundle
@@ -325,8 +327,8 @@ Reglas que cumple:
 ## Que hay para actualizar
 
 ```powershell
-.\Update-Env.bat                 Todo lo instalado
-.\Update-Env.bat -Runtime Java   Solo uno
+.\bin\Update-Env.bat                 Todo lo instalado
+.\bin\Update-Env.bat -Runtime Java   Solo uno
 ```
 
 ```
@@ -338,7 +340,7 @@ Reglas que cumple:
   Node 22 (de Angular)  22.23.2         22.23.2         al dia
 
 Para actualizar:
-  Node 22 (suelto)   .\Setup-NodeEnv.bat -NodeVersion 22.23.2 -Force
+  Node 22 (suelto)   .\bin\Setup-NodeEnv.bat -NodeVersion 22.23.2 -Force
 ```
 
 **No instala nada nunca.** Como `Doctor`, solo lee: te da el comando exacto y decides
@@ -352,10 +354,10 @@ instalaciones independientes: la de Angular la elige su CLI y no se toca a mano.
 ## Diagnostico
 
 ```powershell
-.\Doctor-Env.bat              Diagnostico completo (solo lee, no toca nada)
-.\Doctor-Env.bat -SkipNetwork Sin pruebas de conectividad
-.\Doctor-Env.bat -Fix         Repara lo que se pueda arreglar en local
-.\Doctor-Env.bat -Report      Ademas, guarda un informe para adjuntar a un ticket
+.\bin\Doctor-Env.bat              Diagnostico completo (solo lee, no toca nada)
+.\bin\Doctor-Env.bat -SkipNetwork Sin pruebas de conectividad
+.\bin\Doctor-Env.bat -Fix         Repara lo que se pueda arreglar en local
+.\bin\Doctor-Env.bat -Report      Ademas, guarda un informe para adjuntar a un ticket
 ```
 
 ### -Report
@@ -364,8 +366,8 @@ Guarda el diagnostico en un markdown listo para mandar a IT, con el equipo, el
 usuario, la build de Windows, la version de PowerShell y la del kit:
 
 ```powershell
-.\Doctor-Env.bat -Report                              a %LOCALAPPDATA%\AssassinSkipAdm\informes
-.\Doctor-Env.bat -Report -ReportPath D:\ticket.md     a donde tu digas
+.\bin\Doctor-Env.bat -Report                              a %LOCALAPPDATA%\AssassinSkipAdm\informes
+.\bin\Doctor-Env.bat -Report -ReportPath D:\ticket.md     a donde tu digas
 ```
 
 **La clave del proxy va enmascarada** (`usuario:***@servidor`), asi que el archivo se
@@ -407,7 +409,7 @@ un `pause` (para que la ventana no se cierre al hacer doble clic), define
 
 ```powershell
 $env:ASSASSINSKIPADM_NOPAUSE = "1"
-.\Doctor-Env.bat -SkipNetwork
+.\bin\Doctor-Env.bat -SkipNetwork
 if ($LASTEXITCODE -ne 0) { "revisa el entorno antes de seguir" }
 ```
 
@@ -422,7 +424,7 @@ respondia **24.0.2** y `JAVA_HOME` apuntaba a un **`jdk1.8.0_202` de 2019**, asi
 que todo se compilaba contra Java 8.
 
 Alinearlo **no necesita admin**: el `JAVA_HOME` de usuario le gana al de maquina
-(comprobado). Lo hace `.\Setup-JavaEnv.bat -SetJavaHome`.
+(comprobado). Lo hace `.\bin\Setup-JavaEnv.bat -SetJavaHome`.
 
 > Cambia con que JDK compilan **todos** tus proyectos. Si algo corporativo
 > depende de un Java antiguo, se entera.
@@ -430,12 +432,12 @@ Alinearlo **no necesita admin**: el `JAVA_HOME` de usuario le gana al de maquina
 ## Desinstalacion
 
 ```powershell
-.\Uninstall-Env.bat -Runtime Python                            Lista lo instalado
-.\Uninstall-Env.bat -Runtime Python -Version 3.12 -WhatIf      Muestra el plan
-.\Uninstall-Env.bat -Runtime Python -Version 3.12              Retira esa version
-.\Uninstall-Env.bat -Runtime Angular -Version 20 -Node 22.23.2 Angular y su Node
-.\Uninstall-Env.bat -Runtime Angular -All                      Todo el runtime
-.\Uninstall-Env.bat -Everything                                TODO, de todos
+.\bin\Uninstall-Env.bat -Runtime Python                            Lista lo instalado
+.\bin\Uninstall-Env.bat -Runtime Python -Version 3.12 -WhatIf      Muestra el plan
+.\bin\Uninstall-Env.bat -Runtime Python -Version 3.12              Retira esa version
+.\bin\Uninstall-Env.bat -Runtime Angular -Version 20 -Node 22.23.2 Angular y su Node
+.\bin\Uninstall-Env.bat -Runtime Angular -All                      Todo el runtime
+.\bin\Uninstall-Env.bat -Everything                                TODO, de todos
 ```
 
 `-Everything` recorre el catalogo de runtimes, asi que uno nuevo queda cubierto por
@@ -484,7 +486,7 @@ Ejemplo real con Node 24 instalado por el kit y Node 22 en Program Files:
 | Terminal normal | 22.18.0 | 20.2.0 |
 
 Los shells generados hacen `set PATH=<kit>;%PATH%`, que antepone al PATH **ya
-compuesto**, y por eso si ganan. `.\Doctor-Env.bat` diagnostica esto en su seccion
+compuesto**, y por eso si ganan. `.\bin\Doctor-Env.bat` diagnostica esto en su seccion
 *Que version responde* y dice cual arranca de verdad.
 
 Y no se limita a contarlo: cuando detecta un `[X] NO es la del kit`, **ofrece
@@ -495,16 +497,16 @@ PowerShell.
 
 > Esa reparacion es distinta de las demas: toca tu perfil de PowerShell y el
 > AutoRun de cmd. `-Fix` te lo dice aparte antes de pedir confirmacion, y se
-> revierte con `.\Use-Env.bat -Off`.
+> revierte con `.\bin\Use-Env.bat -Off`.
 
 ### Use-Env: ganar tambien en terminales normales
 
 ```powershell
-.\Use-Env.bat                                  Ver estado
-.\Use-Env.bat -Runtime Angular -Version 22     Activar
-.\Use-Env.bat -Runtime Git -Version 2.55       Vale para los cinco runtimes
-.\Use-Env.bat -Off -Runtime Angular            Desactivar una
-.\Use-Env.bat -Off                             Desactivar todo
+.\bin\Use-Env.bat                                  Ver estado
+.\bin\Use-Env.bat -Runtime Angular -Version 22     Activar
+.\bin\Use-Env.bat -Runtime Git -Version 2.55       Vale para los cinco runtimes
+.\bin\Use-Env.bat -Off -Runtime Angular            Desactivar una
+.\bin\Use-Env.bat -Off                             Desactivar todo
 ```
 
 Admite los nueve: `Angular`, `Python`, `Java`, `Node`, `Git`, `Maven`, `Gradle`,
@@ -525,7 +527,7 @@ Nada especial salvo una cosa: la **ExecutionPolicy** de PowerShell. Si esta en
 `Restricted` o `AllSigned`, el perfil no se ejecuta y el enganche de PowerShell no
 funciona (el de `cmd.exe` si, porque no es PowerShell).
 
-`.\Doctor-Env.bat` lo comprueba y lo reporta en la seccion *Sistema*:
+`.\bin\Doctor-Env.bat` lo comprueba y lo reporta en la seccion *Sistema*:
 
 - Si viene de `CurrentUser`, se arregla sin admin:
   `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
@@ -597,8 +599,8 @@ como *"el kit trae: ... (solo dentro de su shell)"*.
 ### Instalacion
 
 ```powershell
-.\Setup-AngularEnv.bat -AngularVersion 20
-.\Setup-AngularEnv.bat -AngularVersion 22 -NodeVersion 24.19.0
+.\bin\Setup-AngularEnv.bat -AngularVersion 20
+.\bin\Setup-AngularEnv.bat -AngularVersion 22 -NodeVersion 24.19.0
 ```
 
 Descarga Node.js portable (verificando su SHA-256 oficial), instala Angular CLI
@@ -639,8 +641,8 @@ estar instalados a la vez sin pisarse.
 ### Uso
 
 ```powershell
-.\Start-AngularEnv.bat              Abre la version mas reciente
-.\Start-AngularEnv.bat -Version 18  Abre una version concreta
+.\bin\Start-AngularEnv.bat              Abre la version mas reciente
+.\bin\Start-AngularEnv.bat -Version 18  Abre una version concreta
 ```
 
 ### Comandos
@@ -658,8 +660,8 @@ ng build             Compilar produccion
 ### Instalacion
 
 ```powershell
-.\Setup-PythonEnv.bat -PythonVersion 3.12
-.\Setup-PythonEnv.bat -PythonVersion 3.12 -InstallPackages django,flask
+.\bin\Setup-PythonEnv.bat -PythonVersion 3.12
+.\bin\Setup-PythonEnv.bat -PythonVersion 3.12 -InstallPackages django,flask
 ```
 
 Descarga el Python *embeddable*, lo parchea para que pip funcione
@@ -684,7 +686,7 @@ instalado con el disponible y avisa:
 ```
 [WARN] Ya hay Python 3.12.9 instalado en python-3.12
 [WARN]   Disponible: 3.12.10
-[WARN]   Para actualizarlo:  .\Setup-PythonEnv.bat -PythonVersion 3.12 -Force
+[WARN]   Para actualizarlo:  .\bin\Setup-PythonEnv.bat -PythonVersion 3.12 -Force
 ```
 
 `-Force` borra la carpeta y reinstala, asi que **se pierden los paquetes pip** que
@@ -693,8 +695,8 @@ tuvieras ahi. Anotalos antes (`pip freeze > requirements.txt`).
 ### Uso
 
 ```powershell
-.\Start-PythonEnv.bat                Abre la version mas reciente
-.\Start-PythonEnv.bat -Version 3.11  Abre una version concreta
+.\bin\Start-PythonEnv.bat                Abre la version mas reciente
+.\bin\Start-PythonEnv.bat -Version 3.11  Abre una version concreta
 ```
 
 ### Comandos
@@ -711,9 +713,9 @@ flask                 Comandos Flask
 ### Instalacion
 
 ```powershell
-.\Setup-JavaEnv.bat                          Ultima LTS
-.\Setup-JavaEnv.bat -JavaVersion 17          Version concreta
-.\Setup-JavaEnv.bat -JavaVersion 21 -Force   Actualizar el patch
+.\bin\Setup-JavaEnv.bat                          Ultima LTS
+.\bin\Setup-JavaEnv.bat -JavaVersion 17          Version concreta
+.\bin\Setup-JavaEnv.bat -JavaVersion 21 -Force   Actualizar el patch
 ```
 
 Descarga el JDK de **Eclipse Temurin (Adoptium)** en zip, verificando el SHA-256
@@ -722,8 +724,8 @@ que publica su propia API. Genera un `javaN-shell.bat` que fija PATH y JAVA_HOME
 ### Uso
 
 ```powershell
-.\Start-JavaEnv.bat              Abre el JDK mas reciente
-.\Start-JavaEnv.bat -Version 17  Abre una version concreta
+.\bin\Start-JavaEnv.bat              Abre el JDK mas reciente
+.\bin\Start-JavaEnv.bat -Version 17  Abre una version concreta
 ```
 
 ### JAVA_HOME: por defecto no se toca
@@ -732,7 +734,7 @@ Maven, Gradle y los IDE leen `JAVA_HOME`, no el PATH. Cambiarla altera con que J
 compilan **todos** tus proyectos, asi que el kit no la toca salvo que lo pidas:
 
 ```powershell
-.\Setup-JavaEnv.bat -JavaVersion 21 -SetJavaHome
+.\bin\Setup-JavaEnv.bat -JavaVersion 21 -SetJavaHome
 ```
 
 `Uninstall-Env` la retira sola si apuntaba a lo que borra, para no dejarte Maven
@@ -766,9 +768,9 @@ pide administrador, y trae Git Bash entero.
 ### Instalacion
 
 ```powershell
-.\Setup-GitEnv.bat                             Ultima publicada
-.\Setup-GitEnv.bat -GitVersion 2.55.0.5        Version concreta
-.\Setup-GitEnv.bat -Force                      Reinstalar / actualizar
+.\bin\Setup-GitEnv.bat                             Ultima publicada
+.\bin\Setup-GitEnv.bat -GitVersion 2.55.0.5        Version concreta
+.\bin\Setup-GitEnv.bat -Force                      Reinstalar / actualizar
 ```
 
 Verifica el **SHA-256** contra el que la propia release publica en su tabla
@@ -781,8 +783,8 @@ ejecutar: Git funcionaria igual, pero Git Bash iria justo.
 ### Uso
 
 ```powershell
-.\Start-GitEnv.bat              Shell de cmd con git en el PATH
-.\Start-GitEnv.bat -Bash        Abre Git Bash
+.\bin\Start-GitEnv.bat              Shell de cmd con git en el PATH
+.\bin\Start-GitEnv.bat -Bash        Abre Git Bash
 ```
 
 ### Si ya hay un Git instalado por administrador
@@ -791,12 +793,12 @@ Es el caso normal en un equipo corporativo, y **el PATH de usuario no puede gana
 Windows compone MAQUINA + USUARIO, en ese orden. Para que responda el del kit:
 
 ```powershell
-.\Use-Env.bat -Runtime Git -Version 2.55
+.\bin\Use-Env.bat -Runtime Git -Version 2.55
 ```
 
 Comprobado en un equipo con Git 2.55.0.3 instalado en `C:\Program Files\Git`: tras
 activarlo, tanto PowerShell como cmd responden con el **2.55.0.5 del kit**, instalado
-sin admin. Se revierte con `.\Use-Env.bat -Off -Runtime Git`.
+sin admin. Se revierte con `.\bin\Use-Env.bat -Off -Runtime Git`.
 
 Solo se pone `cmd\` en el PATH, que es lo que hace el instalador oficial en su opcion
 por defecto: `bin\` trae `bash`, `sh` y otros que taparian comandos del sistema con el
@@ -805,8 +807,8 @@ mismo nombre. Para el entorno Unix completo esta `git-bash.exe`.
 ## Maven y Gradle
 
 ```powershell
-.\Setup-MavenEnv.bat                        Ultima publicada
-.\Setup-GradleEnv.bat -GradleVersion 8.14   Version concreta
+.\bin\Setup-MavenEnv.bat                        Ultima publicada
+.\bin\Setup-GradleEnv.bat -GradleVersion 8.14   Version concreta
 ```
 
 Los dos son zip sin instalador: nunca han pedido admin. Lo que aporta el kit es
@@ -842,7 +844,7 @@ tener dos proyectos con Javas distintos abiertos a la vez.
 Para fijar a que JDK apunta el shell por defecto:
 
 ```powershell
-.\Setup-MavenEnv.bat -JavaVersion 21
+.\bin\Setup-MavenEnv.bat -JavaVersion 21
 ```
 
 Los shells por JDK se mantienen solos: instalar un JDK nuevo los regenera, y
@@ -888,10 +890,10 @@ sigue siendo una decision aparte y explicita.
 ## La CA de tu empresa dentro de los JDK
 
 ```powershell
-.\Use-CorpCert.bat -WhatIf                 Ensena que haria
-.\Use-CorpCert.bat                         La busca sola y la aplica
-.\Use-CorpCert.bat -Cert C:\ca.cer         Si te la dio IT en un archivo
-.\Use-CorpCert.bat -Remove                 La retira
+.\bin\Use-CorpCert.bat -WhatIf                 Ensena que haria
+.\bin\Use-CorpCert.bat                         La busca sola y la aplica
+.\bin\Use-CorpCert.bat -Cert C:\ca.cer         Si te la dio IT en un archivo
+.\bin\Use-CorpCert.bat -Remove                 La retira
 ```
 
 Muchas redes corporativas abren el HTTPS para inspeccionarlo: el trafico llega
@@ -982,11 +984,11 @@ que se detectaria.
 ## Los JDK del kit dentro de VS Code
 
 ```powershell
-.\Use-VSCodeJava.bat -WhatIf     Ensena que cambiaria
-.\Use-VSCodeJava.bat             Los registra en el VS Code portable del kit
-.\Use-VSCodeJava.bat -Default 21 Y elige cual manda por defecto
-.\Use-VSCodeJava.bat -Global     Tambien en el VS Code que ya tenias instalado
-.\Use-VSCodeJava.bat -Remove     Los quita
+.\bin\Use-VSCodeJava.bat -WhatIf     Ensena que cambiaria
+.\bin\Use-VSCodeJava.bat             Los registra en el VS Code portable del kit
+.\bin\Use-VSCodeJava.bat -Default 21 Y elige cual manda por defecto
+.\bin\Use-VSCodeJava.bat -Global     Tambien en el VS Code que ya tenias instalado
+.\bin\Use-VSCodeJava.bat -Remove     Los quita
 ```
 
 **El caso normal no necesita este comando.** El VS Code portable se mantiene solo,
@@ -1050,7 +1052,7 @@ que registrar los JDK ahi no hace nada por si solo: quien lee ese ajuste es la
 extension de Java. Se detecta y se dice, y se instala si se pide:
 
 ```powershell
-.\Use-VSCodeJava.bat -InstallExtension
+.\bin\Use-VSCodeJava.bat -InstallExtension
 ```
 
 Instala `vscjava.vscode-java-pack` -que arrastra el servidor de lenguaje, el
@@ -1102,8 +1104,8 @@ Reparable automaticamente (3):
 ## .NET SDK
 
 ```powershell
-.\Setup-DotnetEnv.bat                Ultimo canal LTS con soporte
-.\Setup-DotnetEnv.bat -Channel 8.0   Canal concreto
+.\bin\Setup-DotnetEnv.bat                Ultimo canal LTS con soporte
+.\bin\Setup-DotnetEnv.bat -Channel 8.0   Canal concreto
 ```
 
 El caso mas facil de todos: Microsoft publica `dotnet-install.ps1`, un script
@@ -1133,10 +1135,10 @@ Program Files sin ella pueden acabar usando el del sistema.
 ## VS Code (portable)
 
 ```powershell
-.\Setup-VSCodeEnv.bat                 Instalar o comprobar
-.\Setup-VSCodeEnv.bat -Force -KeepData  Actualizar CONSERVANDO tus extensiones
-.\Start-VSCodeEnv.bat                 Abrir el editor
-.\Start-VSCodeEnv.bat -Shell          Consola con 'code' en el PATH
+.\bin\Setup-VSCodeEnv.bat                 Instalar o comprobar
+.\bin\Setup-VSCodeEnv.bat -Force -KeepData  Actualizar CONSERVANDO tus extensiones
+.\bin\Start-VSCodeEnv.bat                 Abrir el editor
+.\bin\Start-VSCodeEnv.bat -Shell          Consola con 'code' en el PATH
 ```
 
 Su instalador normal pide admin. Pero Microsoft publica tambien el **.zip**, y ese
@@ -1155,9 +1157,9 @@ intactas. De propina, el entorno se lo puedes llevar entero en una carpeta.
 ## Reproducir un entorno: `Restore-Env` y `devenv.json`
 
 ```powershell
-.\Restore-Env.bat -Save     Escribe devenv.json con lo que YA tienes instalado
-.\Restore-Env.bat -WhatIf   Ensena que haria
-.\Restore-Env.bat           Instala todo lo que pide el manifiesto
+.\bin\Restore-Env.bat -Save     Escribe devenv.json con lo que YA tienes instalado
+.\bin\Restore-Env.bat -WhatIf   Ensena que haria
+.\bin\Restore-Env.bat           Instala todo lo que pide el manifiesto
 ```
 
 Un `devenv.json` describe que necesita un proyecto:
@@ -1218,7 +1220,7 @@ mismo con las versiones exactas, y `Doctor` avisa si la atadura cambia:
 
 ```
 [!]   Maven -> JDK              25  (lock: 21)
-        Vuelve a atarlo con:  .\Setup-MavenEnv.bat -JavaVersion 21
+        Vuelve a atarlo con:  .\bin\Setup-MavenEnv.bat -JavaVersion 21
 ```
 
 ### `devenv.lock.json`: que dos maquinas monten LO MISMO
@@ -1230,9 +1232,9 @@ instala 3.12.10 y dentro de un mes 3.12.11. Dos maquinas que restauren el mismo
 El lock cierra esa puerta, igual que un `package-lock.json`:
 
 ```powershell
-.\Restore-Env.bat -Lock      Escribe devenv.lock.json con las versiones exactas
-.\Restore-Env.bat            Si hay lock, MANDA el lock
-.\Restore-Env.bat -NoLock    Ignora el lock a proposito
+.\bin\Restore-Env.bat -Lock      Escribe devenv.lock.json con las versiones exactas
+.\bin\Restore-Env.bat            Si hay lock, MANDA el lock
+.\bin\Restore-Env.bat -NoLock    Ignora el lock a proposito
 ```
 
 Comprobado: con un lock que pedia `3.12.9` y un manifiesto que pedia `3.12`,
@@ -1243,11 +1245,11 @@ version como entero, .NET solo aceptaba canal y VS Code no tenia parametro. Ahor
 los cuatro admiten **la linea o la version exacta en el mismo parametro**:
 
 ```powershell
-.\Setup-JavaEnv.bat   -JavaVersion 21                 la linea
-.\Setup-JavaEnv.bat   -JavaVersion jdk-21.0.9+10      ese release exacto
-.\Setup-AngularEnv.bat -AngularVersion 20.3.35        ese CLI exacto
-.\Setup-DotnetEnv.bat -Channel 10.0.400               ese SDK exacto
-.\Setup-VSCodeEnv.bat -VSCodeVersion 1.135.0          esa version exacta
+.\bin\Setup-JavaEnv.bat   -JavaVersion 21                 la linea
+.\bin\Setup-JavaEnv.bat   -JavaVersion jdk-21.0.9+10      ese release exacto
+.\bin\Setup-AngularEnv.bat -AngularVersion 20.3.35        ese CLI exacto
+.\bin\Setup-DotnetEnv.bat -Channel 10.0.400               ese SDK exacto
+.\bin\Setup-VSCodeEnv.bat -VSCodeVersion 1.135.0          esa version exacta
 ```
 
 La carpeta y el nombre del shell siguen saliendo de la **linea** (`jdk-21`,
@@ -1360,8 +1362,8 @@ los desvios, que es la pregunta que uno se hace cuando algo compila distinto que
 un companero:
 
 ```powershell
-.\Doctor-Env.bat                       Usa el devenv.lock.json de la carpeta actual
-.\Doctor-Env.bat -Lock C:\proy\devenv.lock.json
+.\bin\Doctor-Env.bat                       Usa el devenv.lock.json de la carpeta actual
+.\bin\Doctor-Env.bat -Lock C:\proy\devenv.lock.json
 ```
 
 Distingue tres casos: **coincide**, **distinto** (y se puede volver con
@@ -1377,7 +1379,7 @@ sistema, y no eleva privilegios: si un software necesita admin de verdad, lo dic
 ### Uso
 
 ```powershell
-.\Install-NoAdmin.bat -Path "C:\Descargas\app.msi"
+.\bin\Install-NoAdmin.bat -Path "C:\Descargas\app.msi"
 ```
 
 ### Que hace
@@ -1616,7 +1618,7 @@ para detectar que los archivos cambiaron despues de instalarlos.
 
 **Empieza siempre por aqui:**
 ```powershell
-.\Doctor-Env.bat
+.\bin\Doctor-Env.bat
 ```
 
 **Error de ejecucion de scripts:**
@@ -1642,9 +1644,9 @@ npm config set https-proxy http://usuario:clave@proxy.empresa:8080
 ## Pruebas
 
 ```powershell
-.\Run-Tests.bat                    Todas
-.\Run-Tests.bat -Name UserPath     Solo un archivo
-.\Run-Tests.bat -Quiet             Solo el resumen
+.\bin\Run-Tests.bat                    Todas
+.\bin\Run-Tests.bat -Name UserPath     Solo un archivo
+.\bin\Run-Tests.bat -Quiet             Solo el resumen
 ```
 
 Sale con codigo 1 si falla alguna, asi que se puede encadenar.

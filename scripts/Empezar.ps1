@@ -95,7 +95,7 @@ function Invoke-PasoCa {
     Write-Host "  SSLCertVerificationError y git con 'SSL certificate problem'," -ForegroundColor Yellow
     Write-Host "  aunque el navegador vaya bien." -ForegroundColor Yellow
     if (Confirmar "Se la pongo a las herramientas del kit?") {
-        & (Join-Path $Kit "Use-CorpCert.bat") -Force
+        & (Join-Path $Kit "bin\Use-CorpCert.bat") -Force
     }
     return $true
 }
@@ -162,7 +162,7 @@ if (Test-Path -LiteralPath $Path) {
     Write-Host "  Hay un manifiesto: $Path" -ForegroundColor Green
     Write-Host "  Reproducirlo instala de golpe lo que pide ese proyecto." -ForegroundColor Gray
     if (Confirmar "Lo reproduzco?") {
-        & (Join-Path $Kit "Restore-Env.bat") -Path $Path -Force
+        & (Join-Path $Kit "bin\Restore-Env.bat") -Path $Path -Force
     }
 }
 else {
@@ -180,7 +180,7 @@ if (-not $caResuelta) {
     Write-Host "  Vuelvo a lo de la CA, que antes no se podia mirar:" -ForegroundColor Cyan
     if (-not (Invoke-PasoCa)) {
         Write-Host "  Sigue sin haber ningun JDK. Cuando instales uno:" -ForegroundColor Gray
-        Write-Host "    .\Use-CorpCert.bat" -ForegroundColor White
+        Write-Host "    .\bin\Use-CorpCert.bat" -ForegroundColor White
     }
 }
 
@@ -201,7 +201,7 @@ else {
     foreach ($t in $targets) { Write-Host "  Encontrado: $($t.Etiqueta)" -ForegroundColor Green }
     Write-Host "  Registrarlos deja que cada proyecto compile con el JDK que pide." -ForegroundColor Gray
     if (Confirmar "Se los registro al VS Code portable del kit?") {
-        & (Join-Path $Kit "Use-VSCodeJava.bat") -Force
+        & (Join-Path $Kit "bin\Use-VSCodeJava.bat") -Force
     }
 }
 
@@ -214,7 +214,7 @@ Write-Host "  un java o un git suyos responden antes que los del kit. Use-Env lo
 Write-Host "  resuelve enganchandose a tu perfil de PowerShell y al AutoRun de cmd." -ForegroundColor Gray
 Write-Host ""
 Write-Host "  Es el unico paso que sale de las carpetas del kit." -ForegroundColor Yellow
-Write-Host "  Se revierte entero con:  .\Use-Env.bat -Off" -ForegroundColor Gray
+Write-Host "  Se revierte entero con:  .\bin\Use-Env.bat -Off" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  Doctor te dira abajo si de verdad hace falta. Si no aparece ningun" -ForegroundColor Gray
 Write-Host "  'NO es la del kit', dejalo como esta." -ForegroundColor Gray
@@ -223,7 +223,7 @@ Write-Host "  'NO es la del kit', dejalo como esta." -ForegroundColor Gray
 Paso 6 "Como ha quedado"
 # --------------------------------------------------------------------------
 
-& (Join-Path $Kit "Doctor-Env.bat") -SkipNetwork
+& (Join-Path $Kit "bin\Doctor-Env.bat") -SkipNetwork
 
 Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
@@ -232,5 +232,5 @@ Write-Host "================================================" -ForegroundColor C
 Write-Host ""
 Write-Host "A partir de aqui:" -ForegroundColor Yellow
 Write-Host "  .\Menu.bat        todo lo que sabe hacer el kit" -ForegroundColor White
-Write-Host "  .\Doctor-Env.bat  que esta mal y como arreglarlo" -ForegroundColor White
+Write-Host "  .\bin\Doctor-Env.bat  que esta mal y como arreglarlo" -ForegroundColor White
 Write-Host ""

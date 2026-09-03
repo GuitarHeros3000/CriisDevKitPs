@@ -52,7 +52,7 @@ $versions = @(Get-DotnetVersions | Sort-Object { [version]$_.Canal } -Descending
 if ($versions.Count -eq 0) {
     Write-Host "No hay versiones instaladas." -ForegroundColor Red
     Write-Host ""
-    Write-Host "Ejecuta: .\Setup-DotnetEnv.bat" -ForegroundColor White
+    Write-Host "Ejecuta: .\bin\Setup-DotnetEnv.bat" -ForegroundColor White
     Write-Host ""
     exit 1
 }

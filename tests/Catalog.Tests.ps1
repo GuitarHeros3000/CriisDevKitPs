@@ -520,8 +520,12 @@ Describe "Cobertura del catalogo" {
         $txt = Get-Content (Join-Path $scripts "Menu.ps1") -Raw
         $bats = @([regex]::Matches($txt, "Bat\s*=\s*'([^']+\.bat)'") | ForEach-Object { $_.Groups[1].Value })
         $bats.Count | Should BeGreaterThan 5
+        # Menu.ps1 nombra los .bat sin carpeta; los comandos viven en bin\ y
+        # solo Empezar y Menu se quedaron en la raiz.
         foreach ($b in ($bats | Sort-Object -Unique)) {
-            Test-Path (Join-Path $raiz $b) | Should Be $true
+            $enRaiz = Test-Path (Join-Path $raiz $b)
+            $enBin  = Test-Path (Join-Path (Join-Path $raiz "bin") $b)
+            ($enRaiz -or $enBin) | Should Be $true
         }
     }
 
@@ -530,8 +534,9 @@ Describe "Cobertura del catalogo" {
     It "existen el Setup y el Start de cada runtime del catalogo" {
         $raiz = Split-Path -Parent $PSScriptRoot
         foreach ($e in $catalogo) {
-            Test-Path (Join-Path $raiz "Setup-$($e.Carpeta)Env.bat") | Should Be $true
-            Test-Path (Join-Path $raiz "Start-$($e.Carpeta)Env.bat") | Should Be $true
+            $bin = Join-Path $raiz "bin"
+            Test-Path (Join-Path $bin "Setup-$($e.Carpeta)Env.bat") | Should Be $true
+            Test-Path (Join-Path $bin "Start-$($e.Carpeta)Env.bat") | Should Be $true
         }
     }
 }

@@ -60,8 +60,8 @@ $ProgressPreference = "SilentlyContinue"
 # comprueba a mano: sin uno de los dos no hay nada que hacer.
 if (-not $Everything -and [string]::IsNullOrWhiteSpace($Runtime)) {
     Write-Log "Falta -Runtime." "ERROR"
-    Write-Log "  Un runtime concreto:  .\Uninstall-Env.bat -Runtime Python -All" "WARN"
-    Write-Log "  O todos de una vez :  .\Uninstall-Env.bat -Everything" "WARN"
+    Write-Log "  Un runtime concreto:  .\bin\Uninstall-Env.bat -Runtime Python -All" "WARN"
+    Write-Log "  O todos de una vez :  .\bin\Uninstall-Env.bat -Everything" "WARN"
     exit 1
 }
 if ($Everything -and -not [string]::IsNullOrWhiteSpace($Runtime)) {
@@ -213,11 +213,11 @@ if (-not $Everything -and -not $All -and
     }
     Write-Host ""
     Write-Host "Indica que retirar:" -ForegroundColor Yellow
-    Write-Host "  .\Uninstall-Env.bat -Runtime $Runtime -Version <version>"
+    Write-Host "  .\bin\Uninstall-Env.bat -Runtime $Runtime -Version <version>"
     if ($Runtime -eq 'Angular') {
-        Write-Host "  .\Uninstall-Env.bat -Runtime Angular -Node <version>"
+        Write-Host "  .\bin\Uninstall-Env.bat -Runtime Angular -Node <version>"
     }
-    Write-Host "  .\Uninstall-Env.bat -Runtime $Runtime -All"
+    Write-Host "  .\bin\Uninstall-Env.bat -Runtime $Runtime -All"
     Write-Host ""
     exit 0
 }
@@ -408,12 +408,12 @@ if ($left.Count -gt 0 -and $Runtime -eq 'Angular') {
         foreach ($n in $nodes) {
             Write-Log "  Node $($n.Version)   ($(Get-FolderSize -Path $n.Path))" "WARN"
         }
-        Write-Log "  Para retirarlas:  .\Uninstall-Env.bat -Runtime Angular -All" "WARN"
+        Write-Log "  Para retirarlas:  .\bin\Uninstall-Env.bat -Runtime Angular -All" "WARN"
     }
     elseif ($nodes.Count -gt $angulars.Count) {
         Write-Host ""
         Write-Log "Hay mas versiones de Node ($($nodes.Count)) que de Angular ($($angulars.Count))." "WARN"
-        Write-Log "  Puede que alguna ya no se use:  .\Uninstall-Env.bat -Runtime Angular" "WARN"
+        Write-Log "  Puede que alguna ya no se use:  .\bin\Uninstall-Env.bat -Runtime Angular" "WARN"
     }
 }
 
@@ -424,7 +424,7 @@ if ($failed.Count -eq 0) {
     Write-Host "============================================" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Las ventanas ya abiertas conservan el PATH viejo." -ForegroundColor Gray
-    Write-Host "Comprueba el estado con:  .\Doctor-Env.bat" -ForegroundColor Gray
+    Write-Host "Comprueba el estado con:  .\bin\Doctor-Env.bat" -ForegroundColor Gray
     Write-Host ""
     exit 0
 }

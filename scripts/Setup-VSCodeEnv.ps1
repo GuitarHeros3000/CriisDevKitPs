@@ -103,7 +103,7 @@ function Get-VSCodePortable {
             Write-Log "Ya hay VS Code $instalada instalado en $FolderName" "WARN"
             Write-Log "  Disponible: $($Release.Version)" "WARN"
             Write-Log "  Para actualizarlo conservando tus extensiones:" "WARN"
-            Write-Log "    .\Setup-VSCodeEnv.bat -Force -KeepData" "WARN"
+            Write-Log "    .\bin\Setup-VSCodeEnv.bat -Force -KeepData" "WARN"
             return $vscodePath
         }
     }
@@ -234,7 +234,7 @@ foreach ($linea in @(Sync-VSCodeJavaRuntimes -Inicializar)) {
     $settings = Join-Path $vscodePath "data\user-data\User\settings.json"
     if (@(Get-VSCodeExtensions -SettingsPath $settings) -notcontains 'redhat.java') {
         Write-Log "  Los lee la extension de Java, que este VS Code no tiene:" "WARN"
-        Write-Log "    .\Use-VSCodeJava.bat -InstallExtension" "WARN"
+        Write-Log "    .\bin\Use-VSCodeJava.bat -InstallExtension" "WARN"
     }
 }
 
@@ -256,7 +256,7 @@ Write-Host "Al ser portable, los ajustes y las extensiones viven en data\ y no e
 Write-Host "tu perfil: puedes llevarte la carpeta entera a otro equipo." -ForegroundColor Gray
 Write-Host ""
 Write-Host "Para comenzar:" -ForegroundColor Yellow
-Write-Host "  Abrelo:       .\Start-VSCodeEnv.bat" -ForegroundColor White
+Write-Host "  Abrelo:       .\bin\Start-VSCodeEnv.bat" -ForegroundColor White
 Write-Host "  Desde consola: code ." -ForegroundColor White
-Write-Host "  Comprueba con: .\Doctor-Env.bat" -ForegroundColor Gray
+Write-Host "  Comprueba con: .\bin\Doctor-Env.bat" -ForegroundColor Gray
 Write-Host ""

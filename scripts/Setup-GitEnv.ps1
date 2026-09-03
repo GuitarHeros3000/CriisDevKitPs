@@ -75,7 +75,7 @@ function Get-GitPortable {
         elseif ($instalada) {
             Write-Log "Ya hay Git $instalada instalado en $FolderName" "WARN"
             Write-Log "  Disponible: $($Release.Version)" "WARN"
-            Write-Log "  Para actualizarlo:  .\Setup-GitEnv.bat -GitVersion $($Release.Version) -Force" "WARN"
+            Write-Log "  Para actualizarlo:  .\bin\Setup-GitEnv.bat -GitVersion $($Release.Version) -Force" "WARN"
             return $gitPath
         }
         else {
@@ -143,7 +143,7 @@ if (-not $release) {
     Write-Log "No se pudo determinar que PortableGit instalar." "ERROR"
     if ([string]::IsNullOrWhiteSpace($GitVersion)) {
         Write-Log "  No se pudo leer la API de GitHub. Reintenta, o indica la version:" "WARN"
-        Write-Log "    .\Setup-GitEnv.bat -GitVersion 2.55.0.5" "WARN"
+        Write-Log "    .\bin\Setup-GitEnv.bat -GitVersion 2.55.0.5" "WARN"
     }
     else {
         Write-Log "  Esa version no aparece entre las ultimas 30 releases publicadas." "WARN"
@@ -223,5 +223,5 @@ Write-Host ""
 Write-Host "Para comenzar:" -ForegroundColor Yellow
 Write-Host "  Usa el shell: ..\Git\$FolderName\$shellName" -ForegroundColor White
 Write-Host "  O Git Bash:   ..\Git\$FolderName\git-bash.exe" -ForegroundColor White
-Write-Host "  Comprueba con: .\Doctor-Env.bat" -ForegroundColor Gray
+Write-Host "  Comprueba con: .\bin\Doctor-Env.bat" -ForegroundColor Gray
 Write-Host ""

@@ -1,9 +1,5 @@
 @echo off
-echo ============================================
-echo   Angular Dev Environment Setup
-echo ============================================
-echo.
-powershell -ExecutionPolicy Bypass -File "%~dp0scripts\Setup-AngularEnv.ps1" %*
+powershell -ExecutionPolicy Bypass -File "%~dp0..\scripts\Start-PythonEnv.ps1" %*
 
 rem El codigo de salida se guarda ANTES del pause. El de un .bat es el del
 rem ultimo comando ejecutado, y pause devuelve 0 siempre, asi que el del

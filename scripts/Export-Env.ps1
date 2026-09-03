@@ -225,7 +225,7 @@ foreach ($e in (Get-RuntimeCatalog | Where-Object { $_.Bundle })) {
 
 if ($angular.Count -eq 0 -and $python.Count -eq 0 -and $java.Count -eq 0 -and $otros.Count -eq 0) {
     Write-Log "No hay nada instalado que exportar." "WARN"
-    Write-Log "  Instala algo primero, o revisa con  .\Doctor-Env.bat" "WARN"
+    Write-Log "  Instala algo primero, o revisa con  .\bin\Doctor-Env.bat" "WARN"
     exit 0
 }
 
@@ -477,7 +477,7 @@ try {
     }
     else {
         Write-Host "Instalalo en la otra maquina con:" -ForegroundColor Yellow
-        Write-Host "  .\Import-Env.bat -Path <ruta del zip>" -ForegroundColor White
+        Write-Host "  .\bin\Import-Env.bat -Path <ruta del zip>" -ForegroundColor White
     }
     Write-Host ""
 }

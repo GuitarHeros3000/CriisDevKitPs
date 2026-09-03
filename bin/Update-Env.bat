@@ -1,5 +1,5 @@
 @echo off
-powershell -ExecutionPolicy Bypass -File "%~dp0scripts\Update-Env.ps1" %*
+powershell -ExecutionPolicy Bypass -File "%~dp0..\scripts\Update-Env.ps1" %*
 
 rem El codigo de salida se guarda ANTES del pause. Aqui importa: 1 significa
 rem que hay actualizaciones disponibles, no que haya fallado nada.

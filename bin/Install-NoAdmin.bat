@@ -1,5 +1,10 @@
 @echo off
-powershell -ExecutionPolicy Bypass -File "%~dp0scripts\Start-JavaEnv.ps1" %*
+echo ============================================
+echo   Install-NoAdmin
+echo   Instalacion sin permisos de admin
+echo ============================================
+echo.
+powershell -ExecutionPolicy Bypass -File "%~dp0..\scripts\Install-NoAdmin.ps1" %*
 
 rem El codigo de salida se guarda ANTES del pause. El de un .bat es el del
 rem ultimo comando ejecutado, y pause devuelve 0 siempre, asi que el del
