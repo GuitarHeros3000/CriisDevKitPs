@@ -388,6 +388,47 @@ puede adjuntar tal cual. Se escribe **antes** de las reparaciones a proposito: s
 generas junto con `-Fix`, lo util para el ticket es lo que fallaba, no como quedo
 despues.
 
+### -Json
+
+Lo mismo, pero para que lo lea una maquina: comprobar el entorno en un pipeline, o
+juntar los informes de varios equipos y ver que tienen en comun. `-Report` es para
+que lo lea una persona; esto, para que no.
+
+```powershell
+.\bin\kit\Doctor-Env.bat -Json                            a %LOCALAPPDATA%\CriisDevKit\informes
+.\bin\kit\Doctor-Env.bat -Json -JsonPath D:\equipo.json   a donde tu digas
+```
+
+```json
+{
+  "version_formato": 1,
+  "kit":      { "version": "2.1.0", "raiz": "...", "workspace": "..." },
+  "maquina":  { "equipo": "PC-1234", "usuario": "jperez", "windows": "10.0.26200.0" },
+  "resumen":  { "problemas": 0, "avisos": 3 },
+  "secciones": [
+    { "titulo": "Java",
+      "comprobaciones": [
+        { "etiqueta": "JAVA_HOME vs java", "valor": "descuadrados: 1.8.0_202 frente a 24.0.2",
+          "estado": "warn",
+          "detalles": ["'java' en consola responde 24.0.2, pero Maven, Gradle y los IDE",
+                       "leen JAVA_HOME: compilarian con Java 8."] } ] } ],
+  "reparaciones": []
+}
+```
+
+Cada detalle **cuelga de su comprobacion**, que es la diferencia con el markdown:
+alli son lineas sangradas y hay que adivinar a cual se referian.
+
+El codigo de salida sigue siendo **1 si hay algo grave**, asi que en un pipeline se
+puede fallar por el codigo y mirar el JSON solo cuando falla, sin parsear nada en el
+caso normal. `reparaciones` dice, ademas, cuales de esos problemas tienen arreglo
+automatico con `-Fix`.
+
+Se escribe **sin BOM**, al reves que el resto de los JSON del kit. Los otros se los
+lee el propio kit y `ConvertFrom-Json` se traga el BOM; este lo va a abrir `jq` o
+Python, donde tres bytes invisibles al principio son un error de sintaxis que no
+explica de que va.
+
 ### -Fix
 
 Sin `-Fix`, `Doctor` **no modifica nada**. Con `-Fix` repara solo lo que se puede

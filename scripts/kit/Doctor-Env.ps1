@@ -24,6 +24,14 @@
 .PARAMETER ReportPath
     Donde guardarlo. Por defecto, junto a los registros, en
     %LOCALAPPDATA%\CriisDevKit\informes.
+.PARAMETER Json
+    Guarda el mismo diagnostico como JSON, para leerlo con otra herramienta:
+    comprobar el entorno en un pipeline, o juntar los informes de varias
+    maquinas. -Report es para que lo lea una persona; esto, para que no.
+    El codigo de salida sigue siendo 1 si hay algo grave, asi que en un
+    pipeline se puede fallar por el codigo y mirar el JSON solo si falla.
+.PARAMETER JsonPath
+    Donde guardarlo. Por defecto, junto a los informes.
 .EXAMPLE
     .\Doctor-Env.ps1
 .EXAMPLE
@@ -34,6 +42,8 @@
     .\Doctor-Env.ps1 -Report
 .EXAMPLE
     .\Doctor-Env.ps1 -Report -ReportPath D:\ticket-4821.md
+.EXAMPLE
+    .\Doctor-Env.ps1 -Json -JsonPath D:\equipo.json
 #>
 
 param(
@@ -50,6 +60,10 @@ param(
     [switch]$Report,
 
     [string]$ReportPath,
+
+    [switch]$Json,
+
+    [string]$JsonPath,
 
     [string]$Lock
 )
@@ -121,6 +135,24 @@ $script:Warnings = 0
 # markdown estructurado, no un volcado de consola.
 $script:ReportLines = @()
 
+# Lo mismo, pero estructurado, para -Json. Se engancha en las MISMAS tres
+# funciones de salida y por la misma razon: asi una comprobacion nueva aparece
+# en pantalla, en el informe y en el JSON sin que su autor tenga que acordarse
+# de nada. Cuando -Report se quedo atras en su dia fue justo por lo contrario.
+#
+# La clave del proxy no hace falta enmascararla aqui: a estas funciones ya llega
+# enmascarada desde arriba, que es lo unico que hace segura tambien la pantalla.
+$script:JsonSections = @()
+
+function Add-JsonSection {
+    param([string]$Title)
+    $script:JsonSections += [PSCustomObject]@{
+        titulo         = $Title
+        comprobaciones = @()
+        detalles       = @()
+    }
+}
+
 function Write-Section {
     param([string]$Title)
     Write-Host ""
@@ -130,6 +162,8 @@ function Write-Section {
     $script:ReportLines += ""
     $script:ReportLines += "## $Title"
     $script:ReportLines += ""
+
+    Add-JsonSection -Title $Title
 }
 
 function Write-Check {
@@ -158,6 +192,16 @@ function Write-Check {
     # un guion largo o una tilde aqui corrompen el archivo y rompen el parser.
     $icono = switch ($State) { 'ok' { '`[ok]`' } 'warn' { '`[!]`' } 'fail' { '`[X]`' } default { '`[--]`' } }
     $script:ReportLines += "- $icono **$Label** : $Value"
+
+    # Si alguien anade una comprobacion antes de la primera seccion, se le abre
+    # una: perder el dato en el JSON seria peor que el titulo generico.
+    if ($script:JsonSections.Count -eq 0) { Add-JsonSection -Title 'Sin seccion' }
+    $script:JsonSections[-1].comprobaciones += [PSCustomObject]@{
+        etiqueta = $Label
+        valor    = $Value
+        estado   = $State
+        detalles = @()
+    }
 }
 
 function Write-Detail {
@@ -166,6 +210,19 @@ function Write-Detail {
 
     # Sangrado para que cuelgue del check anterior al renderizar el markdown.
     $script:ReportLines += "  - $Text"
+
+    # En el JSON cuelga de verdad del check anterior, que es lo que hace que se
+    # pueda leer sin adivinar a que se referia cada linea. Un detalle suelto -sin
+    # check delante- se queda en la seccion en vez de perderse.
+    if ($script:JsonSections.Count -eq 0) { Add-JsonSection -Title 'Sin seccion' }
+    $seccion = $script:JsonSections[-1]
+
+    if ($seccion.comprobaciones.Count -eq 0) {
+        $seccion.detalles += $Text
+    }
+    else {
+        $seccion.comprobaciones[-1].detalles += $Text
+    }
 }
 
 function Invoke-VersionProbe {
@@ -1855,6 +1912,69 @@ function Save-DoctorReport {
     }
 }
 
+function Save-DoctorJson {
+    <#
+        El mismo diagnostico, para que lo lea una maquina.
+
+        Se escribe SIN BOM, al contrario que el resto de JSON del kit. Los otros
+        se los lee el propio kit, y ConvertFrom-Json se traga el BOM sin
+        rechistar; este lo va a abrir jq, Python o lo que use el pipeline de
+        turno, y ahi tres bytes invisibles al principio son un error de sintaxis
+        que no dice de que va.
+
+        Lleva version_formato por lo mismo que el manifiesto de Export-Env: si
+        algun dia cambia la forma, quien lo consuma puede enterarse en vez de
+        romperse por sorpresa.
+    #>
+    param([string]$Destino)
+
+    if ([string]::IsNullOrWhiteSpace($Destino)) {
+        $dir = Join-Path $env:LOCALAPPDATA "CriisDevKit\informes"
+        if (-not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        }
+        $Destino = Join-Path $dir ("doctor-{0}.json" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    }
+    else {
+        $padre = Split-Path -Parent $Destino
+        if ($padre -and -not (Test-Path -LiteralPath $padre)) {
+            New-Item -ItemType Directory -Path $padre -Force | Out-Null
+        }
+    }
+
+    $datos = [PSCustomObject]@{
+        version_formato = 1
+        generado        = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss')
+        kit             = [PSCustomObject]@{
+            version   = $KitVersion
+            raiz      = $DevKitRoot
+            workspace = $WorkspaceRoot
+        }
+        maquina         = [PSCustomObject]@{
+            equipo     = $env:COMPUTERNAME
+            usuario    = $env:USERNAME
+            windows    = [string][Environment]::OSVersion.Version
+            powershell = [string]$PSVersionTable.PSVersion
+        }
+        resumen         = [PSCustomObject]@{
+            problemas = $script:Problems
+            avisos    = $script:Warnings
+        }
+        secciones       = $script:JsonSections
+        # Lo mismo que Doctor ofrece reparar con -Fix, para que un pipeline
+        # pueda decir no solo que esta mal, sino que tiene arreglo solo.
+        reparaciones    = @($script:Fixes | ForEach-Object { $_.Description })
+    }
+
+    # Depth 6: raiz > secciones > comprobaciones > detalles son cuatro, y el
+    # valor por defecto de ConvertTo-Json es 2, que dejaria las comprobaciones
+    # convertidas en la cadena "System.Object[]".
+    $texto = $datos | ConvertTo-Json -Depth 6
+    [IO.File]::WriteAllText($Destino, $texto, (New-Object System.Text.UTF8Encoding($false)))
+
+    return $Destino
+}
+
 if ($Report) {
     $archivo = Save-DoctorReport -Destino $ReportPath
     if ($archivo) {
@@ -1862,6 +1982,15 @@ if ($Report) {
         Write-Host "  $archivo"
         Write-Host ""
         Write-Host "Se puede adjuntar tal cual a un ticket: la clave del proxy va enmascarada." -ForegroundColor Gray
+        Write-Host ""
+    }
+}
+
+if ($Json) {
+    $archivoJson = Save-DoctorJson -Destino $JsonPath
+    if ($archivoJson) {
+        Write-Host "JSON guardado en:" -ForegroundColor Green
+        Write-Host "  $archivoJson"
         Write-Host ""
     }
 }
