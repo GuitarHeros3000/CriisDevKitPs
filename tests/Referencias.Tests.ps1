@@ -34,7 +34,11 @@ function Get-ArchivosDelKit {
         (Get-ChildItem -LiteralPath (Join-Path $KitRoot 'lib') -Filter *.ps1 -File),
         (Get-ChildItem -LiteralPath (Join-Path $KitRoot 'tests') -Filter *.ps1 -File),
         (Get-ChildItem -LiteralPath $KitRoot -Filter *.ejemplo -File),
-        (Get-Item -LiteralPath (Join-Path $KitRoot 'README.md'))
+        # Todos los .md y no solo README.md: al partir la documentacion en
+        # docs\, quedarse con el README dejaria sin vigilar justo las paginas
+        # que mas comandos citan. Es el mismo descuido que el -Recurse de bin\.
+        (Get-ChildItem -LiteralPath $KitRoot -Filter *.md -File -Recurse |
+            Where-Object { $_.FullName -notlike "*\softwares_locked\*" })
     ) | ForEach-Object { $_ } | Where-Object { $_.Name -ne 'Referencias.Tests.ps1' }
 }
 

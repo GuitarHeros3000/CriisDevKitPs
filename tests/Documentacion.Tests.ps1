@@ -127,6 +127,46 @@ Describe "La documentacion no contradice al codigo" {
         }
     }
 
+    # Al partir la documentacion en docs\, las referencias de "ver mas abajo"
+    # pasaron a ser enlaces entre archivos. Un enlace roto en un README no
+    # rompe nada al ejecutar, asi que no se entera nadie hasta que alguien lo
+    # pulsa; y mover una pagina de sitio los rompe todos de golpe.
+    It "todo enlace entre documentos apunta a un archivo que existe" {
+        $rotos = @()
+
+        foreach ($d in (Get-DocumentosDelKit)) {
+            $texto = Get-Content -LiteralPath $d.FullName -Raw
+            if (-not $texto) { continue }
+
+            foreach ($m in ([regex]::Matches($texto, '\]\(([^)#:]+\.md)(#[^)]*)?\)'))) {
+                $rel = $m.Groups[1].Value
+                $ruta = Join-Path $d.DirectoryName $rel
+
+                if (-not (Test-Path -LiteralPath $ruta)) {
+                    $rotos += "$($d.Name) -> $rel"
+                }
+            }
+        }
+
+        if ($rotos.Count -gt 0) { throw ("Enlaces rotos:`n  " + ($rotos -join "`n  ")) }
+        $rotos.Count | Should Be 0
+    }
+
+    # El indice es la unica forma de llegar a docs\ desde la portada. Una pagina
+    # que no aparezca ahi queda escrita y perdida.
+    It "el README enlaza todas las paginas de docs" {
+        $docs = @(Get-ChildItem -LiteralPath (Join-Path $KitRoot 'docs') -Filter *.md -File -ErrorAction SilentlyContinue)
+        if ($docs.Count -eq 0) { return }
+
+        $readme = Get-Content -LiteralPath (Join-Path $KitRoot 'README.md') -Raw
+        $sinEnlace = @($docs | Where-Object { $readme -notmatch [regex]::Escape("docs/$($_.Name)") })
+
+        if ($sinEnlace.Count -gt 0) {
+            throw ("El README no enlaza:`n  " + (($sinEnlace | ForEach-Object { $_.Name }) -join "`n  "))
+        }
+        $sinEnlace.Count | Should Be 0
+    }
+
     # "El kit tiene N comandos" aparece en el README y en la cabecera de
     # Menu.ps1, y las dos se quedaron en 21 mientras bin\ crecia hasta 29.
     It "el numero de comandos que se anuncia es el que hay" {
