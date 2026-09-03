@@ -89,11 +89,61 @@ fallo suyo: seria contar la verdad sobre carpetas que estan pensadas para cambia
 Y ese es el dano: un verificador que avisa en falso se acaba ignorando, y se lleva por
 delante al que si funciona.
 
-**Si algun dia hace falta**, el hueco real es pequeno y esta identificado: Maven y
-Gradle se lanzan con un `.cmd` sin firma, asi que son los unicos donde Authenticode no
-llega. Eso se cierra con algo bastante menor que un manifiesto. Y la pieza de partida
-ya existe: `Get-InstalledRuntimeSha256`, que Python ya usa para anotar el suyo.
+### El hueco de Maven y Gradle, y por que tampoco se tapa (todavia)
 
-Lo que si justificaria el manifiesto entero es otra cosa: tener que **demostrarle a
-seguridad** que un entorno no se ha tocado, o preocuparse por un binario cambiado que
-siga estando firmado, que es lo unico que Authenticode no ve.
+Maven y Gradle se lanzan con un `.cmd`, y a un script por lotes no se le aplica
+Authenticode: son los dos unicos runtimes donde `Verify-Env` no puede decir nada de
+la firma. Se investigo a fondo y **se decidio dejarlo**, pero el trabajo de
+averiguarlo esta hecho y vale la pena no repetirlo.
+
+**Lo que ya esta cubierto**, y conviene no olvidarlo antes de preocuparse:
+
+| | |
+|---|---|
+| Maven | el zip se verifica contra su `.sha512` oficial (`Get-MavenRelease`) |
+| Gradle | contra el `checksumUrl` de su API (`Get-GradleRelease`) |
+
+O sea que "de donde vino el zip" esta resuelto. El hueco es solo lo que pase
+**despues** de instalar.
+
+**Que se podria tocar sin que nadie se entere**, de peor a menos malo:
+
+- `bin\mvn.cmd` y `bin\gradle.bat`: texto plano, y se ejecuta en cada compilacion.
+- Los `.jar` de `lib\`: el codigo real, mas dificil de manipular y de notar.
+
+**Por que aqui SI seria viable un manifiesto**, al reves que en el resto del kit:
+los shells que genera el kit van a la RAIZ de la carpeta del runtime
+(`Join-Path $ToolPath $nombre`, en `Write-BuildToolShell`), no dentro de `bin\`. De
+`bin\` el kit solo lee, para componer el PATH. **`bin\` y `lib\` no cambian nunca
+despues de instalar**, asi que hashearlos no puede dar falsas alarmas, que es
+justo lo que hunde la idea en Java, Python y VS Code.
+
+Con eso la cadena quedaria entera: zip verificado contra la fuente oficial, hash de
+lo extraido, y comparacion en cada `Verify-Env`. Lo suyo seria `bin\` **y** `lib\`:
+la diferencia de coste son un par de segundos, y cubrir solo el lanzador deja una
+asimetria rara de explicar. El unico riesgo de mantenimiento es que `-Force` tiene
+que REGENERAR el manifiesto; si no, reinstalar Maven deja a `Verify-Env` gritando
+contra el manifiesto viejo, que es el fallo que se queria evitar.
+
+**Y aun asi no se hace**, por tres razones:
+
+1. **El atacante no existe.** Lo que tenga permiso para editar `mvn.cmd` en tu perfil
+   tiene puertas mejores y ya abiertas: el perfil de PowerShell, la clave `AutoRun`
+   de cmd -que usa el propio `Use-Env`-, la carpeta de Inicio, las tareas
+   programadas. Blindar una mientras siguen abiertas doce no es seguridad: es la
+   apariencia de seguridad, que es peor porque tranquiliza.
+2. **Lo que si pasa ya esta cubierto.** En estas maquinas lo que falla no es la
+   manipulacion, es un zip a medias, un antivirus que se lleva un archivo o un proxy
+   que corrompe la descarga. `Verify-Env` ya lo caza, y los checksums lo cazan antes.
+3. **Va contra la disciplina del kit.** Casi cada prueba de aqui cubre un fallo que
+   existio de verdad. Esta seria la primera escrita contra una hipotesis, teniendo
+   sin verificar las cuatro cosas de arriba, donde el kit podria estar roto ahora.
+
+**Cuando rehacer esta decision**, sin volver a investigar nada: si alguien pide
+demostrar que un entorno no se ha tocado (auditoria, seguridad corporativa), o si
+aparece un incidente real de binarios manipulados. Ahi deja de ser hipotesis, el
+diseno ya esta arriba y la pieza de partida existe: `Get-InstalledRuntimeSha256`,
+que Python ya usa para anotar el suyo.
+
+Lo mismo justificaria el manifiesto general: un binario cambiado que siga estando
+firmado es lo unico que Authenticode no ve.
