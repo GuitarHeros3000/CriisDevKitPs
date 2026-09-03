@@ -18,14 +18,52 @@ $KitRoot = Split-Path -Parent $PSScriptRoot
 function Get-ArchivosDelKit {
     # Este mismo archivo queda fuera: habla DE las referencias, asi que sus
     # ejemplos (".\X.bat") no son referencias reales y se senalarian solos.
+    #
+    # El -Recurse de bin\ no es un detalle: los comandos dejaron de estar
+    # sueltos ahi y pasaron a bin\setup\, bin\start\, bin\env\ y bin\kit\, con
+    # lo que un Get-ChildItem sin recursion devuelve CERO archivos y esta
+    # prueba se quedo mirando una lista vacia sin que nadie lo notara.
+    #
+    # Los .ejemplo entran porque tambien dicen "ejecuta .\X.bat" y un usuario
+    # los copia tal cual: sources.json.ejemplo se quedo apuntando a un
+    # Doctor-Env.bat en la raiz que ya no existia.
     return @(
         (Get-ChildItem -LiteralPath $KitRoot -Filter *.bat -File),
-        (Get-ChildItem -LiteralPath (Join-Path $KitRoot 'bin') -Filter *.bat -File -ErrorAction SilentlyContinue),
+        (Get-ChildItem -LiteralPath (Join-Path $KitRoot 'bin') -Filter *.bat -File -Recurse -ErrorAction SilentlyContinue),
         (Get-ChildItem -LiteralPath (Join-Path $KitRoot 'scripts') -Filter *.ps1 -File -Recurse),
         (Get-ChildItem -LiteralPath (Join-Path $KitRoot 'lib') -Filter *.ps1 -File),
         (Get-ChildItem -LiteralPath (Join-Path $KitRoot 'tests') -Filter *.ps1 -File),
+        (Get-ChildItem -LiteralPath $KitRoot -Filter *.ejemplo -File),
         (Get-Item -LiteralPath (Join-Path $KitRoot 'README.md'))
     ) | ForEach-Object { $_ } | Where-Object { $_.Name -ne 'Referencias.Tests.ps1' }
+}
+
+# Una mencion a un comando del kit, en cualquiera de las formas en que se
+# escribe: .\Menu.bat en la raiz y .\bin\setup\Setup-JavaEnv.bat en bin\.
+#
+# Deliberadamente permisivo con las carpetas -acepta hasta tres niveles
+# cualesquiera- y estricto despues, cuando se comprueba con Test-Path. Al reves
+# no vale: un patron que solo admitiera las cuatro subcarpetas buenas dejaria
+# pasar en silencio un ".\bin\Doctor-Env.bat", que es justo el error a cazar.
+$PatronComando = '\.\\((?:[A-Za-z]+\\){0,3}[A-Za-z][A-Za-z-]*\.bat)'
+
+function Get-TextoNormalizado {
+    <#
+        El texto de un archivo con las barras dobles convertidas en simples.
+
+        Hace falta por los .ejemplo, que son JSON: ahi ".\bin\kit\Doctor-Env.bat"
+        se escribe ".\\bin\\kit\\Doctor-Env.bat" y el patron no lo reconoce. Sin
+        esto, meter los .ejemplo en la lista de archivos da la sensacion de
+        cubrirlos sin cubrir ninguno, que es exactamente el fallo que esta prueba
+        tuvo durante toda la reorganizacion de bin\.
+
+        Para el resto de archivos no cambia nada: el kit no escribe rutas con
+        barra doble fuera de JSON.
+    #>
+    param([string]$Texto)
+
+    if (-not $Texto) { return $Texto }
+    return ($Texto -replace '\\{2,}', '\')
 }
 
 Describe "Referencias a comandos del kit" {
@@ -39,10 +77,10 @@ Describe "Referencias a comandos del kit" {
         $rotas = @()
 
         foreach ($f in (Get-ArchivosDelKit)) {
-            $texto = Get-Content -LiteralPath $f.FullName -Raw
+            $texto = Get-TextoNormalizado -Texto (Get-Content -LiteralPath $f.FullName -Raw)
             if (-not $texto) { continue }
 
-            foreach ($m in ([regex]::Matches($texto, '\.\\((?:bin\\)?[A-Za-z][A-Za-z-]*\.bat)'))) {
+            foreach ($m in ([regex]::Matches($texto, $PatronComando))) {
                 $rel = $m.Groups[1].Value
                 if ($ajenos -contains (Split-Path -Leaf $rel)) { continue }
                 if (-not (Test-Path -LiteralPath (Join-Path $KitRoot $rel))) {
@@ -76,22 +114,49 @@ Describe "Referencias a comandos del kit" {
         $rotas.Count | Should Be 0
     }
 
-    # Cada .bat de bin\ tiene que llevar al .ps1 que le toca, y desde bin\ hay
-    # que subir un nivel. Olvidar el ..\ deja el comando sin arrancar.
+    # Cada .bat de bin\ tiene que llevar al .ps1 que le toca, y desde
+    # bin\<grupo>\ hay que subir DOS niveles. Olvidar un ..\ deja el comando sin
+    # arrancar.
+    #
+    # %~dp0 es la carpeta del PROPIO .bat, asi que la ruta se resuelve contra
+    # $b.DirectoryName y no contra bin\: con los comandos repartidos en cuatro
+    # subcarpetas, componerla contra bin\ daba una ruta que no existe ni cuando
+    # el enlace es correcto.
     It "cada .bat de bin apunta a un .ps1 que existe" {
         $rotas = @()
+        $bats = @(Get-ChildItem -LiteralPath (Join-Path $KitRoot 'bin') -Filter *.bat -File -Recurse)
 
-        foreach ($b in (Get-ChildItem -LiteralPath (Join-Path $KitRoot 'bin') -Filter *.bat -File)) {
+        # Sin esto la prueba pasa en verde con la lista vacia, que es como se
+        # quedo al mover los comandos a subcarpetas.
+        $bats.Count | Should Not Be 0
+
+        foreach ($b in $bats) {
             $texto = Get-Content -LiteralPath $b.FullName -Raw
             $m = [regex]::Match($texto, '-File "%~dp0([^"]+)"')
             if (-not $m.Success) { $rotas += "$($b.Name): no invoca ningun .ps1"; continue }
 
-            $destino = Join-Path (Join-Path $KitRoot 'bin') $m.Groups[1].Value
+            $destino = Join-Path $b.DirectoryName $m.Groups[1].Value
             if (-not (Test-Path -LiteralPath $destino)) { $rotas += "$($b.Name) -> $($m.Groups[1].Value)" }
         }
 
         if ($rotas.Count -gt 0) { throw ("Enlaces rotos:`n  " + ($rotas -join "`n  ")) }
         $rotas.Count | Should Be 0
+    }
+
+    # La prueba anterior comprueba que cada .bat llegue a SU .ps1, pero no que
+    # esten todos: si un comando se pierde al reorganizar carpetas, nadie se
+    # entera hasta que alguien lo busca. Cada .ps1 de scripts\ tiene su .bat,
+    # salvo Menu y Empezar, cuyos comandos se quedaron en la raiz.
+    It "todo script de scripts\ tiene su comando en bin\ o en la raiz" {
+        $faltan = @()
+
+        foreach ($s in (Get-ChildItem -LiteralPath (Join-Path $KitRoot 'scripts') -Filter *.ps1 -File -Recurse)) {
+            $bat = [IO.Path]::ChangeExtension($s.Name, '.bat')
+            if (-not (Resolve-KitCommand -Nombre $bat)) { $faltan += "$($s.Name) -> falta $bat" }
+        }
+
+        if ($faltan.Count -gt 0) { throw ("Scripts sin comando:`n  " + ($faltan -join "`n  ")) }
+        $faltan.Count | Should Be 0
     }
 
     # Los scripts pasaron a vivir dos niveles bajo la raiz (scripts\setup\ y

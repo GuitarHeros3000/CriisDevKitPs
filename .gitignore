@@ -5,9 +5,17 @@ softwares_locked/
 
 # Carpetas hermanas que crea el kit. Normalmente viven un nivel por encima, pero
 # se ignoran tambien aqui por si alguien clona el repo dentro del workspace.
+# Son las nueve del catalogo mas Apps\: la lista se quedo en cuatro cuando el kit
+# paso de cuatro runtimes a nueve, y las seis nuevas aparecian sin seguimiento.
 /Angular/
 /Python/
 /Java/
+/Node/
+/Git/
+/Maven/
+/Gradle/
+/Dotnet/
+/VSCode/
 /Apps/
 
 # Bundles de Export-Env y su manifiesto.

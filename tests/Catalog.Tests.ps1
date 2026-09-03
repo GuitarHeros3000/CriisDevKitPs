@@ -446,6 +446,22 @@ Describe "Cobertura del catalogo" {
     $scripts  = Join-Path (Split-Path -Parent $PSScriptRoot) "scripts"
     $catalogo = Get-RuntimeCatalog
 
+    # El mismo descuido, en otro archivo: .gitignore listaba las carpetas de los
+    # cuatro runtimes originales y se quedo ahi. Quien clona el kit dentro del
+    # workspace veia aparecer Node\, Git\, Maven\, Gradle\, Dotnet\ y VSCode\
+    # como sin seguimiento, y basta un "git add ." distraido para acabar
+    # subiendo un JDK entero al repositorio.
+    It "el .gitignore cubre la carpeta de los $($catalogo.Count) runtimes" {
+        $gitignore = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) ".gitignore")
+
+        foreach ($e in $catalogo) {
+            $reglas = @($gitignore | Where-Object { $_.Trim() -eq "/$($e.Carpeta)/" })
+            if ($reglas.Count -eq 0) {
+                throw "Falta /$($e.Carpeta)/ en .gitignore (runtime $($e.Nombre))"
+            }
+        }
+    }
+
     # Los comandos que deben admitir -Runtime con TODOS los del catalogo.
     $conValidateSet = @('Doctor-Env', 'Update-Env', 'Uninstall-Env', 'Use-Env', 'Export-Env', 'Import-Env')
 

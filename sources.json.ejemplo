@@ -7,7 +7,7 @@
   "_comentario_6": "archivo de checksums. La verificacion sigue detectando una descarga",
   "_comentario_7": "corrupta, pero ya no puede detectar un espejo alterado: confias en el",
   "_comentario_8": "espejo de tu empresa igual que confias en su proxy.",
-  "_comentario_9": "Comprueba que reglas estan activas con:  .\\Doctor-Env.bat",
+  "_comentario_9": "Comprueba que reglas estan activas con:  .\\bin\\kit\\Doctor-Env.bat",
 
   "reglas": [
     {

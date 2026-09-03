@@ -4,15 +4,17 @@ Configura entornos de desarrollo en laptops corporativas sin permisos de adminis
 
 ## Por donde entrar: `Menu.bat`
 
-El kit tiene 21 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
+El kit tiene 29 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
 pantalla que ademas responde la pregunta con la que uno llega: **que hay instalado**.
 
 ```
   ============================================================
-   CriisDevKit v2.0.0   -   entornos de desarrollo sin admin
+   CriisDevKit v2.1.0   -   entornos de desarrollo sin admin
   ============================================================
 
    Instalado: python 3.12
+
+     0  Empezar en un equipo nuevo
 
    INSTALAR
      1  Python     [3.12]          6  Maven
@@ -21,17 +23,32 @@ pantalla que ademas responde la pregunta con la que uno llega: **que hay instala
      4  Angular                    9  VS Code
      5  Git
 
-   ABRIR                           ENTORNO
-    20  Abrir un shell              40  Reproducir un devenv.json
-    21  Activar en toda terminal    41  Guardar devenv.json
-    22  Desactivar todo (Use-Env)   42  Fijar versiones (lock)
-                                    43  Llevar a otra maquina
-   MANTENER                         44  Traer de otra maquina
+   ABRIR
+    20  Abrir un shell
+    21  Activar en toda terminal
+    22  Desactivar todo (Use-Env)
+    23  Dar los JDK a VS Code
+    24  CA de la empresa en Java
+
+   MANTENER
     30  Diagnostico
-    31  Diagnostico y reparar      OTROS
-    32  Informe para un ticket      50  Instalar software sin admin
-    33  Ver actualizaciones         51  Pruebas del kit
+    31  Diagnostico y reparar
+    32  Informe para un ticket
+    33  Ver actualizaciones
     34  Desinstalar
+
+   ENTORNO
+    40  Reproducir un devenv.json
+    41  Guardar devenv.json
+    42  Fijar versiones (lock)
+    43  Llevar a otra maquina
+    44  Traer de otra maquina
+
+   OTROS
+    50  Instalar software sin admin
+    51  Pruebas del kit
+
+    q  Salir
 ```
 
 **No reimplementa nada.** Cada opcion llama al mismo `.bat` que usarias a mano, asi
