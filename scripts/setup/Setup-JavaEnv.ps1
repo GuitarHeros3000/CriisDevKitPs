@@ -160,7 +160,7 @@ function Get-AdoptiumBinary {
     }
 }
 
-$ReleaseMarker = ".assassinskipadm-release"
+$ReleaseMarker = ".criisdevkit-release"
 
 function Get-InstalledJavaVersion {
     param([string]$JavaExe)

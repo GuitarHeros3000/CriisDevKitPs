@@ -17,7 +17,7 @@
     Esto no pide admin: el cacerts esta dentro de la carpeta del JDK, que la
     puso el propio usuario.
 
-    La CA se guarda ademas en %LOCALAPPDATA%\AssassinSkipAdm para poder
+    La CA se guarda ademas en %LOCALAPPDATA%\CriisDevKit para poder
     reaplicarla sola cuando instales otro JDK.
 .PARAMETER Cert
     Archivo .cer o .crt de la CA. Si se omite, se intenta deducir mirando quien
@@ -50,7 +50,7 @@ $ErrorActionPreference = "Stop"
 
 . (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "lib\Common.ps1")
 
-$Alias = 'assassinskipadm-corp'
+$Alias = 'criisdevkit-corp'
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
@@ -174,7 +174,7 @@ else {
     $x = $hallazgo.Cert
 
     # Se exporta a un archivo porque keytool importa de archivo, no de memoria.
-    $tmp = Join-Path $env:TEMP "assassinskipadm-corp-ca.cer"
+    $tmp = Join-Path $env:TEMP "criisdevkit-corp-ca.cer"
     [IO.File]::WriteAllBytes($tmp, $x.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
     $certPath = $tmp
 }

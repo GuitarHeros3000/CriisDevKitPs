@@ -35,7 +35,7 @@ $ProgressPreference = "SilentlyContinue"
 # logs desplazarian por rotacion a los de las ejecuciones reales, que son los que
 # sirven para diagnosticar. Se define ANTES del dot-sourcing, que es cuando
 # Common.ps1 abre el registro.
-$env:ASSASSINSKIPADM_NOLOG = "1"
+$env:CRIISDEVKIT_NOLOG = "1"
 
 . (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "lib\Common.ps1")
 

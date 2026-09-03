@@ -124,7 +124,7 @@ if (-not (Test-ZipIntegrity -ZipPath $Path)) {
     exit 1
 }
 
-$bundleDir = Join-Path $env:TEMP ("assassinskipadm-import-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+$bundleDir = Join-Path $env:TEMP ("criisdevkit-import-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 
 try {
     Write-Log "Abriendo el bundle..."
@@ -269,7 +269,7 @@ try {
             # no lo mostraba, o sea que los dos caminos de instalacion dejaban
             # estados distintos.
             if ($p.sha256) {
-                Set-Content -LiteralPath (Join-Path $pythonPath ".assassinskipadm-sha256") `
+                Set-Content -LiteralPath (Join-Path $pythonPath ".criisdevkit-sha256") `
                             -Value $p.sha256 -Encoding ASCII
             }
         }
@@ -367,7 +367,7 @@ try {
             Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
 
             if ($j.release) {
-                Set-Content -LiteralPath (Join-Path $jdkPath ".assassinskipadm-release") `
+                Set-Content -LiteralPath (Join-Path $jdkPath ".criisdevkit-release") `
                             -Value $j.release -Encoding ASCII
             }
         }

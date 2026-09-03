@@ -18,7 +18,7 @@ env.json
 *.part
 
 # Copias que dejan Use-Env e Install-NoAdmin al respaldar algo del usuario.
-*.assassinskipadm-backup
+*.criisdevkit-backup
 autorun-previo.txt
 
 # Windows

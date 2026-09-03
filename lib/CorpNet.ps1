@@ -8,13 +8,13 @@
 #>
 
 
-$CorpCaFile = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\corp-ca.cer"
+$CorpCaFile = Join-Path $env:LOCALAPPDATA "CriisDevKit\corp-ca.cer"
 
 # La misma CA en PEM. Hacen falta las dos: keytool importa DER, y Node, pip y
 # Git solo entienden PEM. Guardar una y convertir al vuelo cada vez seria peor:
 # estas rutas acaban dentro de archivos de configuracion que tienen que seguir
 # siendo validos cuando el kit no esta corriendo.
-$CorpCaPem = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\corp-ca.pem"
+$CorpCaPem = Join-Path $env:LOCALAPPDATA "CriisDevKit\corp-ca.pem"
 
 function Write-CorpCaPem {
     <#
@@ -108,7 +108,7 @@ function Set-PipCorpCa {
     # Se reescribe entero y no se parchea: el kit es el unico que escribe aqui,
     # y un .ini a medio parchear es peor que uno regenerado.
     $lineas = @(
-        "# Escrito por AssassinSkipAdm (Use-CorpCert). Se puede borrar sin miedo.",
+        "# Escrito por CriisDevKit (Use-CorpCert). Se puede borrar sin miedo.",
         "[global]",
         "cert = $PemPath"
     )
@@ -167,8 +167,8 @@ function Set-MavenCorpProxy {
     if (-not (Test-Path -LiteralPath $cfg)) { return $false }
 
     $texto = Get-Content -LiteralPath $cfg -Raw
-    $marcaIni = '<!-- assassinskipadm:proxy -->'
-    $marcaFin = '<!-- /assassinskipadm:proxy -->'
+    $marcaIni = '<!-- criisdevkit:proxy -->'
+    $marcaFin = '<!-- /criisdevkit:proxy -->'
 
     # Fuera el bloque anterior, si lo hubiera. Con marcas propias no se toca
     # nada que hubiera escrito el usuario o la empresa en ese archivo.
@@ -192,7 +192,7 @@ function Set-MavenCorpProxy {
     $cred = Split-ProxyCredential -Proxy $proxy
 
     $bloque = @($marcaIni, '  <proxies>', '    <proxy>',
-                '      <id>assassinskipadm</id>', '      <active>true</active>',
+                '      <id>criisdevkit</id>', '      <active>true</active>',
                 "      <protocol>$($u.Scheme)</protocol>",
                 "      <host>$($u.Host)</host>",
                 "      <port>$($u.Port)</port>")
@@ -216,7 +216,7 @@ function Get-MavenCorpProxy {
     $cfg = Join-Path $MavenPath "conf\settings.xml"
     if (-not (Test-Path -LiteralPath $cfg)) { return $null }
     $m = [regex]::Match((Get-Content -LiteralPath $cfg -Raw),
-                        '<!-- assassinskipadm:proxy -->.*?<host>([^<]+)</host>.*?<port>([^<]+)</port>', 'Singleline')
+                        '<!-- criisdevkit:proxy -->.*?<host>([^<]+)</host>.*?<port>([^<]+)</port>', 'Singleline')
     if (-not $m.Success) { return $null }
     return "$($m.Groups[1].Value):$($m.Groups[2].Value)"
 }
@@ -393,7 +393,7 @@ function Import-JdkCertificate {
     param(
         [Parameter(Mandatory=$true)][string]$JdkPath,
         [Parameter(Mandatory=$true)][string]$CertPath,
-        [string]$Alias = 'assassinskipadm-corp'
+        [string]$Alias = 'criisdevkit-corp'
     )
 
     $keytool = Join-Path $JdkPath "bin\keytool.exe"
@@ -417,7 +417,7 @@ function Import-JdkCertificate {
 function Remove-JdkCertificate {
     param(
         [Parameter(Mandatory=$true)][string]$JdkPath,
-        [string]$Alias = 'assassinskipadm-corp'
+        [string]$Alias = 'criisdevkit-corp'
     )
 
     $keytool = Join-Path $JdkPath "bin\keytool.exe"
@@ -444,7 +444,7 @@ function Get-CorpNetStatus {
         $jdk = Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$l"
         $filas += [PSCustomObject]@{
             Nombre = "jdk-$l"; Que = 'CA'; Donde = 'cacerts'
-            Ok = ((Get-JdkTrustedAliases -JdkPath $jdk) -contains 'assassinskipadm-corp')
+            Ok = ((Get-JdkTrustedAliases -JdkPath $jdk) -contains 'criisdevkit-corp')
         }
     }
 
@@ -617,7 +617,7 @@ function Sync-JdkCertificates {
         sin la CA de la empresa y sus descargas fallan con un error de
         certificado que no menciona nada de esto.
     #>
-    param([string]$Alias = 'assassinskipadm-corp')
+    param([string]$Alias = 'criisdevkit-corp')
 
     if (-not (Test-Path -LiteralPath $CorpCaFile)) { return @() }
 

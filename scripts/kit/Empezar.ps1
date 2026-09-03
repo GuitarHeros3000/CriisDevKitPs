@@ -42,7 +42,7 @@ $ErrorActionPreference = "Stop"
 # Los comandos se invocan con Resolve-KitCommand y no componiendo rutas a mano.
 # Este archivo y los .bat se han movido de sitio dos veces, y las dos veces las
 # rutas escritas a mano se quedaron apuntando a donde ya no habia nada.
-$env:ASSASSINSKIPADM_NOPAUSE = "1"
+$env:CRIISDEVKIT_NOPAUSE = "1"
 
 function Confirmar {
     <#
@@ -112,7 +112,7 @@ function Paso {
 
 Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "  AssassinSkipAdm v$KitVersion - puesta en marcha" -ForegroundColor Cyan
+Write-Host "  CriisDevKit v$KitVersion - puesta en marcha" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Todo se instala en:  $WorkspaceRoot" -ForegroundColor Gray

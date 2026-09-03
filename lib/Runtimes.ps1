@@ -92,7 +92,7 @@ function Get-GitPortableRelease {
     #>
     param([string]$Version)
 
-    $cabeceras = @{ 'User-Agent' = "AssassinSkipAdm/$KitVersion"; 'Accept' = 'application/vnd.github+json' }
+    $cabeceras = @{ 'User-Agent' = "CriisDevKit/$KitVersion"; 'Accept' = 'application/vnd.github+json' }
 
     if ([string]::IsNullOrWhiteSpace($Version)) {
         $release = Invoke-JsonApi -Uri "$GitReleasesApi/latest" -Headers $cabeceras

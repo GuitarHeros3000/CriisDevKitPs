@@ -384,7 +384,7 @@ function Get-InstalledRuntimeVersion {
         'java' {
             # El release exacto (jdk-25.0.4.1+1) lo deja Setup-JavaEnv en un
             # marcador, porque el numero de build no sale de java -version.
-            $mk = Join-Path $dir ".assassinskipadm-release"
+            $mk = Join-Path $dir ".criisdevkit-release"
             if (Test-Path $mk) { return (Get-Content $mk -Raw).Trim() }
             return (Get-JdkVersionAt -JavaHome $dir)
         }
@@ -447,7 +447,7 @@ function Get-InstalledRuntimeSha256 {
 
     if ($Entrada.Clave -ne 'python') { return $null }
 
-    $mk = Join-Path (Join-Path $WorkspaceRoot "Python\python-$Linea") ".assassinskipadm-sha256"
+    $mk = Join-Path (Join-Path $WorkspaceRoot "Python\python-$Linea") ".criisdevkit-sha256"
     if (Test-Path -LiteralPath $mk) { return (Get-Content $mk -Raw).Trim() }
     return $null
 }

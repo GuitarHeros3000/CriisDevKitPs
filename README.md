@@ -9,7 +9,7 @@ pantalla que ademas responde la pregunta con la que uno llega: **que hay instala
 
 ```
   ============================================================
-   AssassinSkipAdm v2.0.0   -   entornos de desarrollo sin admin
+   CriisDevKit v2.0.0   -   entornos de desarrollo sin admin
   ============================================================
 
    Instalado: python 3.12
@@ -47,7 +47,7 @@ del trabajo, no la ventana**.
 ## Estructura del kit
 
 ```
-AssassinSkipAdmPy/
+CriisDevKitPs/
 ├── Empezar.bat               Empieza por aqui en un equipo nuevo
 ├── Menu.bat                  Todo lo que sabe hacer el kit
 ├── bin/                      Los 29 comandos, agrupados igual que scripts/
@@ -106,7 +106,7 @@ El kit nunca instala dentro de si mismo. Crea carpetas **hermanas**:
 
 ```
 Proyectos Individuales/
-├── AssassinSkipAdmPy/       (este kit)
+├── CriisDevKitPs/       (este kit)
 ├── Angular/
 │   ├── node-v20.19.0-win-x64/
 │   ├── angular-v18/
@@ -274,7 +274,7 @@ kit nuevo sigue leyendo los bundles v1, a los que simplemente les falta esa secc
 
 ## Registro de ejecuciones
 
-Cada ejecucion deja un archivo en `%LOCALAPPDATA%\AssassinSkipAdm\logs`, con el
+Cada ejecucion deja un archivo en `%LOCALAPPDATA%\CriisDevKit\logs`, con el
 nombre del comando y la hora:
 
 ```
@@ -316,7 +316,7 @@ Reglas que cumple:
 - **Silencioso.** El "Transcript started" iria a parar a la salida que leen otros
   procesos.
 - **La clave del proxy no acaba ahi**, ni siquiera dentro de un mensaje de .NET.
-- Se desactiva con `ASSASSINSKIPADM_NOLOG`.
+- Se desactiva con `CRIISDEVKIT_NOLOG`.
 
 ## Que hay para actualizar
 
@@ -360,7 +360,7 @@ Guarda el diagnostico en un markdown listo para mandar a IT, con el equipo, el
 usuario, la build de Windows, la version de PowerShell y la del kit:
 
 ```powershell
-.\bin\kit\Doctor-Env.bat -Report                              a %LOCALAPPDATA%\AssassinSkipAdm\informes
+.\bin\kit\Doctor-Env.bat -Report                              a %LOCALAPPDATA%\CriisDevKit\informes
 .\bin\kit\Doctor-Env.bat -Report -ReportPath D:\ticket.md     a donde tu digas
 ```
 
@@ -399,10 +399,10 @@ Sale con codigo 1 si encuentra algun problema grave, para poder encadenarlo en s
 
 Todos los `.bat` propagan el codigo de salida de su `.ps1`. Como ademas terminan en
 un `pause` (para que la ventana no se cierre al hacer doble clic), define
-`ASSASSINSKIPADM_NOPAUSE` cuando los invoques desde otro script y no esperaran tecla:
+`CRIISDEVKIT_NOPAUSE` cuando los invoques desde otro script y no esperaran tecla:
 
 ```powershell
-$env:ASSASSINSKIPADM_NOPAUSE = "1"
+$env:CRIISDEVKIT_NOPAUSE = "1"
 .\bin\kit\Doctor-Env.bat -SkipNetwork
 if ($LASTEXITCODE -ne 0) { "revisa el entorno antes de seguir" }
 ```
@@ -452,7 +452,7 @@ borrar la carpeta a mano dejaba rutas muertas en el PATH del usuario para siempr
 - Nunca toca el PATH de maquina ni instalaciones ajenas al kit.
 - Limpia el PATH **antes** de borrar carpetas: si algo falla, es preferible un PATH
   correcto con una carpeta de sobra que al reves.
-- Guarda copia del PATH previo en `%LOCALAPPDATA%\AssassinSkipAdm\path-backups\`.
+- Guarda copia del PATH previo en `%LOCALAPPDATA%\CriisDevKit\path-backups\`.
 
 ## Que version responde cuando hay varias
 
@@ -558,7 +558,7 @@ Detalles de seguridad, porque `AutoRun` corre en **cada** `cmd`, incluidos los
 
 - El script generado es **completamente silencioso**: cualquier salida corromperia
   lo que esos procesos leen. Verificado: `cmd /c echo HOLA` devuelve una sola linea.
-- Una **guarda heredada** (`ASSASSINSKIPADM_ACTIVE`) evita que el PATH crezca en
+- Una **guarda heredada** (`CRIISDEVKIT_ACTIVE`) evita que el PATH crezca en
   shells anidados. Verificado: 25 entradas con 1 nivel y 25 con 4 niveles.
 - El bloque del perfil va envuelto en `Test-Path`, asi que si se borran los archivos
   generados el perfil sigue funcionando.
@@ -930,7 +930,7 @@ como estaban.
 El proxy solo se escribe **si lo hay**. npm, pip y git si respetan `HTTPS_PROXY`, asi
 que para ellos no hace falta nada; Maven y Gradle son la excepcion.
 
-La CA se guarda en `%LOCALAPPDATA%\AssassinSkipAdm` -en DER para `keytool` y en PEM
+La CA se guarda en `%LOCALAPPDATA%\CriisDevKit` -en DER para `keytool` y en PEM
 para Node, pip y Git- y se **reaplica sola** al instalar cualquiera de esas
 herramientas, igual que los shells de Maven o los JDK de VS Code. `Doctor` dice
 cuales la tienen y lo repara con `-Fix`.
@@ -1604,7 +1604,7 @@ quien sirviera un zip manipulado serviria tambien un `.sigstore` a juego. Verifi
 de verdad exige contrastarlo contra el log de transparencia, o sea herramientas que
 una maquina bloqueada no tiene (y para Python haria falta Python).
 
-El SHA-256 que se anota en `.assassinskipadm-sha256` y muestra `Doctor` es
+El SHA-256 que se anota en `.criisdevkit-sha256` y muestra `Doctor` es
 **trazabilidad**: sirve para comparar dos maquinas que dicen tener la misma version y
 para detectar que los archivos cambiaron despues de instalarlos.
 
@@ -1629,7 +1629,7 @@ npm config set https-proxy http://usuario:clave@proxy.empresa:8080
 ```
 
 **El PATH quedo raro:** cada modificacion guarda una copia previa en
-`%LOCALAPPDATA%\AssassinSkipAdm\path-backups\`.
+`%LOCALAPPDATA%\CriisDevKit\path-backups\`.
 
 **Laptop sin permisos de admin:**
 - Todo funciona en carpetas de usuario

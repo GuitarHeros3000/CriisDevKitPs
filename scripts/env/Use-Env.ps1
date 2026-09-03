@@ -15,7 +15,7 @@
       - PowerShell : un bloque marcado en el perfil CurrentUserAllHosts.
       - cmd.exe    : la clave HKCU\Software\Microsoft\Command Processor\AutoRun.
 
-    Los scripts generados viven en %LOCALAPPDATA%\AssassinSkipAdm, fuera del kit.
+    Los scripts generados viven en %LOCALAPPDATA%\CriisDevKit, fuera del kit.
     Toman las rutas del shell que ya genera el setup, para no duplicar criterios.
 .PARAMETER Runtime
     Angular, Python, Java, Node o Git.
@@ -48,14 +48,14 @@ $ErrorActionPreference = "Stop"
 
 . (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "lib\Common.ps1")
 
-$StateDir     = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm"
+$StateDir     = Join-Path $env:LOCALAPPDATA "CriisDevKit"
 $StateFile    = Join-Path $StateDir "active.json"
 $ActivatePs1  = Join-Path $StateDir "activate.ps1"
 $ActivateCmd  = Join-Path $StateDir "activate.cmd"
 
-$MarkerStart  = '# >>> AssassinSkipAdm >>>'
-$MarkerEnd    = '# <<< AssassinSkipAdm <<<'
-$GuardVar     = 'ASSASSINSKIPADM_ACTIVE'
+$MarkerStart  = '# >>> CriisDevKit >>>'
+$MarkerEnd    = '# <<< CriisDevKit <<<'
+$GuardVar     = 'CRIISDEVKIT_ACTIVE'
 
 $ProfilePath  = $PROFILE.CurrentUserAllHosts
 $AutoRunKey   = 'Software\Microsoft\Command Processor'
@@ -212,7 +212,7 @@ function Write-ActivateScripts {
 
     # --- PowerShell ---
     $ps = @()
-    $ps += "# Generado por Use-Env.ps1 del kit AssassinSkipAdm. No editar a mano."
+    $ps += "# Generado por Use-Env.ps1 del kit CriisDevKit. No editar a mano."
     $ps += "# Se regenera cada vez que se activa o desactiva una version."
     $ps += ""
     $ps += "# La guarda evita que el PATH crezca en cada shell anidado: los procesos"
@@ -236,7 +236,7 @@ function Write-ActivateScripts {
     # esos procesos leen.
     $bat = @()
     $bat += "@echo off"
-    $bat += "rem Generado por Use-Env.ps1 del kit AssassinSkipAdm. No editar a mano."
+    $bat += "rem Generado por Use-Env.ps1 del kit CriisDevKit. No editar a mano."
     $bat += "if not defined $GuardVar ("
     $bat += "    set `"$GuardVar=1`""
     if ($allPaths.Count -gt 0) {
@@ -283,7 +283,7 @@ function Add-ProfileHook {
     }
 
     if (Test-Path -LiteralPath $ProfilePath) {
-        $backup = "$ProfilePath.assassinskipadm-backup"
+        $backup = "$ProfilePath.criisdevkit-backup"
         if (-not (Test-Path -LiteralPath $backup)) {
             Copy-Item -LiteralPath $ProfilePath -Destination $backup -Force
             Write-Log "  Copia del perfil previo: $backup"
@@ -313,9 +313,9 @@ function Add-ProfileHook {
     # PowerShell al cargar el perfil, en vez de tomarlos como parte del nombre.
     $block = @(
         $MarkerStart,
-        ("`$__assassinSkipAdm = '{0}'" -f (ConvertTo-PsLiteral $ActivatePs1)),
-        'if (Test-Path -LiteralPath $__assassinSkipAdm) { . $__assassinSkipAdm }',
-        'Remove-Variable __assassinSkipAdm -ErrorAction SilentlyContinue',
+        ("`$__criisDevKit = '{0}'" -f (ConvertTo-PsLiteral $ActivatePs1)),
+        'if (Test-Path -LiteralPath $__criisDevKit) { . $__criisDevKit }',
+        'Remove-Variable __criisDevKit -ErrorAction SilentlyContinue',
         $MarkerEnd
     ) -join "`r`n"
 

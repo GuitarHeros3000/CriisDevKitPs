@@ -68,7 +68,7 @@ function Backup-UserPath {
     param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
 
     try {
-        $dir = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\path-backups"
+        $dir = Join-Path $env:LOCALAPPDATA "CriisDevKit\path-backups"
         if (-not (Test-Path -LiteralPath $dir)) {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
         }
@@ -250,7 +250,7 @@ function Get-ActivationPaths {
         se aplican DESPUES de que Windows componga el PATH del proceso.
         Vacio si no hay activacion.
     #>
-    $activateCmd = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\activate.cmd"
+    $activateCmd = Join-Path $env:LOCALAPPDATA "CriisDevKit\activate.cmd"
     if (-not (Test-Path -LiteralPath $activateCmd)) { return @() }
 
     foreach ($line in (Get-Content -LiteralPath $activateCmd -ErrorAction SilentlyContinue)) {

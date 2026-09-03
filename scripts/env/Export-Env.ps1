@@ -151,7 +151,7 @@ function Get-JavaEntries {
         if ($dir.Name -notmatch '^jdk-(\d+)$') { continue }
         $major = [int]$Matches[1]
 
-        $marker = Join-Path $dir.FullName ".assassinskipadm-release"
+        $marker = Join-Path $dir.FullName ".criisdevkit-release"
         $release = if (Test-Path $marker) { (Get-Content $marker -Raw).Trim() } else { $null }
 
         $entries += [PSCustomObject]@{
@@ -237,7 +237,7 @@ foreach ($o in $otros)   { Write-Host "  $($o.Entrada.Nombre) $($o.Version)" }
 Write-Host ""
 
 # --- Carpeta temporal donde se arma el bundle ---
-$staging = Join-Path $env:TEMP ("assassinskipadm-export-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+$staging = Join-Path $env:TEMP ("criisdevkit-export-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
 try {

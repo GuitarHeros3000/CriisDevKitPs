@@ -17,7 +17,7 @@
 # el caso que mas importa, que es mandarle el diagnostico a IT. El transcript
 # captura toda la salida de consola sin tocar ni una de las 300 llamadas del kit.
 
-$KitLogDir = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\logs"
+$KitLogDir = Join-Path $env:LOCALAPPDATA "CriisDevKit\logs"
 
 # Eran 20, y se quedaba corto de largo. Un solo rato de trabajo -instalar cuatro
 # runtimes, comprobar con Doctor, desinstalar- se come esos 20 y borra todo lo
@@ -47,7 +47,7 @@ function Start-KitLog {
     .SYNOPSIS
         Abre el registro en archivo de esta ejecucion. Devuelve la ruta, o $null.
     .DESCRIPTION
-        Un archivo por ejecucion, en %LOCALAPPDATA%\AssassinSkipAdm\logs, para
+        Un archivo por ejecucion, en %LOCALAPPDATA%\CriisDevKit\logs, para
         poder decir "mandame el ultimo" sin mas explicaciones.
 
         Se llama solo al cargar Common.ps1. Reglas que cumple:
@@ -58,15 +58,15 @@ function Start-KitLog {
             otros procesos.
           - Uno por proceso. Common.ps1 se carga por dot-sourcing desde varios
             sitios y Start-Transcript da error si ya hay uno abierto.
-          - Se puede desactivar con ASSASSINSKIPADM_NOLOG.
+          - Se puede desactivar con CRIISDEVKIT_NOLOG.
 
         La clave del proxy no acaba aqui: todo lo que la imprime pasa antes por
         Format-ProxyForDisplay, asi que al registro llega ya enmascarada.
     #>
     param([string]$Name)
 
-    if ($env:ASSASSINSKIPADM_NOLOG) { return $null }
-    if ($env:ASSASSINSKIPADM_LOGFILE) { return $env:ASSASSINSKIPADM_LOGFILE }
+    if ($env:CRIISDEVKIT_NOLOG) { return $null }
+    if ($env:CRIISDEVKIT_LOGFILE) { return $env:CRIISDEVKIT_LOGFILE }
 
     try {
         if ([string]::IsNullOrWhiteSpace($Name)) {
@@ -84,7 +84,7 @@ function Start-KitLog {
 
         $file = Join-Path $KitLogDir ("{0}-{1}.log" -f $Name, (Get-Date -Format 'yyyyMMdd-HHmmss'))
         Start-Transcript -LiteralPath $file -Force | Out-Null
-        $env:ASSASSINSKIPADM_LOGFILE = $file
+        $env:CRIISDEVKIT_LOGFILE = $file
 
         Remove-OldKitLogs
         return $file

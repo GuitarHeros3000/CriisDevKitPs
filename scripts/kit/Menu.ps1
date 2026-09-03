@@ -107,7 +107,7 @@ function Show-Menu {
     Clear-Host
     Write-Host ""
     Write-Host "  ============================================================" -ForegroundColor Cyan
-    Write-Host "   AssassinSkipAdm v$KitVersion" -NoNewline -ForegroundColor Cyan
+    Write-Host "   CriisDevKit v$KitVersion" -NoNewline -ForegroundColor Cyan
     Write-Host "   -   entornos de desarrollo sin admin" -ForegroundColor DarkGray
     Write-Host "  ============================================================" -ForegroundColor Cyan
 
@@ -267,7 +267,7 @@ function Invoke-Opcion {
 
     # Se llama al .bat y no al .ps1 para que el comando sea EXACTAMENTE el que
     # se usaria a mano: mismo pause, mismo codigo de salida, misma salida.
-    # ASSASSINSKIPADM_NOPAUSE no se define: aqui el pause es util, deja leer.
+    # CRIISDEVKIT_NOPAUSE no se define: aqui el pause es util, deja leer.
     & $bat @argumentos
 }
 

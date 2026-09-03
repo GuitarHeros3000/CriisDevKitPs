@@ -111,7 +111,7 @@ function Test-JavaUpdates {
         # Se compara la marca de release que deja el setup, no lo que dice
         # "java -version": los formatos no coinciden entre familias y comparar
         # como texto da falsos positivos.
-        $marca = Join-Path $d.FullName ".assassinskipadm-release"
+        $marca = Join-Path $d.FullName ".criisdevkit-release"
         $instalada = if (Test-Path $marca) { (Get-Content -LiteralPath $marca -Raw).Trim() } else { $null }
         if (-not $instalada) {
             $v = Get-VersionDe -Exe (Join-Path $d.FullName "bin\java.exe") -Args_ @('-version') -Patron 'version "([^"]+)"'

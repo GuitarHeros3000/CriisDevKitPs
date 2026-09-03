@@ -46,7 +46,7 @@ $PythonFtpUrl = "https://www.python.org/ftp/python/"
 
 # Archivo donde se anota el SHA-256 del zip instalado. Trazabilidad, no
 # autenticidad: ver el comentario en Get-PythonPortable.
-$ShaMarker = ".assassinskipadm-sha256"
+$ShaMarker = ".criisdevkit-sha256"
 
 function Get-EmbedZipUrl {
     param([string]$FullVersion)

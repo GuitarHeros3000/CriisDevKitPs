@@ -23,7 +23,7 @@
     adjuntar a un ticket. La clave del proxy va enmascarada, como en pantalla.
 .PARAMETER ReportPath
     Donde guardarlo. Por defecto, junto a los registros, en
-    %LOCALAPPDATA%\AssassinSkipAdm\informes.
+    %LOCALAPPDATA%\CriisDevKit\informes.
 .EXAMPLE
     .\Doctor-Env.ps1
 .EXAMPLE
@@ -466,7 +466,7 @@ function Test-PythonInstall {
         # SHA-256 del zip con que se instalo. Es trazabilidad, no verificacion:
         # sirve para comparar dos maquinas que dicen tener la misma version.
         # python.org no publica hashes con los que contrastarlo.
-        $shaFile = Join-Path $v.FullName ".assassinskipadm-sha256"
+        $shaFile = Join-Path $v.FullName ".criisdevkit-sha256"
         if (Test-Path $shaFile) {
             Write-Check "  SHA-256 del zip" (Get-Content -LiteralPath $shaFile -Raw).Trim() 'info'
         }
@@ -577,7 +577,7 @@ function Show-JavaVersions {
         if (-not (Test-Path $shell)) {
             Write-Check "  java$num-shell.bat" "falta" 'warn'
             $rel = $null
-            $mk = Join-Path $v.FullName ".assassinskipadm-release"
+            $mk = Join-Path $v.FullName ".criisdevkit-release"
             if (Test-Path $mk) { $rel = (Get-Content $mk -Raw).Trim() }
             Add-Fix -Description "regenerar java$num-shell.bat" `
                     -Arguments @{ JdkPath = $v.FullName; Major = $num; Release = $rel } -Action {
@@ -1436,7 +1436,7 @@ function Test-UserPath {
         Write-Check "Rutas inexistentes" "ninguna" 'ok'
     }
 
-    $backupDir = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\path-backups"
+    $backupDir = Join-Path $env:LOCALAPPDATA "CriisDevKit\path-backups"
     if (Test-Path $backupDir) {
         $backups = @(Get-ChildItem $backupDir -Filter *.txt -ErrorAction SilentlyContinue)
         Write-Check "Copias del PATH" "$($backups.Count) en $backupDir" 'info'
@@ -1450,10 +1450,10 @@ function Test-UserPath {
         if ($logs.Count -gt 0) {
             Write-Check "Registro de ejecuciones" "$($logs.Count) en $KitLogDir" 'info'
             # Puede haber logs de ejecuciones ANTERIORES y no de esta: con
-            # ASSASSINSKIPADM_NOLOG la variable no existe. Sin esta comprobacion,
+            # CRIISDEVKIT_NOLOG la variable no existe. Sin esta comprobacion,
             # Split-Path recibia $null y Doctor escupia un error de PowerShell.
-            if ($env:ASSASSINSKIPADM_LOGFILE) {
-                Write-Detail "El de esta ejecucion: $(Split-Path -Leaf $env:ASSASSINSKIPADM_LOGFILE)"
+            if ($env:CRIISDEVKIT_LOGFILE) {
+                Write-Detail "El de esta ejecucion: $(Split-Path -Leaf $env:CRIISDEVKIT_LOGFILE)"
             }
             Write-Detail "Adjunta el mas reciente si tienes que abrir un ticket a IT."
         }
@@ -1788,7 +1788,7 @@ function Save-DoctorReport {
     param([string]$Destino)
 
     if ([string]::IsNullOrWhiteSpace($Destino)) {
-        $dir = Join-Path $env:LOCALAPPDATA "AssassinSkipAdm\informes"
+        $dir = Join-Path $env:LOCALAPPDATA "CriisDevKit\informes"
         if (-not (Test-Path -LiteralPath $dir)) {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
         }
@@ -1840,8 +1840,8 @@ function Save-DoctorReport {
         foreach ($f in $script:Fixes) { $pie += "- $($f.Description)" }
         $pie += ""
     }
-    if ($env:ASSASSINSKIPADM_LOGFILE) {
-        $pie += "Registro de esta ejecucion: ``$(Split-Path -Leaf $env:ASSASSINSKIPADM_LOGFILE)``"
+    if ($env:CRIISDEVKIT_LOGFILE) {
+        $pie += "Registro de esta ejecucion: ``$(Split-Path -Leaf $env:CRIISDEVKIT_LOGFILE)``"
         $pie += ""
     }
 
@@ -1913,7 +1913,7 @@ if ($aplicables.Count -eq 0) {
 
 if (-not $Force) {
     Write-Host "Se modificara tu PATH de usuario y/o archivos del kit." -ForegroundColor Yellow
-    Write-Host "Cada cambio del PATH deja copia en %LOCALAPPDATA%\AssassinSkipAdm." -ForegroundColor Gray
+    Write-Host "Cada cambio del PATH deja copia en %LOCALAPPDATA%\CriisDevKit." -ForegroundColor Gray
     if ($script:HayFixUseEnv -and -not $SkipUseEnv) {
         Write-Host ""
         Write-Host "ADEMAS, activar Use-Env toca dos cosas de tu perfil de usuario:" -ForegroundColor Yellow
