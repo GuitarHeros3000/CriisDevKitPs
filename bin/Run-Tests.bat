@@ -1,5 +1,5 @@
 @echo off
-powershell -ExecutionPolicy Bypass -File "%~dp0..\scripts\Run-Tests.ps1" %*
+powershell -ExecutionPolicy Bypass -File "%~dp0..\scripts\kit\Run-Tests.ps1" %*
 
 rem El codigo de salida se guarda ANTES del pause. El de un .bat es el del
 rem ultimo comando ejecutado, y pause devuelve 0 siempre, asi que el del

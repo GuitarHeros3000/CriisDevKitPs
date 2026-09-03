@@ -451,7 +451,7 @@ Describe "Cobertura del catalogo" {
 
     foreach ($nombre in $conValidateSet) {
         It "$nombre admite los $($catalogo.Count) runtimes del catalogo" {
-            $txt = Get-Content (Join-Path $scripts "$nombre.ps1") -Raw
+            $txt = Get-Content (Resolve-KitScript -Nombre "$nombre.ps1") -Raw
 
             # Doctor no tiene -Runtime; se comprueba que nombre cada carpeta.
             if ($nombre -eq 'Doctor-Env') {
@@ -494,14 +494,14 @@ Describe "Cobertura del catalogo" {
     }
 
     It "los que NO se empaquetan tienen su tratamiento propio en Export-Env" {
-        $txt = Get-Content (Join-Path $scripts "Export-Env.ps1") -Raw
+        $txt = Get-Content (Resolve-KitScript -Nombre "Export-Env.ps1") -Raw
         foreach ($e in ($catalogo | Where-Object { -not $_.Bundle })) {
             $txt | Should Match "Get-$($e.Carpeta)Entries"
         }
     }
 
     It "Restore-Env no nombra runtimes: los saca del catalogo" {
-        $txt = Get-Content (Join-Path $scripts "Restore-Env.ps1") -Raw
+        $txt = Get-Content (Resolve-KitScript -Nombre "Restore-Env.ps1") -Raw
         $txt | Should Match 'Get-RuntimeCatalog'
     }
 
@@ -509,7 +509,7 @@ Describe "Cobertura del catalogo" {
     # alguien las escribiera a mano, un runtime nuevo no apareceria y nadie se
     # enteraria hasta echarlo en falta.
     It "el menu saca los runtimes del catalogo" {
-        $txt = Get-Content (Join-Path $scripts "Menu.ps1") -Raw
+        $txt = Get-Content (Resolve-KitScript -Nombre "Menu.ps1") -Raw
         $txt | Should Match 'Get-RuntimeCatalog'
     }
 
@@ -517,15 +517,15 @@ Describe "Cobertura del catalogo" {
     # notaria al pulsarlo.
     It "todos los .bat que invoca el menu existen" {
         $raiz = Split-Path -Parent $PSScriptRoot
-        $txt = Get-Content (Join-Path $scripts "Menu.ps1") -Raw
+        $txt = Get-Content (Resolve-KitScript -Nombre "Menu.ps1") -Raw
         $bats = @([regex]::Matches($txt, "Bat\s*=\s*'([^']+\.bat)'") | ForEach-Object { $_.Groups[1].Value })
         $bats.Count | Should BeGreaterThan 5
-        # Menu.ps1 nombra los .bat sin carpeta; los comandos viven en bin\ y
-        # solo Empezar y Menu se quedaron en la raiz.
+        # Se comprueba con el MISMO resolutor que usa el menu al ejecutarlos.
+        # Antes esto miraba "raiz o bin" por su cuenta, y por eso no detecto
+        # que el menu solo miraba la raiz: la prueba y el codigo resolvian
+        # las rutas de forma distinta.
         foreach ($b in ($bats | Sort-Object -Unique)) {
-            $enRaiz = Test-Path (Join-Path $raiz $b)
-            $enBin  = Test-Path (Join-Path (Join-Path $raiz "bin") $b)
-            ($enRaiz -or $enBin) | Should Be $true
+            if (-not (Resolve-KitCommand -Nombre $b)) { throw "el menu invoca $b y no existe" }
         }
     }
 
@@ -601,7 +601,8 @@ Describe "Get-RuntimeCatalog" {
     It "cada entrada apunta a un script que existe" {
         $scripts = Join-Path (Split-Path -Parent $PSScriptRoot) "scripts"
         foreach ($e in $catalogo) {
-            Test-Path (Join-Path $scripts $e.Script) | Should Be $true
+            # Por el resolutor: el catalogo no dice en que subcarpeta viven.
+            [string]::IsNullOrEmpty((Resolve-KitScript -Nombre $e.Script)) | Should Be $false
         }
     }
 

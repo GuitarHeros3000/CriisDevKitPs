@@ -19,7 +19,7 @@ $KitRoot = Split-Path -Parent $PSScriptRoot
 # Install-NoAdmin.ps1 es un script ejecutable: se extrae solo la funcion por AST
 # para no disparar su programa principal.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
-    (Join-Path $KitRoot "scripts\Install-NoAdmin.ps1"), [ref]$null, [ref]$null)
+    (Resolve-KitScript -Nombre "Install-NoAdmin.ps1"), [ref]$null, [ref]$null)
 $funciones = $ast.FindAll({
         param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst]
     }, $true)

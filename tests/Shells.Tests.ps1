@@ -18,7 +18,7 @@ $KitRoot = Split-Path -Parent $PSScriptRoot
 # Get-ShellEnvironment vive en Use-Env.ps1, que es un script ejecutable: se
 # extrae solo esa funcion por AST para no disparar su programa principal.
 $useEnvAst = [System.Management.Automation.Language.Parser]::ParseFile(
-    (Join-Path $KitRoot "scripts\Use-Env.ps1"), [ref]$null, [ref]$null)
+    (Resolve-KitScript -Nombre "Use-Env.ps1"), [ref]$null, [ref]$null)
 $fnText = ($useEnvAst.FindAll({
         param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst]
     }, $true) | Where-Object { $_.Name -eq 'Get-ShellEnvironment' }).Extent.Text

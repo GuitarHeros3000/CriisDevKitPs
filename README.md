@@ -67,24 +67,13 @@ AssassinSkipAdmPy/
 │   └── UserPath.ps1         PATH de usuario
 ├── sources.json.ejemplo         Espejo interno (opcional)
 ├── devenv.json.ejemplo          Manifiesto de entorno (para tus proyectos)
-├── scripts/
-│   ├── Setup-AngularEnv.ps1     Start-AngularEnv.ps1
-│   ├── Setup-PythonEnv.ps1      Start-PythonEnv.ps1
-│   ├── Setup-JavaEnv.ps1        Start-JavaEnv.ps1
-│   ├── Setup-NodeEnv.ps1        Start-NodeEnv.ps1
-│   ├── Setup-GitEnv.ps1         Start-GitEnv.ps1
-│   ├── Setup-MavenEnv.ps1       Start-MavenEnv.ps1
-│   ├── Setup-GradleEnv.ps1      Start-GradleEnv.ps1
-│   ├── Setup-DotnetEnv.ps1      Start-DotnetEnv.ps1
-│   ├── Setup-VSCodeEnv.ps1      Start-VSCodeEnv.ps1
-│   ├── Restore-Env.ps1          Entorno entero desde devenv.json
-│   ├── Install-NoAdmin.ps1      Instalar software sin admin
-│   ├── Doctor-Env.ps1           Diagnostico y reparacion
-│   ├── Update-Env.ps1           Que hay desactualizado
-│   ├── Uninstall-Env.ps1        Retirar y limpiar el PATH
-│   ├── Use-Env.ps1              Ganarle a lo instalado con admin
-│   ├── Export-Env.ps1           Import-Env.ps1
-│   └── Run-Tests.ps1
+├── scripts/                  La implementacion, agrupada por lo que hace
+│   ├── setup/                Setup-*.ps1   instalar un runtime
+│   ├── start/                Start-*.ps1   abrir su shell
+│   ├── env/                  Export, Import, Restore, Uninstall, Update,
+│   │                         Use-Env, Use-CorpCert, Use-VSCodeJava
+│   └── kit/                  Empezar, Menu, Doctor-Env, Install-NoAdmin,
+│                             Run-Tests
 └── tests/                       Suite de Pester
 ```
 

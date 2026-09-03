@@ -16,6 +16,61 @@
 # lista y cada runtime nuevo obligaba a tocarlas todas.
 # --------------------------------------------------------------------------
 
+function Resolve-KitCommand {
+    <#
+        Donde vive un comando del kit (.bat), buscandolo por su nombre.
+
+        Lo mismo que Resolve-KitScript pero para la capa de arriba: casi todos
+        estan en bin\ y solo Empezar.bat y Menu.bat se quedaron en la raiz. El
+        menu los nombraba a secas y los componia contra la raiz, asi que al
+        moverlos a bin\ se quedo diciendo "Falta Doctor-Env.bat en el kit".
+
+        Devuelve $null si no existe.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Nombre)
+
+    foreach ($p in @(
+        (Join-Path $DevKitRoot $Nombre),
+        (Join-Path (Join-Path $DevKitRoot "bin") $Nombre)
+    )) {
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return $null
+}
+
+function Resolve-KitScript {
+    <#
+        Donde vive un script del kit, buscandolo por su nombre.
+
+        Existe para que nadie tenga que saber en que subcarpeta de scripts\ esta.
+        El catalogo guarda "Setup-JavaEnv.ps1" a secas, y Restore-Env, Doctor y
+        las pruebas lo resolvian cada uno por su cuenta pegando "scripts\"
+        delante. Con eso, mover un script de carpeta rompia tres sitios a la vez
+        y ninguno se enteraba hasta ejecutarlo.
+
+        Ahora hay un unico punto que lo sabe, y mover un script entre setup\,
+        start\, env\ y kit\ no obliga a tocar a nadie mas.
+
+        Devuelve $null si no existe, que es lo que deja a quien llama decidir si
+        eso es un error o no.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Nombre)
+
+    $raiz = Join-Path $DevKitRoot "scripts"
+    if (-not (Test-Path -LiteralPath $raiz)) { return $null }
+
+    # Primero donde toca por convencion, y solo si no esta se recorre el resto:
+    # asi el caso normal no depende de listar carpetas.
+    foreach ($sub in @('setup', 'start', 'env', 'kit')) {
+        $p = Join-Path (Join-Path $raiz $sub) $Nombre
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+
+    $hallado = @(Get-ChildItem -LiteralPath $raiz -Filter $Nombre -File -Recurse -ErrorAction SilentlyContinue)
+    if ($hallado.Count -gt 0) { return $hallado[0].FullName }
+    return $null
+}
+
 function Get-RuntimeCatalog {
     <#
         Fijable indica si el Setup de ese runtime acepta una version EXACTA o
