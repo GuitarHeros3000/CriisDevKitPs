@@ -95,7 +95,7 @@ function Get-MavenPortable {
         elseif ($instalada) {
             Write-Log "Ya hay Maven $instalada instalado en $FolderName" "WARN"
             Write-Log "  Disponible: $($Release.Version)" "WARN"
-            Write-Log "  Para actualizarlo:  .\bin\Setup-MavenEnv.bat -MavenVersion $($Release.Version) -Force" "WARN"
+            Write-Log "  Para actualizarlo:  .\bin\setup\Setup-MavenEnv.bat -MavenVersion $($Release.Version) -Force" "WARN"
             return $mavenPath
         }
         else {
@@ -158,7 +158,7 @@ $release = Get-MavenRelease -Version $MavenVersion
 if (-not $release) {
     Write-Log "No se pudo determinar que Maven instalar." "ERROR"
     Write-Log "  No se pudo leer $MavenBaseUrl. Reintenta, o indica la version:" "WARN"
-    Write-Log "    .\bin\Setup-MavenEnv.bat -MavenVersion 3.9.16" "WARN"
+    Write-Log "    .\bin\setup\Setup-MavenEnv.bat -MavenVersion 3.9.16" "WARN"
     exit 1
 }
 
@@ -172,13 +172,13 @@ if ($JavaVersion -and -not $javaHome) {
     $hay = @(Get-KitJdkLines)
     Write-Log "El kit no tiene instalado el JDK $JavaVersion." "ERROR"
     Write-Log "  Instalado: $(if ($hay.Count) { $hay -join ', ' } else { '(ninguno)' })" "WARN"
-    Write-Log "  Instalalo con:  .\bin\Setup-JavaEnv.bat -JavaVersion $JavaVersion" "WARN"
+    Write-Log "  Instalalo con:  .\bin\setup\Setup-JavaEnv.bat -JavaVersion $JavaVersion" "WARN"
     exit 1
 }
 
 Write-Log "Carpeta destino: $MavenRoot" "INFO"
 if ($javaHome) { Write-Log "JDK del kit:     $javaHome" "INFO" }
-else           { Write-Log "Sin JDK del kit: instala uno con .\bin\Setup-JavaEnv.bat" "WARN" }
+else           { Write-Log "Sin JDK del kit: instala uno con .\bin\setup\Setup-JavaEnv.bat" "WARN" }
 Write-Log ""
 
 if ($WhatIf) {
@@ -247,11 +247,11 @@ Write-Host "Maven $($release.Version) agregado al PATH." -ForegroundColor Green
 if (-not $javaHome) {
     Write-Host ""
     Write-Host "Maven NO arrancara sin un JDK. Instala uno con:" -ForegroundColor Yellow
-    Write-Host "  .\bin\Setup-JavaEnv.bat" -ForegroundColor White
+    Write-Host "  .\bin\setup\Setup-JavaEnv.bat" -ForegroundColor White
     Write-Host "y vuelve a ejecutar este comando para que el shell lo recoja." -ForegroundColor Gray
 }
 Write-Host ""
 Write-Host "Para comenzar:" -ForegroundColor Yellow
 Write-Host "  Usa el shell: ..\Maven\$FolderName\$shellName" -ForegroundColor White
-Write-Host "  Comprueba con: .\bin\Doctor-Env.bat" -ForegroundColor Gray
+Write-Host "  Comprueba con: .\bin\kit\Doctor-Env.bat" -ForegroundColor Gray
 Write-Host ""

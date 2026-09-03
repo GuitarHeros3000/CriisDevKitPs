@@ -51,7 +51,7 @@ $versions = @(Get-MavenVersions | Sort-Object { [version]$_.Linea } -Descending)
 if ($versions.Count -eq 0) {
     Write-Host "No hay versiones instaladas." -ForegroundColor Red
     Write-Host ""
-    Write-Host "Ejecuta: .\bin\Setup-MavenEnv.bat" -ForegroundColor White
+    Write-Host "Ejecuta: .\bin\setup\Setup-MavenEnv.bat" -ForegroundColor White
     Write-Host ""
     exit 1
 }
@@ -79,7 +79,7 @@ if (-not [string]::IsNullOrWhiteSpace($Version)) {
 if (-not (Get-KitJavaHome)) {
     Write-Host ""
     Write-Host "AVISO: no hay ningun JDK del kit; Maven no arrancara sin uno." -ForegroundColor Yellow
-    Write-Host "  Instalalo con .\bin\Setup-JavaEnv.bat y reejecuta .\bin\Setup-MavenEnv.bat" -ForegroundColor Gray
+    Write-Host "  Instalalo con .\bin\setup\Setup-JavaEnv.bat y reejecuta .\bin\setup\Setup-MavenEnv.bat" -ForegroundColor Gray
 }
 
 if (-not (Test-Path -LiteralPath $selected.Shell)) {

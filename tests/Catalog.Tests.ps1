@@ -534,9 +534,10 @@ Describe "Cobertura del catalogo" {
     It "existen el Setup y el Start de cada runtime del catalogo" {
         $raiz = Split-Path -Parent $PSScriptRoot
         foreach ($e in $catalogo) {
-            $bin = Join-Path $raiz "bin"
-            Test-Path (Join-Path $bin "Setup-$($e.Carpeta)Env.bat") | Should Be $true
-            Test-Path (Join-Path $bin "Start-$($e.Carpeta)Env.bat") | Should Be $true
+            # Por el resolutor, igual que el menu: bin\ tiene subcarpetas y
+            # componer la ruta aqui a mano volveria a desalinear prueba y codigo.
+            if (-not (Resolve-KitCommand -Nombre "Setup-$($e.Carpeta)Env.bat")) { throw "falta el Setup de $($e.Nombre)" }
+            if (-not (Resolve-KitCommand -Nombre "Start-$($e.Carpeta)Env.bat")) { throw "falta el Start de $($e.Nombre)" }
         }
     }
 }

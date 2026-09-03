@@ -20,19 +20,26 @@ function Resolve-KitCommand {
     <#
         Donde vive un comando del kit (.bat), buscandolo por su nombre.
 
-        Lo mismo que Resolve-KitScript pero para la capa de arriba: casi todos
-        estan en bin\ y solo Empezar.bat y Menu.bat se quedaron en la raiz. El
-        menu los nombraba a secas y los componia contra la raiz, asi que al
-        moverlos a bin\ se quedo diciendo "Falta Doctor-Env.bat en el kit".
+        Lo mismo que Resolve-KitScript pero para la capa de arriba: los comandos
+        estan en bin\, repartidos en las mismas cuatro subcarpetas que scripts\,
+        y solo Empezar.bat y Menu.bat se quedaron en la raiz.
+
+        El menu los nombraba a secas y los componia contra la raiz, asi que al
+        moverlos se quedo diciendo "Falta Doctor-Env.bat en el kit". Con esto,
+        moverlos otra vez no rompe a nadie.
 
         Devuelve $null si no existe.
     #>
     param([Parameter(Mandatory=$true)][string]$Nombre)
 
-    foreach ($p in @(
-        (Join-Path $DevKitRoot $Nombre),
-        (Join-Path (Join-Path $DevKitRoot "bin") $Nombre)
-    )) {
+    $bin = Join-Path $DevKitRoot "bin"
+    $candidatos = @($DevKitRoot, $bin)
+    foreach ($sub in @('setup', 'start', 'env', 'kit')) {
+        $candidatos += (Join-Path $bin $sub)
+    }
+
+    foreach ($d in $candidatos) {
+        $p = Join-Path $d $Nombre
         if (Test-Path -LiteralPath $p) { return $p }
     }
     return $null

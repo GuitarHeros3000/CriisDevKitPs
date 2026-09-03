@@ -42,7 +42,7 @@ $versions = @(Get-PythonVersions | Sort-Object { [version]$_.Version } -Descendi
 if ($versions.Count -eq 0) {
     Write-Host "No hay versiones instaladas." -ForegroundColor Red
     Write-Host ""
-    Write-Host "Ejecuta: .\bin\Setup-PythonEnv.bat -PythonVersion 3.12" -ForegroundColor White
+    Write-Host "Ejecuta: .\bin\setup\Setup-PythonEnv.bat -PythonVersion 3.12" -ForegroundColor White
     Write-Host ""
     exit 1
 }

@@ -489,7 +489,7 @@ try {
     Write-Host "  IMPORTACION COMPLETADA" -ForegroundColor Cyan
     Write-Host "============================================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "Comprueba el resultado con:  .\bin\Doctor-Env.bat" -ForegroundColor Gray
+    Write-Host "Comprueba el resultado con:  .\bin\kit\Doctor-Env.bat" -ForegroundColor Gray
     Write-Host ""
 }
 finally {

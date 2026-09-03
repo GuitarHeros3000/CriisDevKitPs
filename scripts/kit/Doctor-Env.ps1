@@ -352,7 +352,7 @@ function Test-AngularInstall {
 
     if (-not (Test-Path $AngularRoot)) {
         Write-Check "Instalado" "no ($AngularRoot no existe)" 'info'
-        Write-Detail "Instala con:  .\bin\Setup-AngularEnv.bat -AngularVersion 20"
+        Write-Detail "Instala con:  .\bin\setup\Setup-AngularEnv.bat -AngularVersion 20"
         return
     }
 
@@ -397,7 +397,7 @@ function Test-AngularInstall {
         }
         else {
             Write-Check "Angular v$num" "falta ng.cmd en npm-global" 'fail'
-            Write-Detail "Reejecuta:  .\bin\Setup-AngularEnv.bat -AngularVersion $num"
+            Write-Detail "Reejecuta:  .\bin\setup\Setup-AngularEnv.bat -AngularVersion $num"
         }
 
         if (-not (Test-Path $shell)) {
@@ -419,7 +419,7 @@ function Test-AngularInstall {
             }
             else {
                 Write-Detail "hay $($nodeDirs.Count) versiones de Node: no se puede deducir cual usaba"
-                Write-Detail "reejecuta:  .\bin\Setup-AngularEnv.bat -AngularVersion $num"
+                Write-Detail "reejecuta:  .\bin\setup\Setup-AngularEnv.bat -AngularVersion $num"
             }
         }
     }
@@ -430,7 +430,7 @@ function Test-PythonInstall {
 
     if (-not (Test-Path $PythonRoot)) {
         Write-Check "Instalado" "no ($PythonRoot no existe)" 'info'
-        Write-Detail "Instala con:  .\bin\Setup-PythonEnv.bat -PythonVersion 3.12"
+        Write-Detail "Instala con:  .\bin\setup\Setup-PythonEnv.bat -PythonVersion 3.12"
         return
     }
 
@@ -532,7 +532,7 @@ function Test-JavaInstall {
     try {
         if (-not (Test-Path $JavaRoot)) {
             Write-Check "Instalado" "no ($JavaRoot no existe)" 'info'
-            Write-Detail "Instala con:  .\bin\Setup-JavaEnv.bat -JavaVersion 21"
+            Write-Detail "Instala con:  .\bin\setup\Setup-JavaEnv.bat -JavaVersion 21"
             return
         }
 
@@ -642,7 +642,7 @@ function Test-JavaHome {
             Write-Detail "'java' en consola responde $verPath, pero Maven, Gradle y los IDE"
             Write-Detail "leen JAVA_HOME: compilarian con Java $mayHome."
             Write-Detail "Alinearlo NO necesita admin, el JAVA_HOME de usuario gana al de maquina:"
-            Write-Detail "  .\bin\Setup-JavaEnv.bat -SetJavaHome"
+            Write-Detail "  .\bin\setup\Setup-JavaEnv.bat -SetJavaHome"
             Write-Detail "OJO: cambia con que JDK compilan TODOS tus proyectos."
         }
         elseif ($mayHome -and $mayPath) {
@@ -657,7 +657,7 @@ function Test-JavaHome {
             if ($kitJdk) {
                 $lineaKit = Split-Path -Leaf $kitJdk
                 Write-Detail "Para que tambien la consola use el del kit:"
-                Write-Detail "  .\bin\Use-Env.bat -Runtime Java -Version $($lineaKit -replace '^jdk-','')"
+                Write-Detail "  .\bin\env\Use-Env.bat -Runtime Java -Version $($lineaKit -replace '^jdk-','')"
             }
         }
     }
@@ -674,7 +674,7 @@ function Test-NodeInstall {
     $nodeRoot = Join-Path $WorkspaceRoot "Node"
     if (-not (Test-Path $nodeRoot)) {
         Write-Check "Instalado" "no ($nodeRoot no existe)" 'info'
-        Write-Detail "Instala con:  .\bin\Setup-NodeEnv.bat"
+        Write-Detail "Instala con:  .\bin\setup\Setup-NodeEnv.bat"
         return
     }
 
@@ -693,7 +693,7 @@ function Test-NodeInstall {
 
         if (-not (Test-Path $exe)) {
             Write-Check "Node $($d.Name)" "falta node.exe" 'fail'
-            Write-Detail "Instalacion corrupta; reejecuta .\bin\Setup-NodeEnv.bat"
+            Write-Detail "Instalacion corrupta; reejecuta .\bin\setup\Setup-NodeEnv.bat"
             continue
         }
 
@@ -725,7 +725,7 @@ function Test-GitInstall {
 
     if (-not (Test-Path $GitRoot)) {
         Write-Check "Instalado" "no ($GitRoot no existe)" 'info'
-        Write-Detail "Instala con:  .\bin\Setup-GitEnv.bat"
+        Write-Detail "Instala con:  .\bin\setup\Setup-GitEnv.bat"
         return
     }
 
@@ -744,7 +744,7 @@ function Test-GitInstall {
 
         if (-not (Test-Path $exe)) {
             Write-Check "Git $($d.Name)" "falta cmd\git.exe" 'fail'
-            Write-Detail "Instalacion corrupta; reejecuta .\bin\Setup-GitEnv.bat -Force"
+            Write-Detail "Instalacion corrupta; reejecuta .\bin\setup\Setup-GitEnv.bat -Force"
             continue
         }
 
@@ -756,7 +756,7 @@ function Test-GitInstall {
         # instalacion sirve pero esta coja.
         if (-not (Test-Path (Join-Path $d.FullName "git-bash.exe"))) {
             Write-Check "  git-bash.exe" "falta" 'warn'
-            Write-Detail "Reinstala con:  .\bin\Setup-GitEnv.bat -Force"
+            Write-Detail "Reinstala con:  .\bin\setup\Setup-GitEnv.bat -Force"
         }
 
         # Si post-install.bat sigue ahi es que no llego a ejecutarse: git
@@ -980,7 +980,7 @@ function Test-VSCodeJavaRuntimes {
         if (-not $dicho) { Write-Section "VS Code y los JDK"; $dicho = $true }
 
         # El del equipo necesita -Global: sin el, el comando ni lo mira.
-        $cmd = ".\bin\Use-VSCodeJava.bat" + $(if ($t.DelKit) { "" } else { " -Global" })
+        $cmd = ".\bin\env\Use-VSCodeJava.bat" + $(if ($t.DelKit) { "" } else { " -Global" })
 
         if (-not $existe) {
             Write-Check $t.Etiqueta "sin ajustes; no conoce ningun JDK del kit" 'info'
@@ -1038,7 +1038,7 @@ function Test-DotnetInstall {
 
     if (-not (Test-Path $DotnetRoot)) {
         Write-Check "Instalado" "no ($DotnetRoot no existe)" 'info'
-        Write-Detail "Instala con:  .\bin\Setup-DotnetEnv.bat"
+        Write-Detail "Instala con:  .\bin\setup\Setup-DotnetEnv.bat"
         return
     }
 
@@ -1055,7 +1055,7 @@ function Test-DotnetInstall {
 
         if (-not (Test-Path (Join-Path $d.FullName "dotnet.exe"))) {
             Write-Check ".NET $($d.Name)" "falta dotnet.exe" 'fail'
-            Write-Detail "Instalacion corrupta; reejecuta .\bin\Setup-DotnetEnv.bat -Force"
+            Write-Detail "Instalacion corrupta; reejecuta .\bin\setup\Setup-DotnetEnv.bat -Force"
             continue
         }
 
@@ -1073,7 +1073,7 @@ function Test-DotnetInstall {
         $shell = Join-Path $d.FullName "dotnet$($canal -replace '\.','')-shell.bat"
         if (-not (Test-Path $shell)) {
             Write-Check "  $(Split-Path -Leaf $shell)" "falta" 'warn'
-            Write-Detail "Regeneralo con:  .\bin\Setup-DotnetEnv.bat -Channel $canal -Force"
+            Write-Detail "Regeneralo con:  .\bin\setup\Setup-DotnetEnv.bat -Channel $canal -Force"
         }
     }
 }
@@ -1083,7 +1083,7 @@ function Test-VSCodeInstall {
 
     if (-not (Test-Path $VSCodeRoot)) {
         Write-Check "Instalado" "no ($VSCodeRoot no existe)" 'info'
-        Write-Detail "Instala con:  .\bin\Setup-VSCodeEnv.bat"
+        Write-Detail "Instala con:  .\bin\setup\Setup-VSCodeEnv.bat"
         return
     }
 
@@ -1101,7 +1101,7 @@ function Test-VSCodeInstall {
 
         if (-not (Test-Path $exe)) {
             Write-Check "VS Code $($d.Name)" "falta Code.exe" 'fail'
-            Write-Detail "Instalacion corrupta; reejecuta .\bin\Setup-VSCodeEnv.bat -Force"
+            Write-Detail "Instalacion corrupta; reejecuta .\bin\setup\Setup-VSCodeEnv.bat -Force"
             continue
         }
 
@@ -1130,7 +1130,7 @@ function Test-VSCodeInstall {
         $shell = Join-Path $d.FullName "code$($linea -replace '\.','')-shell.bat"
         if (-not (Test-Path $shell)) {
             Write-Check "  $(Split-Path -Leaf $shell)" "falta" 'warn'
-            Write-Detail "Regeneralo con:  .\bin\Setup-VSCodeEnv.bat -Force -KeepData"
+            Write-Detail "Regeneralo con:  .\bin\setup\Setup-VSCodeEnv.bat -Force -KeepData"
         }
     }
 }
@@ -1290,7 +1290,7 @@ function Test-LockDrift {
 
         if ($lineas -notcontains $linea) {
             Write-Check $r.Nombre "el lock pide $($r.Version) y no esta instalado" 'fail'
-            Write-Detail "Instalalo con:  .\bin\Restore-Env.bat"
+            Write-Detail "Instalalo con:  .\bin\env\Restore-Env.bat"
             continue
         }
 
@@ -1314,7 +1314,7 @@ function Test-LockDrift {
         }
         else {
             Write-Check $r.Nombre "$instalada  DISTINTO del lock ($($r.Exacta))" 'fail'
-            Write-Detail "Para volver a lo que dice el lock:  .\bin\Restore-Env.bat"
+            Write-Detail "Para volver a lo que dice el lock:  .\bin\env\Restore-Env.bat"
         }
     }
 }
@@ -1577,7 +1577,7 @@ function Test-PathConflicts {
                     if ($script:UseEnvOfrecido -contains $rt.Runtime) { continue }
                     $script:UseEnvOfrecido += $rt.Runtime
 
-                    Write-Detail "Se puede resolver activandolo:  .\bin\Use-Env.bat -Runtime $($rt.Runtime) -Version $($rt.Version)"
+                    Write-Detail "Se puede resolver activandolo:  .\bin\env\Use-Env.bat -Runtime $($rt.Runtime) -Version $($rt.Version)"
                     $script:HayFixUseEnv = $true
                     Add-Fix -Description "activar $($rt.Nombre) $($rt.Version) con Use-Env (toca tu perfil de PowerShell y el AutoRun de cmd)" `
                             -TocaPerfil `
@@ -1653,56 +1653,56 @@ function Test-KitIntegrity {
         "scripts\env\Use-Env.ps1",
         "scripts\env\Export-Env.ps1",
         "scripts\env\Import-Env.ps1",
-        "bin\Export-Env.bat",
-        "bin\Import-Env.bat",
+        "bin\env\Export-Env.bat",
+        "bin\env\Import-Env.bat",
         "scripts\setup\Setup-JavaEnv.ps1",
         "scripts\start\Start-JavaEnv.ps1",
-        "bin\Setup-JavaEnv.bat",
-        "bin\Start-JavaEnv.bat",
-        "bin\Use-Env.bat",
-        "bin\Setup-AngularEnv.bat",
-        "bin\Setup-PythonEnv.bat",
-        "bin\Start-AngularEnv.bat",
-        "bin\Start-PythonEnv.bat",
-        "bin\Install-NoAdmin.bat",
-        "bin\Doctor-Env.bat",
-        "bin\Uninstall-Env.bat",
-        "bin\Run-Tests.bat",
+        "bin\setup\Setup-JavaEnv.bat",
+        "bin\start\Start-JavaEnv.bat",
+        "bin\env\Use-Env.bat",
+        "bin\setup\Setup-AngularEnv.bat",
+        "bin\setup\Setup-PythonEnv.bat",
+        "bin\start\Start-AngularEnv.bat",
+        "bin\start\Start-PythonEnv.bat",
+        "bin\kit\Install-NoAdmin.bat",
+        "bin\kit\Doctor-Env.bat",
+        "bin\env\Uninstall-Env.bat",
+        "bin\kit\Run-Tests.bat",
         "scripts\kit\Run-Tests.ps1",
-        "bin\Setup-NodeEnv.bat",
-        "bin\Start-NodeEnv.bat",
+        "bin\setup\Setup-NodeEnv.bat",
+        "bin\start\Start-NodeEnv.bat",
         "scripts\setup\Setup-NodeEnv.ps1",
         "scripts\start\Start-NodeEnv.ps1",
-        "bin\Update-Env.bat",
+        "bin\env\Update-Env.bat",
         "scripts\env\Update-Env.ps1",
-        "bin\Setup-GitEnv.bat",
-        "bin\Start-GitEnv.bat",
+        "bin\setup\Setup-GitEnv.bat",
+        "bin\start\Start-GitEnv.bat",
         "scripts\setup\Setup-GitEnv.ps1",
         "scripts\start\Start-GitEnv.ps1",
         "sources.json.ejemplo",
         "Empezar.bat",
         "scripts\kit\Empezar.ps1",
-        "bin\Use-VSCodeJava.bat",
+        "bin\env\Use-VSCodeJava.bat",
         "scripts\env\Use-VSCodeJava.ps1",
-        "bin\Use-CorpCert.bat",
+        "bin\env\Use-CorpCert.bat",
         "scripts\env\Use-CorpCert.ps1",
-        "bin\Setup-MavenEnv.bat",
-        "bin\Start-MavenEnv.bat",
+        "bin\setup\Setup-MavenEnv.bat",
+        "bin\start\Start-MavenEnv.bat",
         "scripts\setup\Setup-MavenEnv.ps1",
         "scripts\start\Start-MavenEnv.ps1",
-        "bin\Setup-GradleEnv.bat",
-        "bin\Start-GradleEnv.bat",
+        "bin\setup\Setup-GradleEnv.bat",
+        "bin\start\Start-GradleEnv.bat",
         "scripts\setup\Setup-GradleEnv.ps1",
         "scripts\start\Start-GradleEnv.ps1",
-        "bin\Setup-DotnetEnv.bat",
-        "bin\Start-DotnetEnv.bat",
+        "bin\setup\Setup-DotnetEnv.bat",
+        "bin\start\Start-DotnetEnv.bat",
         "scripts\setup\Setup-DotnetEnv.ps1",
         "scripts\start\Start-DotnetEnv.ps1",
-        "bin\Setup-VSCodeEnv.bat",
-        "bin\Start-VSCodeEnv.bat",
+        "bin\setup\Setup-VSCodeEnv.bat",
+        "bin\start\Start-VSCodeEnv.bat",
         "scripts\setup\Setup-VSCodeEnv.ps1",
         "scripts\start\Start-VSCodeEnv.ps1",
-        "bin\Restore-Env.bat",
+        "bin\env\Restore-Env.bat",
         "scripts\env\Restore-Env.ps1",
         "devenv.json.ejemplo",
         "Menu.bat",
@@ -1744,11 +1744,11 @@ Test-GitInstall
 Test-BuildToolInstall -Titulo "Maven" -Root $MavenRoot -Prefijo 'maven' `
                       -ExeRel 'bin\mvn.cmd' -ShellPrefijo 'mvn' `
                       -JarGlob 'lib\maven-core-*.jar' -JarRegex 'maven-core-([\d.]+)\.jar' `
-                      -SetupBat '.\bin\Setup-MavenEnv.bat'
+                      -SetupBat '.\bin\setup\Setup-MavenEnv.bat'
 Test-BuildToolInstall -Titulo "Gradle" -Root $GradleRoot -Prefijo 'gradle' `
                       -ExeRel 'bin\gradle.bat' -ShellPrefijo 'gradle' `
                       -JarGlob 'lib\gradle-launcher-*.jar' -JarRegex 'gradle-launcher-([\d.]+)\.jar' `
-                      -SetupBat '.\bin\Setup-GradleEnv.bat'
+                      -SetupBat '.\bin\setup\Setup-GradleEnv.bat'
 Test-DotnetInstall
 Test-VSCodeInstall
 Test-VSCodeJavaRuntimes
@@ -1835,7 +1835,7 @@ function Save-DoctorReport {
         ""
     )
     if ($script:Fixes.Count -gt 0) {
-        $pie += "Reparable automaticamente con ``.\bin\Doctor-Env.bat -Fix``:"
+        $pie += "Reparable automaticamente con ``.\bin\kit\Doctor-Env.bat -Fix``:"
         $pie += ""
         foreach ($f in $script:Fixes) { $pie += "- $($f.Description)" }
         $pie += ""
@@ -1895,9 +1895,9 @@ if ($omitidas.Count -gt 0) {
 Write-Host ""
 
 if (-not $Fix) {
-    Write-Host "Para arreglarlo:  .\bin\Doctor-Env.bat -Fix" -ForegroundColor Cyan
+    Write-Host "Para arreglarlo:  .\bin\kit\Doctor-Env.bat -Fix" -ForegroundColor Cyan
     if (@($script:Fixes | Where-Object { $_.TocaPerfil }).Count -gt 0 -and -not $SkipUseEnv) {
-        Write-Host "Sin tocar tu perfil:  .\bin\Doctor-Env.bat -Fix -SkipUseEnv" -ForegroundColor Cyan
+        Write-Host "Sin tocar tu perfil:  .\bin\kit\Doctor-Env.bat -Fix -SkipUseEnv" -ForegroundColor Cyan
     }
     Write-Host ""
     if ($script:Problems -gt 0) { exit 1 }
@@ -1919,7 +1919,7 @@ if (-not $Force) {
         Write-Host "ADEMAS, activar Use-Env toca dos cosas de tu perfil de usuario:" -ForegroundColor Yellow
         Write-Host "  1. $($PROFILE.CurrentUserAllHosts)" -ForegroundColor Gray
         Write-Host "  2. HKCU\Software\Microsoft\Command Processor  (valor AutoRun)" -ForegroundColor Gray
-        Write-Host "Nunca del sistema, y se revierte con:  .\bin\Use-Env.bat -Off" -ForegroundColor Gray
+        Write-Host "Nunca del sistema, y se revierte con:  .\bin\env\Use-Env.bat -Off" -ForegroundColor Gray
         Write-Host "Para dejarlo fuera:  -SkipUseEnv" -ForegroundColor Gray
     }
     Write-Host ""
@@ -1952,7 +1952,7 @@ Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  $hechas reparada(s), $fallidas con error" -ForegroundColor $(if ($fallidas -eq 0) { 'Cyan' } else { 'Red' })
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Vuelve a ejecutar .\bin\Doctor-Env.bat para comprobar." -ForegroundColor Gray
+Write-Host "Vuelve a ejecutar .\bin\kit\Doctor-Env.bat para comprobar." -ForegroundColor Gray
 Write-Host ""
 
 if ($fallidas -gt 0) { exit 1 }

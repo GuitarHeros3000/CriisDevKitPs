@@ -97,7 +97,7 @@ function Test-PythonUpdates {
 
         Add-Fila -Que "Python $serie" -Instalado $instalada `
                  -Disponible $(if ($ultima) { $ultima.Version } else { $null }) `
-                 -Comando ".\bin\Setup-PythonEnv.bat -PythonVersion $serie -Force"
+                 -Comando ".\bin\setup\Setup-PythonEnv.bat -PythonVersion $serie -Force"
     }
 }
 
@@ -116,7 +116,7 @@ function Test-JavaUpdates {
         if (-not $instalada) {
             $v = Get-VersionDe -Exe (Join-Path $d.FullName "bin\java.exe") -Args_ @('-version') -Patron 'version "([^"]+)"'
             Add-Fila -Que "Java $major" -Instalado $(if ($v) { "$v (sin marca)" } else { '?' }) `
-                     -Disponible $null -Comando ".\bin\Setup-JavaEnv.bat -JavaVersion $major -Force"
+                     -Disponible $null -Comando ".\bin\setup\Setup-JavaEnv.bat -JavaVersion $major -Force"
             continue
         }
 
@@ -125,7 +125,7 @@ function Test-JavaUpdates {
 
         Add-Fila -Que "Java $major" -Instalado $instalada `
                  -Disponible $(if ($bin) { $bin.Release } else { $null }) `
-                 -Comando ".\bin\Setup-JavaEnv.bat -JavaVersion $major -Force"
+                 -Comando ".\bin\setup\Setup-JavaEnv.bat -JavaVersion $major -Force"
     }
 }
 
@@ -152,8 +152,8 @@ function Test-NodeUpdates {
 
         # El comando lleva la version CONCRETA, no un marcador: la gracia de esta
         # pantalla es poder copiar y pegar la linea tal cual.
-        $cmd = if ($disponible) { ".\bin\Setup-NodeEnv.bat -NodeVersion $disponible -Force" }
-               else             { ".\bin\Setup-NodeEnv.bat -Force" }
+        $cmd = if ($disponible) { ".\bin\setup\Setup-NodeEnv.bat -NodeVersion $disponible -Force" }
+               else             { ".\bin\setup\Setup-NodeEnv.bat -Force" }
 
         Add-Fila -Que "Node $major (suelto)" -Instalado $instalada -Disponible $disponible -Comando $cmd
     }
@@ -185,8 +185,8 @@ function Test-GitUpdates {
         # 2.55, no una linea distinta que haya que elegir aparte.
         $disponible = if ($ultima) { $ultima.Version } else { $null }
 
-        $cmd = if ($disponible) { ".\bin\Setup-GitEnv.bat -GitVersion $disponible -Force" }
-               else             { ".\bin\Setup-GitEnv.bat -Force" }
+        $cmd = if ($disponible) { ".\bin\setup\Setup-GitEnv.bat -GitVersion $disponible -Force" }
+               else             { ".\bin\setup\Setup-GitEnv.bat -Force" }
 
         Add-Fila -Que "Git $linea" -Instalado $instalada -Disponible $disponible -Comando $cmd
     }
@@ -254,7 +254,7 @@ function Test-DotnetUpdates {
         $disponible = if ($rel) { $rel.SdkVersion } else { $null }
 
         Add-Fila -Que ".NET $canal" -Instalado $instalada -Disponible $disponible `
-                 -Comando ".\bin\Setup-DotnetEnv.bat -Channel $canal -Force"
+                 -Comando ".\bin\setup\Setup-DotnetEnv.bat -Channel $canal -Force"
     }
 }
 
@@ -282,7 +282,7 @@ function Test-VSCodeUpdates {
         # -KeepData en el comando sugerido: sin el, actualizar borraria los
         # ajustes y las extensiones del usuario.
         Add-Fila -Que "VS Code $linea" -Instalado $instalada -Disponible $disponible `
-                 -Comando ".\bin\Setup-VSCodeEnv.bat -Force -KeepData"
+                 -Comando ".\bin\setup\Setup-VSCodeEnv.bat -Force -KeepData"
     }
 }
 
@@ -305,7 +305,7 @@ function Test-AngularUpdates {
 
         Add-Fila -Que "Angular CLI $major" -Instalado $instalada `
                  -Disponible $(if ([string]::IsNullOrEmpty($ultima)) { $null } else { $ultima }) `
-                 -Comando ".\bin\Setup-AngularEnv.bat -AngularVersion $major"
+                 -Comando ".\bin\setup\Setup-AngularEnv.bat -AngularVersion $major"
     }
 
     # La Node que Angular instala para si mismo, que es distinta de la suelta.
@@ -319,7 +319,7 @@ function Test-AngularUpdates {
         $disponible = if ($lts.Count -gt 0) { $lts[0].Version } else { $null }
 
         Add-Fila -Que "Node $major (de Angular)" -Instalado $instalada -Disponible $disponible `
-                 -Comando "la elige el CLI: .\bin\Setup-AngularEnv.bat -AngularVersion <n>"
+                 -Comando "la elige el CLI: .\bin\setup\Setup-AngularEnv.bat -AngularVersion <n>"
     }
 }
 
@@ -339,13 +339,13 @@ if (Test-RuntimeSelected -Name 'Maven'   -Selected $Runtime) {
     Test-BuildToolUpdates -Titulo 'Maven' -Root $MavenRoot -Prefijo 'maven' `
                           -JarGlob 'lib\maven-core-*.jar' -JarRegex 'maven-core-([\d.]+)\.jar' `
                           -Consultar { Get-MavenRelease } `
-                          -SetupBat '.\bin\Setup-MavenEnv.bat' -Parametro '-MavenVersion'
+                          -SetupBat '.\bin\setup\Setup-MavenEnv.bat' -Parametro '-MavenVersion'
 }
 if (Test-RuntimeSelected -Name 'Gradle'  -Selected $Runtime) {
     Test-BuildToolUpdates -Titulo 'Gradle' -Root $GradleRoot -Prefijo 'gradle' `
                           -JarGlob 'lib\gradle-launcher-*.jar' -JarRegex 'gradle-launcher-([\d.]+)\.jar' `
                           -Consultar { Get-GradleRelease } `
-                          -SetupBat '.\bin\Setup-GradleEnv.bat' -Parametro '-GradleVersion'
+                          -SetupBat '.\bin\setup\Setup-GradleEnv.bat' -Parametro '-GradleVersion'
 }
 if (Test-RuntimeSelected -Name 'Dotnet'  -Selected $Runtime) { Test-DotnetUpdates }
 if (Test-RuntimeSelected -Name 'VSCode'  -Selected $Runtime) { Test-VSCodeUpdates }
@@ -376,7 +376,7 @@ $actualizables = @($script:Filas | Where-Object { $_.Estado -eq 'actualizable' }
 
 Write-Host ""
 if ($script:SinRed) {
-    Write-Host "Algunas no se pudieron comprobar: revisa la red o el proxy con .\bin\Doctor-Env.bat" -ForegroundColor DarkGray
+    Write-Host "Algunas no se pudieron comprobar: revisa la red o el proxy con .\bin\kit\Doctor-Env.bat" -ForegroundColor DarkGray
     Write-Host ""
 }
 

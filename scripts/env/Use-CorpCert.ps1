@@ -61,7 +61,7 @@ Write-Host ""
 $lineas = @(Get-KitJdkLines)
 if ($lineas.Count -eq 0) {
     Write-Log "El kit no tiene ningun JDK instalado." "ERROR"
-    Write-Log "  Instala uno con:  .\bin\Setup-JavaEnv.bat" "WARN"
+    Write-Log "  Instala uno con:  .\bin\setup\Setup-JavaEnv.bat" "WARN"
     exit 1
 }
 
@@ -165,7 +165,7 @@ else {
         Write-Host ""
         Write-Host "Si aun asi te falla un 'mvn install' con PKIX path building failed," -ForegroundColor Gray
         Write-Host "pide a IT el certificado raiz e indicalo a mano:" -ForegroundColor Gray
-        Write-Host "  .\bin\Use-CorpCert.bat -Cert C:\ruta\ca-empresa.cer" -ForegroundColor White
+        Write-Host "  .\bin\env\Use-CorpCert.bat -Cert C:\ruta\ca-empresa.cer" -ForegroundColor White
         Write-Host ""
         exit 0
     }
@@ -202,7 +202,7 @@ Write-Host ""
 Write-Host "Todo dentro de carpetas del kit: el cacerts de cada JDK, el gitconfig" -ForegroundColor DarkGray
 Write-Host "de ese Git, un pip.ini de esa Python y los shells generados. Nunca tu" -ForegroundColor DarkGray
 Write-Host "~\.gitconfig, tu ~\.m2\settings.xml ni tu %APPDATA%\pip." -ForegroundColor DarkGray
-Write-Host "No hace falta admin, y se deshace con:  .\bin\Use-CorpCert.bat -Remove" -ForegroundColor DarkGray
+Write-Host "No hace falta admin, y se deshace con:  .\bin\env\Use-CorpCert.bat -Remove" -ForegroundColor DarkGray
 Write-Host ""
 
 if ($WhatIf) { Write-Host "-WhatIf: no se ha tocado nada." -ForegroundColor Cyan; Write-Host ""; exit 0 }
@@ -269,5 +269,5 @@ Write-Host ""
 Write-Host "Maven, Gradle y cualquier herramienta Java del kit ya confian en la" -ForegroundColor Green
 Write-Host "CA de tu empresa: van todas por el cacerts que acabas de arreglar." -ForegroundColor Green
 Write-Host ""
-Write-Host "Comprueba con:  .\bin\Doctor-Env.bat" -ForegroundColor Gray
+Write-Host "Comprueba con:  .\bin\kit\Doctor-Env.bat" -ForegroundColor Gray
 Write-Host ""

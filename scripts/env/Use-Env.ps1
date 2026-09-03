@@ -433,9 +433,9 @@ function Show-Status {
 
     Write-Host ""
     Write-Host "Uso:" -ForegroundColor Yellow
-    Write-Host "  .\bin\Use-Env.bat -Runtime Angular -Version 22    Activar"
-    Write-Host "  .\bin\Use-Env.bat -Off -Runtime Angular           Desactivar una"
-    Write-Host "  .\bin\Use-Env.bat -Off                            Desactivar todo"
+    Write-Host "  .\bin\env\Use-Env.bat -Runtime Angular -Version 22    Activar"
+    Write-Host "  .\bin\env\Use-Env.bat -Off -Runtime Angular           Desactivar una"
+    Write-Host "  .\bin\env\Use-Env.bat -Off                            Desactivar todo"
     Write-Host ""
     Write-Host "Afecta a terminales NUEVAS, no a las ya abiertas." -ForegroundColor Gray
     Write-Host ""
@@ -496,7 +496,7 @@ if ($Off) {
 # --- Activar ---
 if ([string]::IsNullOrWhiteSpace($Version)) {
     Write-Log "Falta -Version." "ERROR"
-    Write-Log "  Ejemplo:  .\bin\Use-Env.bat -Runtime $Runtime -Version $(Get-VersionEjemplo -Rt $Runtime)" "WARN"
+    Write-Log "  Ejemplo:  .\bin\env\Use-Env.bat -Runtime $Runtime -Version $(Get-VersionEjemplo -Rt $Runtime)" "WARN"
     exit 1
 }
 
@@ -517,7 +517,7 @@ Write-Host "Esto modifica dos cosas de tu perfil de usuario (nunca del sistema):
 Write-Host "  1. $ProfilePath"
 Write-Host "  2. HKCU\$AutoRunKey  (valor AutoRun)"
 Write-Host ""
-Write-Host "Se puede revertir en cualquier momento con:  .\bin\Use-Env.bat -Off" -ForegroundColor Gray
+Write-Host "Se puede revertir en cualquier momento con:  .\bin\env\Use-Env.bat -Off" -ForegroundColor Gray
 Write-Host ""
 
 if (-not $Force) {
@@ -542,5 +542,5 @@ Write-Host ""
 Write-Host "Rutas que se antepondran:" -ForegroundColor Yellow
 foreach ($p in $paths) { Write-Host "  $p" }
 Write-Host ""
-Write-Host "Abre una terminal NUEVA y comprueba con:  .\bin\Doctor-Env.bat" -ForegroundColor Gray
+Write-Host "Abre una terminal NUEVA y comprueba con:  .\bin\kit\Doctor-Env.bat" -ForegroundColor Gray
 Write-Host ""

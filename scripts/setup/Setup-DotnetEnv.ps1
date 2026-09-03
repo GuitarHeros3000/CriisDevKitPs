@@ -88,7 +88,7 @@ function Install-DotnetSdk {
         elseif ($instalada) {
             Write-Log "Ya hay .NET SDK $instalada en $FolderName" "WARN"
             Write-Log "  Disponible: $($Release.SdkVersion)" "WARN"
-            Write-Log "  Para actualizarlo:  .\bin\Setup-DotnetEnv.bat -Channel $($Release.Channel) -Force" "WARN"
+            Write-Log "  Para actualizarlo:  .\bin\setup\Setup-DotnetEnv.bat -Channel $($Release.Channel) -Force" "WARN"
             return $dotnetPath
         }
         else {
@@ -273,5 +273,5 @@ Write-Host "usando el del sistema en vez de este." -ForegroundColor Gray
 Write-Host ""
 Write-Host "Para comenzar:" -ForegroundColor Yellow
 Write-Host "  Usa el shell: ..\Dotnet\$FolderName\$shellName" -ForegroundColor White
-Write-Host "  Comprueba con: .\bin\Doctor-Env.bat" -ForegroundColor Gray
+Write-Host "  Comprueba con: .\bin\kit\Doctor-Env.bat" -ForegroundColor Gray
 Write-Host ""

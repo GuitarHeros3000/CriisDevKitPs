@@ -94,7 +94,7 @@ Write-Host ""
 $lineas = @(Get-KitJdkLines)
 if ($lineas.Count -eq 0 -and -not $Remove) {
     Write-Log "El kit no tiene ningun JDK instalado." "ERROR"
-    Write-Log "  Instala uno con:  .\bin\Setup-JavaEnv.bat" "WARN"
+    Write-Log "  Instala uno con:  .\bin\setup\Setup-JavaEnv.bat" "WARN"
     exit 1
 }
 
@@ -136,7 +136,7 @@ else {
 
 if ($targets.Count -eq 0) {
     Write-Log "No hay ningun VS Code portable del kit." "ERROR"
-    Write-Log "  Instalalo con:  .\bin\Setup-VSCodeEnv.bat" "WARN"
+    Write-Log "  Instalalo con:  .\bin\setup\Setup-VSCodeEnv.bat" "WARN"
     if (@(Get-VSCodeSettingsTargets).Count -gt 0) {
         Write-Log "  O aplicalo al VS Code que ya tienes:  -Global" "WARN"
     }

@@ -66,7 +66,7 @@ $versions = @(Get-GitVersions | Sort-Object { [version]$_.Linea } -Descending)
 if ($versions.Count -eq 0) {
     Write-Host "No hay versiones instaladas." -ForegroundColor Red
     Write-Host ""
-    Write-Host "Ejecuta: .\bin\Setup-GitEnv.bat" -ForegroundColor White
+    Write-Host "Ejecuta: .\bin\setup\Setup-GitEnv.bat" -ForegroundColor White
     Write-Host ""
     exit 1
 }
@@ -96,7 +96,7 @@ if ($Bash) {
     if (-not (Test-Path -LiteralPath $selected.Bash)) {
         Write-Host ""
         Write-Host "Falta git-bash.exe en $($selected.Path)" -ForegroundColor Red
-        Write-Host "Reinstala con:  .\bin\Setup-GitEnv.bat -Force" -ForegroundColor White
+        Write-Host "Reinstala con:  .\bin\setup\Setup-GitEnv.bat -Force" -ForegroundColor White
         Write-Host ""
         exit 1
     }

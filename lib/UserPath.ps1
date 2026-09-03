@@ -349,7 +349,7 @@ function Show-PathConflicts {
     Write-Log "Ya habia otras versiones de $Label en el PATH:" "WARN"
     foreach ($o in $others) { Write-Log "  $o" "WARN" }
     Write-Log "  La que se acaba de instalar queda primera y es la que responde." "WARN"
-    Write-Log "  Para retirar las demas:  .\bin\Uninstall-Env.bat -Runtime $Label -Version <version>" "WARN"
+    Write-Log "  Para retirar las demas:  .\bin\env\Uninstall-Env.bat -Runtime $Label -Version <version>" "WARN"
 }
 
 function Remove-UserPathEntry {

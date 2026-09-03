@@ -186,7 +186,7 @@ function Get-PythonPortable {
         elseif ($installed) {
             Write-Log "Ya hay Python $installed instalado en $($EnvSetup.FolderName)" "WARN"
             Write-Log "  Disponible: $($EnvSetup.FullVersion)" "WARN"
-            Write-Log "  Para actualizarlo:  .\bin\Setup-PythonEnv.bat -PythonVersion $($EnvSetup.Version) -Force" "WARN"
+            Write-Log "  Para actualizarlo:  .\bin\setup\Setup-PythonEnv.bat -PythonVersion $($EnvSetup.Version) -Force" "WARN"
             Write-Log "  (-Force borra la carpeta y reinstala; perderias los paquetes pip)" "WARN"
             return $pythonFolderPath
         }

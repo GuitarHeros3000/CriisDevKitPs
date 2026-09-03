@@ -185,7 +185,7 @@ if ($Save) {
 
     if ($runtimes.Count -eq 0) {
         Write-Log "No hay nada instalado por el kit que anotar." "ERROR"
-        Write-Log "  Instala algo primero, por ejemplo:  .\bin\Setup-PythonEnv.bat" "WARN"
+        Write-Log "  Instala algo primero, por ejemplo:  .\bin\setup\Setup-PythonEnv.bat" "WARN"
         exit 1
     }
 
@@ -230,7 +230,7 @@ if ($Save) {
     }
     Write-Host ""
     Write-Host "Guardalo en el repositorio del proyecto: la receta viaja con el." -ForegroundColor Gray
-    Write-Host "En otra maquina, con el kit al lado:  .\bin\Restore-Env.bat" -ForegroundColor White
+    Write-Host "En otra maquina, con el kit al lado:  .\bin\env\Restore-Env.bat" -ForegroundColor White
     Write-Host ""
     exit 0
 }
@@ -248,7 +248,7 @@ $archivo    = if ($usandoLock) { $LockPath } else { $Path }
 if (-not (Test-Path -LiteralPath $archivo)) {
     Write-Log "No existe el manifiesto: $Path" "ERROR"
     Write-Log "  Crea uno a partir de lo que ya tengas instalado:" "WARN"
-    Write-Log "    .\bin\Restore-Env.bat -Save" "WARN"
+    Write-Log "    .\bin\env\Restore-Env.bat -Save" "WARN"
     exit 1
 }
 
@@ -263,7 +263,7 @@ else {
     }
     elseif (-not (Test-Path -LiteralPath $LockPath)) {
         Write-Log "  Sin lock: se instalara la ultima version de cada linea."
-        Write-Log "  Para fijar las exactas:  .\bin\Restore-Env.bat -Lock"
+        Write-Log "  Para fijar las exactas:  .\bin\env\Restore-Env.bat -Lock"
     }
 }
 
@@ -396,7 +396,7 @@ if ($fallidos.Count -eq 0) {
     Write-Host ""
     Write-Host "Instalados: $($ok -join ', ')" -ForegroundColor Green
     Write-Host ""
-    Write-Host "Comprueba el resultado con:  .\bin\Doctor-Env.bat" -ForegroundColor Gray
+    Write-Host "Comprueba el resultado con:  .\bin\kit\Doctor-Env.bat" -ForegroundColor Gray
     Write-Host ""
     exit 0
 }

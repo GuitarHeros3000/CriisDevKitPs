@@ -217,7 +217,7 @@ function Get-JavaPortable {
         elseif ($installedRelease) {
             Write-Log "Ya hay un JDK instalado en ${FolderName}: $installedRelease" "WARN"
             Write-Log "  Disponible: $($Binary.Release)" "WARN"
-            Write-Log "  Para actualizarlo:  .\bin\Setup-JavaEnv.bat -JavaVersion $JavaVersion -Force" "WARN"
+            Write-Log "  Para actualizarlo:  .\bin\setup\Setup-JavaEnv.bat -JavaVersion $JavaVersion -Force" "WARN"
             return $jdkPath
         }
         elseif ($installedVersion) {
@@ -402,5 +402,5 @@ Write-Host "JDK $($binary.Release) agregado al PATH." -ForegroundColor Green
 Write-Host ""
 Write-Host "Para comenzar:" -ForegroundColor Yellow
 Write-Host "  Usa el shell: ..\Java\$FolderName\java$JavaVersion-shell.bat" -ForegroundColor White
-Write-Host "  Comprueba con: .\bin\Doctor-Env.bat" -ForegroundColor Gray
+Write-Host "  Comprueba con: .\bin\kit\Doctor-Env.bat" -ForegroundColor Gray
 Write-Host ""

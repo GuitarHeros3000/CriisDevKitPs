@@ -69,7 +69,7 @@ $versions = @(Get-VSCodeVersions | Sort-Object { [version]$_.Linea } -Descending
 if ($versions.Count -eq 0) {
     Write-Host "No hay versiones instaladas." -ForegroundColor Red
     Write-Host ""
-    Write-Host "Ejecuta: .\bin\Setup-VSCodeEnv.bat" -ForegroundColor White
+    Write-Host "Ejecuta: .\bin\setup\Setup-VSCodeEnv.bat" -ForegroundColor White
     Write-Host ""
     exit 1
 }
@@ -115,7 +115,7 @@ if ($Shell) {
 if (-not (Test-Path -LiteralPath $selected.Exe)) {
     Write-Host ""
     Write-Host "Falta Code.exe en $($selected.Path)" -ForegroundColor Red
-    Write-Host "Reinstala con:  .\bin\Setup-VSCodeEnv.bat -Force -KeepData" -ForegroundColor White
+    Write-Host "Reinstala con:  .\bin\setup\Setup-VSCodeEnv.bat -Force -KeepData" -ForegroundColor White
     Write-Host ""
     exit 1
 }
