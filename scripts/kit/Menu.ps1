@@ -80,6 +80,7 @@ function Get-Opciones {
     $ops += [PSCustomObject]@{ Num = 33; Grupo = 'MANTENER';  Texto = 'Ver actualizaciones';       Bat = 'Update-Env.bat';      Clave = $null; Pide = $null }
     $ops += [PSCustomObject]@{ Num = 34; Grupo = 'MANTENER';  Texto = 'Desinstalar';               Bat = 'Uninstall-Env.bat';   Clave = $null; Pide = 'desinstalar' }
     $ops += [PSCustomObject]@{ Num = 35; Grupo = 'MANTENER';  Texto = 'Verificar lo instalado';    Bat = 'Verify-Env.bat';      Clave = $null; Pide = $null }
+    $ops += [PSCustomObject]@{ Num = 36; Grupo = 'MANTENER';  Texto = 'Aplicar actualizaciones';   Bat = 'Update-Env.bat';      Clave = $null; Pide = 'apply' }
 
     # Empezar va aparte y con el 0: es lo primero que hace falta en un equipo
     # nuevo, y enterrado en ENTORNO no lo encontraba nadie. Ademas, meterlo con
@@ -236,6 +237,7 @@ function Invoke-Opcion {
             $ver = ($Estado[$e.Clave] -split ',')[0].Trim()
             $argumentos = @('-Runtime', $e.Carpeta, '-Version', $ver)
         }
+        'apply'        { $argumentos = @('-Apply') }
         'off'          { $argumentos = @('-Off') }
         'fix'          { $argumentos = @('-Fix') }
         'report'       { $argumentos = @('-Report') }

@@ -39,6 +39,7 @@ pantalla que ademas responde la pregunta con la que uno llega: **que hay instala
     33  Ver actualizaciones
     34  Desinstalar
     35  Verificar lo instalado
+    36  Aplicar actualizaciones
 
    ENTORNO
     40  Reproducir un devenv.json
@@ -357,13 +358,38 @@ Para actualizar:
   Node 22 (suelto)   .\bin\setup\Setup-NodeEnv.bat -NodeVersion 22.23.2 -Force
 ```
 
-**No instala nada nunca.** Como `Doctor`, solo lee: te da el comando exacto y decides
-tu, porque actualizar implica `-Force` y en Python eso borra los paquetes pip.
-
-Sale con codigo **1 si hay algo que actualizar**, para poder encadenarlo.
+**Sin `-Apply` no instala nada**, igual que `Doctor` sin `-Fix`: solo lee y te da el
+comando exacto. Sale con codigo **1 si hay algo que actualizar**, para poder
+encadenarlo.
 
 Distingue la Node suelta de la que Angular instala para si mismo, porque son
 instalaciones independientes: la de Angular la elige su CLI y no se toca a mano.
+
+### -Apply: aplicarlas
+
+```powershell
+.\bin\env\Update-Env.bat -Apply                 Pide confirmacion
+.\bin\env\Update-Env.bat -Runtime Node -Apply   Solo uno
+.\bin\env\Update-Env.bat -Apply -Force          Sin preguntar
+```
+
+Ejecuta **exactamente los mismos comandos** que imprime sin el parametro, uno detras
+de otro. No hay una segunda implementacion de "actualizar" que pueda desviarse de lo
+que se anuncia: la cadena que se imprime y la que se ejecuta son la misma, y hay una
+prueba que lo comprueba.
+
+Tres decisiones que se notan cuando algo va mal:
+
+- **El aviso de pip sale antes de confirmar, y nombra las versiones afectadas.**
+  Actualizar implica `-Force`, que reinstala desde cero, y en Python eso borra sus
+  paquetes. Enterrado al final de la lista no lo leia nadie, y eso no tiene vuelta
+  atras. Antes: `pip freeze > requirements.txt`.
+- **Si un comando no se resuelve, no se aplica nada.** Ni siquiera los que si. Dejar
+  una tanda a medias deja el entorno en un estado que nadie pidio y que no se ve.
+- **Pero si uno FALLA al ejecutarse, se sigue con el resto.** Que no se pueda bajar
+  el JDK no es razon para no actualizar Maven. Se apuntan y se listan al final.
+
+Termina diciendo como comprobar que quedo bien: `.\bin\env\Verify-Env.bat`.
 
 ## Diagnostico
 

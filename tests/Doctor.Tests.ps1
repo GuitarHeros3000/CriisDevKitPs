@@ -14,38 +14,11 @@
 
 $KitRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $KitRoot "lib\Common.ps1")
-
-function Get-TextoDeFunciones {
-    <#
-        El codigo fuente de unas funciones de Doctor-Env.ps1, tal cual.
-
-        Doctor no se puede cargar entero: al final ejecuta el diagnostico y sale
-        con exit, que se llevaria por delante la sesion de Pester.
-    #>
-    param([string[]]$Nombres)
-
-    $ruta = Resolve-KitScript -Nombre "Doctor-Env.ps1"
-    if (-not $ruta) { throw "No se encuentra Doctor-Env.ps1" }
-
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile($ruta, [ref]$null, [ref]$null)
-    $partes = @()
-
-    foreach ($n in $Nombres) {
-        $fn = $ast.Find({
-            param($nodo)
-            $nodo -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $nodo.Name -eq $n
-        }.GetNewClosure(), $true)
-
-        if (-not $fn) { throw "Doctor-Env.ps1 ya no define $n" }
-        $partes += $fn.Extent.Text
-    }
-
-    return ($partes -join "`n")
-}
+. (Join-Path $PSScriptRoot "Helpers.ps1")
 
 # Al ambito del script, para que $script:JsonSections de las funciones y el de
 # las pruebas sean el mismo.
-. ([scriptblock]::Create((Get-TextoDeFunciones -Nombres @(
+. ([scriptblock]::Create((Get-TextoDeFunciones -Script "Doctor-Env.ps1" -Nombres @(
     'Add-JsonSection', 'Write-Section', 'Write-Check', 'Write-Detail', 'Save-DoctorJson'
 ))))
 

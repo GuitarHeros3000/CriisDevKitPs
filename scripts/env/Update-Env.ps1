@@ -7,23 +7,37 @@
     el setup correspondiente. Este comando compara lo instalado contra lo que
     publican las fuentes oficiales y te lo dice de una vez.
 
-    NO instala nada nunca. Es de solo lectura, como Doctor: se limita a decirte
-    el comando exacto que actualizaria cada cosa. Actualizar implica -Force, que
-    en Python borra los paquetes pip, asi que esa decision es siempre tuya.
+    Sin -Apply NO instala nada, como Doctor sin -Fix: se limita a decirte el
+    comando exacto que actualizaria cada cosa.
 
     Sale con codigo 1 si hay alguna actualizacion disponible, para poder
     encadenarlo ("avisame si hay algo nuevo"). Codigo 0 si esta todo al dia.
 .PARAMETER Runtime
     Comprueba solo uno: Angular, Python, Java o Node.
+.PARAMETER Apply
+    Ejecuta las actualizaciones en vez de solo listarlas. Son EXACTAMENTE los
+    mismos comandos que se imprimen sin este parametro, uno detras de otro.
+
+    Pide confirmacion, y no por formalidad: actualizar implica -Force, que
+    reinstala desde cero, y en Python eso se lleva por delante los paquetes pip
+    de esa version. Se avisa antes y nombrando cual.
+.PARAMETER Force
+    Con -Apply, no pide confirmacion. Mismo significado que en Doctor.
 .EXAMPLE
     .\Update-Env.ps1
 .EXAMPLE
     .\Update-Env.ps1 -Runtime Java
+.EXAMPLE
+    .\Update-Env.ps1 -Runtime Java -Apply
 #>
 
 param(
     [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')]
-    [string]$Runtime
+    [string]$Runtime,
+
+    [switch]$Apply,
+
+    [switch]$Force
 )
 
 $ProgressPreference = "SilentlyContinue"
@@ -56,12 +70,31 @@ function Add-Fila {
               elseif ($Disponible -eq $Instalado)   { 'al dia' }
               else                                  { 'actualizable' }
 
+    # El comando se parte AQUI, en el unico sitio, y no en los nueve
+    # Test-*Updates. La cadena no viene de fuera: la construye el propio kit dos
+    # lineas mas arriba con una version que acaba de resolver, asi que partirla
+    # por espacios es seguro. Y el .bat se resuelve con Resolve-KitCommand, el
+    # mismo que usa el menu, para que -Apply no se entere si manana se mueven de
+    # carpeta otra vez.
+    $bat = $null
+    $argumentos = @()
+
+    if ($Comando) {
+        $partes = @($Comando -split '\s+' | Where-Object { $_ })
+        if ($partes.Count -gt 0) {
+            $bat = Resolve-KitCommand -Nombre (Split-Path -Leaf $partes[0])
+            if ($partes.Count -gt 1) { $argumentos = @($partes[1..($partes.Count - 1)]) }
+        }
+    }
+
     $script:Filas += [PSCustomObject]@{
         Que        = $Que
         Instalado  = $Instalado
         Disponible = if ($Disponible) { $Disponible } else { '?' }
         Estado     = $estado
         Comando    = $Comando
+        Bat        = $bat
+        Argumentos = $argumentos
     }
     if ($estado -eq 'desconocido') { $script:SinRed = $true }
 }
@@ -391,10 +424,110 @@ foreach ($f in $actualizables) {
     Write-Host ("  {0,-24} {1}" -f $f.Que, $f.Comando)
 }
 Write-Host ""
-Write-Host "Ojo: -Force reinstala desde cero. En Python eso borra los paquetes pip" -ForegroundColor DarkGray
-Write-Host "de esa version; anotalos antes con  pip freeze > requirements.txt" -ForegroundColor DarkGray
+
+# --------------------------------------------------------------------------
+# -Apply
+# --------------------------------------------------------------------------
+
+$conPip = @($actualizables | Where-Object { $_.Que -like 'Python *' })
+
+if (-not $Apply) {
+    Write-Host "Ojo: -Force reinstala desde cero. En Python eso borra los paquetes pip" -ForegroundColor DarkGray
+    Write-Host "de esa version; anotalos antes con  pip freeze > requirements.txt" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "Para aplicarlas:  .\bin\env\Update-Env.bat -Apply" -ForegroundColor Cyan
+    Write-Host ""
+
+    # Codigo 1 = hay algo que actualizar, para poder encadenarlo. Mismo criterio
+    # que Doctor, que sale con 1 cuando encuentra algo que mirar.
+    exit 1
+}
+
+# Una fila actualizable cuyo comando no se pudo resolver no se ejecuta a medias:
+# se para todo. Ejecutar la mitad de una tanda deja el entorno en un estado que
+# nadie pidio y que ademas no se ve.
+$sinResolver = @($actualizables | Where-Object { -not $_.Bat })
+if ($sinResolver.Count -gt 0) {
+    Write-Host "No se encuentra el comando de:" -ForegroundColor Red
+    foreach ($f in $sinResolver) { Write-Host "  $($f.Que) -> $($f.Comando)" -ForegroundColor Red }
+    Write-Host ""
+    Write-Host "No se aplica nada. Revisa la instalacion del kit con .\bin\kit\Doctor-Env.bat" -ForegroundColor Yellow
+    Write-Host ""
+    exit 1
+}
+
+if (-not $Force) {
+    Write-Host "Se van a reinstalar desde cero $($actualizables.Count) runtime(s)." -ForegroundColor Yellow
+
+    # El aviso de pip, donde de verdad se lee: justo antes de decidir, y
+    # nombrando que versiones perderian sus paquetes. Enterrado al final de la
+    # lista no lo leia nadie.
+    if ($conPip.Count -gt 0) {
+        Write-Host ""
+        Write-Host "OJO: reinstalar Python BORRA sus paquetes pip. Afecta a:" -ForegroundColor Yellow
+        foreach ($f in $conPip) { Write-Host "  $($f.Que)" -ForegroundColor Yellow }
+        Write-Host "Anotalos antes, desde su shell:  pip freeze > requirements.txt" -ForegroundColor Gray
+    }
+
+    Write-Host ""
+    $respuesta = Read-Host "Confirmas? (escribe SI)"
+    if ($respuesta -ne 'SI') {
+        Write-Host "Cancelado. No se ha tocado nada." -ForegroundColor Yellow
+        Write-Host ""
+        exit 0
+    }
+}
+
+# Los .bat del kit hacen pause al terminar, y aqui van varios seguidos: sin
+# esto habria que pulsar una tecla entre cada uno. Se restaura al salir para no
+# cambiarle el entorno a quien nos llamo.
+$pausePrevio = $env:CRIISDEVKIT_NOPAUSE
+$env:CRIISDEVKIT_NOPAUSE = "1"
+
+$hechas = 0
+$fallidas = @()
+
+try {
+    foreach ($f in $actualizables) {
+        Write-Host ""
+        Write-Host "============================================" -ForegroundColor Cyan
+        Write-Host "  $($f.Que): $($f.Instalado) -> $($f.Disponible)" -ForegroundColor Cyan
+        Write-Host "============================================" -ForegroundColor Cyan
+        Write-Host "  > $($f.Comando)" -ForegroundColor DarkGray
+        Write-Host ""
+
+        & $f.Bat @($f.Argumentos)
+
+        if ($LASTEXITCODE -eq 0) {
+            $hechas++
+        }
+        else {
+            # No se corta la tanda: que falle el JDK no es razon para no
+            # actualizar Maven. Se apunta y se dice todo junto al final.
+            $fallidas += $f
+            Write-Host ""
+            Write-Host "  $($f.Que) fallo (codigo $LASTEXITCODE). Se sigue con el resto." -ForegroundColor Red
+        }
+    }
+}
+finally {
+    $env:CRIISDEVKIT_NOPAUSE = $pausePrevio
+}
+
+Write-Host ""
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host "  $hechas actualizada(s), $($fallidas.Count) con error" -ForegroundColor $(if ($fallidas.Count -eq 0) { 'Green' } else { 'Red' })
+Write-Host "============================================" -ForegroundColor Cyan
+
+if ($fallidas.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Con error:" -ForegroundColor Red
+    foreach ($f in $fallidas) { Write-Host "  $($f.Que) -> $($f.Comando)" -ForegroundColor Red }
+}
+
+Write-Host ""
+Write-Host "Comprueba como quedo:  .\bin\env\Verify-Env.bat" -ForegroundColor Gray
 Write-Host ""
 
-# Codigo 1 = hay algo que actualizar, para poder encadenarlo. Mismo criterio que
-# Doctor, que sale con 1 cuando encuentra algo que mirar.
-exit 1
+if ($fallidas.Count -gt 0) { exit 1 }
+exit 0
