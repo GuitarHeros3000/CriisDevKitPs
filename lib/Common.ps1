@@ -43,7 +43,7 @@ $WorkspaceRoot = Split-Path -Parent $DevKitRoot
 # no es cosmetico: Export-Env estampa este numero en cada bundle e Import-Env
 # avisa si no coincide con el suyo, asi que un bundle de hoy y uno de hace meses
 # decian ser lo mismo y ese aviso no podia funcionar.
-$KitVersion = "2.0.0"
+$KitVersion = "2.1.0"
 
 # Windows PowerShell 5.1 negocia TLS 1.0 por defecto, y python.org y nodejs.org
 # ya lo rechazan. Sin esto, las descargas fallan con un error de "conexion cerrada"

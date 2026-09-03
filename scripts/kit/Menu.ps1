@@ -80,7 +80,11 @@ function Get-Opciones {
     $ops += [PSCustomObject]@{ Num = 33; Grupo = 'MANTENER';  Texto = 'Ver actualizaciones';       Bat = 'Update-Env.bat';      Clave = $null; Pide = $null }
     $ops += [PSCustomObject]@{ Num = 34; Grupo = 'MANTENER';  Texto = 'Desinstalar';               Bat = 'Uninstall-Env.bat';   Clave = $null; Pide = 'desinstalar' }
 
-    $ops += [PSCustomObject]@{ Num = 39; Grupo = 'ENTORNO';   Texto = 'Empezar en un equipo nuevo'; Bat = 'Empezar.bat';        Clave = $null; Pide = $null }
+    # Empezar va aparte y con el 0: es lo primero que hace falta en un equipo
+    # nuevo, y enterrado en ENTORNO no lo encontraba nadie. Ademas, meterlo con
+    # el 39 delante del 40 dejaba esa decena empezando en un numero raro.
+    $ops += [PSCustomObject]@{ Num = 0;  Grupo = 'PRIMERO';   Texto = 'Empezar en un equipo nuevo'; Bat = 'Empezar.bat';        Clave = $null; Pide = $null }
+
     $ops += [PSCustomObject]@{ Num = 40; Grupo = 'ENTORNO';   Texto = 'Reproducir un devenv.json'; Bat = 'Restore-Env.bat';     Clave = $null; Pide = 'ruta' }
     $ops += [PSCustomObject]@{ Num = 41; Grupo = 'ENTORNO';   Texto = 'Guardar devenv.json';       Bat = 'Restore-Env.bat';     Clave = $null; Pide = 'save' }
     $ops += [PSCustomObject]@{ Num = 42; Grupo = 'ENTORNO';   Texto = 'Fijar versiones (lock)';    Bat = 'Restore-Env.bat';     Clave = $null; Pide = 'lock' }
@@ -116,6 +120,13 @@ function Show-Menu {
     else {
         Write-Host "   Instalado: " -NoNewline -ForegroundColor DarkGray
         Write-Host (($puestos | ForEach-Object { "$_ $($Estado[$_])" }) -join "   ") -ForegroundColor Green
+    }
+
+    # El arranque guiado, antes que nada: en un equipo nuevo es lo unico que
+    # hace falta saber, y el resto del menu se puede ignorar.
+    foreach ($o in ($Opciones | Where-Object { $_.Grupo -eq 'PRIMERO' })) {
+        Write-Host ""
+        Write-Host ("    {0,2}  {1}" -f $o.Num, $o.Texto) -ForegroundColor Cyan
     }
 
     $setup = @($Opciones | Where-Object { $_.Grupo -eq 'INSTALAR' })

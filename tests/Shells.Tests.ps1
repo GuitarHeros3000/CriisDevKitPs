@@ -209,7 +209,7 @@ Describe "Escapado de codigo generado" {
         }
 
         It "deja intacto lo que no lleva comilla" {
-            ConvertTo-PsLiteral 'C:\Users\crisr' | Should Be 'C:\Users\crisr'
+            ConvertTo-PsLiteral 'C:\Users\ejemplo' | Should Be 'C:\Users\ejemplo'
         }
 
         # Lo escapado tiene que volver a valer EXACTAMENTE lo de partida al

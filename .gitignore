@@ -25,3 +25,6 @@ autorun-previo.txt
 Thumbs.db
 desktop.ini
 $RECYCLE.BIN/
+
+# Ajustes locales del editor: llevan identificadores de la maquina.
+.vscode/

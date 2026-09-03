@@ -19,8 +19,8 @@ Describe "Format-ProxyForDisplay" {
     # que de "P@ssw0rd" se publicaba "***@ssw0rd". Y una clave con arroba mas una
     # cuenta de dominio es justo el caso corporativo tipico.
     It "tapa la clave entera aunque contenga un arroba" {
-        $r = Format-ProxyForDisplay 'https://dominio\crisr:P@ssw0rd@proxy.empresa:8080'
-        $r | Should Be 'https://dominio\crisr:***@proxy.empresa:8080'
+        $r = Format-ProxyForDisplay 'https://dominio\usuario:P@ssw0rd@proxy.empresa:8080'
+        $r | Should Be 'https://dominio\usuario:***@proxy.empresa:8080'
         $r | Should Not Match 'ssw0rd'
     }
 
