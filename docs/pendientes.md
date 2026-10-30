@@ -7,7 +7,7 @@ que se tomaron a proposito para no volver a discutirlas cada vez.
 
 ## Comprobaciones que necesitan otra maquina
 
-La suite cubre lo que se puede comprobar sin salir de un equipo. Estas cuatro no:
+La suite cubre lo que se puede comprobar sin salir de un equipo. Estas cinco no:
 necesitan hardware o una red que aqui no hay. Estan **sin verificar**, y eso no es
 lo mismo que estar mal.
 
@@ -73,6 +73,24 @@ Para probar las descargas de una arquitectura sin tener esa maquina:
 ```powershell
 $env:CRIISDEVKIT_ARCH = 'arm64'
 ```
+
+### 5. Visual C++ 2012 junto a UTILERIAPUENTEBR.EXE
+
+`Install-VCRuntime` existe por este programa: un "puente" de 32 bits en `C:\SYS\BR`
+que lanza cada opcion de un menu y no arranca sin `mfc110.dll`.
+
+Lo comprobado aqui: el redistribuible x86 y el x64 se abren sin ejecutarlos, sus 20
+DLL salen con firma valida de Microsoft, y el kit elige y copia las que pide un
+`.exe` fabricado para la prueba. Lo que **no** se ha visto es el programa de verdad:
+
+```powershell
+.\bin\kit\Install-VCRuntime.bat -App "C:\SYS\BR\UTILERIAPUENTEBR.EXE"
+```
+
+Que comprobar: que el kit lo lee como de 32 bits, que DLL dice que necesita (si
+`msvcp110.dll` entra o no lo decide el propio `.exe`), que despues de copiarlas
+las opciones del menu abren sin el error de `mfc110.dll`, y que en ese equipo la
+lectura de los MSI por COM no la bloquea ninguna directiva.
 
 ## Decisiones tomadas
 
@@ -148,7 +166,7 @@ contra el manifiesto viejo, que es el fallo que se queria evitar.
    que corrompe la descarga. `Verify-Env` ya lo caza, y los checksums lo cazan antes.
 3. **Va contra la disciplina del kit.** Casi cada prueba de aqui cubre un fallo que
    existio de verdad. Esta seria la primera escrita contra una hipotesis, teniendo
-   sin verificar las cuatro cosas de arriba, donde el kit podria estar roto ahora.
+   sin verificar las cinco cosas de arriba, donde el kit podria estar roto ahora.
 
 **Cuando rehacer esta decision**, sin volver a investigar nada: si alguien pide
 demostrar que un entorno no se ha tocado (auditoria, seguridad corporativa), o si

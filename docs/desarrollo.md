@@ -33,6 +33,7 @@ porque la sintaxis de asercion cambio (`Should Be` paso a `Should -Be`).
 | `Documentacion.Tests.ps1` | Que la documentacion no contradiga al codigo: version, opciones del menu, cuenta de comandos y enlaces |
 | `Download.Tests.ps1` | El diagnostico de un 407 y los cuatro estados de la firma Authenticode |
 | `InstallNoAdmin.Tests.ps1` | El ambito de una instalacion y si de verdad se evito el admin |
+| `Installers.Tests.ps1` | Leer un `.exe` (32, 64 bits y arm64), abrir un bundle Burn con la firma original en medio, y sacar los archivos de un MSI sin msiexec |
 | `Proxy.Tests.ps1` | Enmascarado de la clave, reglas de espejo y la URL del proxy |
 | `Referencias.Tests.ps1` | Que ningun archivo mencione un comando que no esta donde dice |
 | `Runtimes.Tests.ps1` | Resolver la version de Git y de los JDK, y el shell por cada JDK |
@@ -40,12 +41,18 @@ porque la sintaxis de asercion cambio (`Should Be` paso a `Should -Be`).
 | `Shells.Tests.ps1` | Que el `.bat` generado **funciona al ejecutarlo en cmd**, incluso con una ruta hostil, y que `Use-Env` recupera de el la ruta exacta |
 | `UpdateEnv.Tests.ps1` | Que el comando que `-Apply` ejecuta sea el mismo que se imprime |
 | `UserPath.Tests.ps1` | `Add-UserPathEntry` y `Remove-UserPathEntry` |
+| `VCRuntime.Tests.ps1` | Que DLL de Visual C++ necesita un programa, siguiendo la cadena, y que nunca se pise una de la otra arquitectura |
 
 Esta tabla la vigila una prueba: un archivo de pruebas que no aparezca aqui pone la
 suite en rojo. Se quedo desfasada dos veces antes de que la hubiera.
 
 Ninguna prueba toca el registro, el PATH real ni la red. Las del PATH sustituyen por
 mocks sus dos unicas puertas al sistema, `Get-RawUserPath` y `Save-UserPath`.
+
+Los ejecutables, bundles y MSI que necesitan `Installers` y `VCRuntime` se fabrican
+en la propia prueba (`New-PeDePrueba` en `tests\Helpers.ps1`, `makecab.exe` y la API
+de Windows Installer), en vez de leer los de System32: esos cambian de arquitectura
+segun la maquina, y en el runner no hay ningun programa MFC.
 
 ### En cada push: un Windows que nadie ha tocado
 
@@ -63,7 +70,7 @@ venga de fabrica**. Si una imagen de Windows deja de traerlo, el job lo dice con
 aviso en vez de instalarlo sin mas y seguir como si nada, porque eso cambiaria el
 argumento de *Por que Pester 3.4*, aqui arriba.
 
-Y antes de las pruebas pasa los 52 `.ps1` por el analizador de sintaxis. Las pruebas
+Y antes de las pruebas pasa todos los `.ps1` por el analizador de sintaxis. Las pruebas
 cargan `lib\` entera, pero de `scripts\` solo leen el texto de unos cuantos: un error
 de sintaxis en un comando poco visitado no lo notaba nadie hasta ejecutarlo.
 

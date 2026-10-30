@@ -17,17 +17,18 @@ lo encontraba nadie -y se desfasaba sin que se notara.
 | [Redes corporativas](docs/red-corporativa.md) | Proxy, NTLM, la CA que intercepta TLS, el espejo interno y las firmas Authenticode |
 | [Llevarse el entorno](docs/portabilidad.md) | El bundle para una maquina sin internet, y reproducir un entorno con `devenv.json` |
 | [Install-NoAdmin](docs/install-noadmin.md) | Instalar software de terceros en modo portable |
+| [Runtime de Visual C++](docs/vcruntime.md) | Las DLL que pide un programa ajeno (`mfc110.dll`...), junto a el y sin admin |
 | [Trabajar en el kit](docs/desarrollo.md) | Las pruebas, el CI y como anadir un runtime nuevo |
 | [Pendientes y decisiones](docs/pendientes.md) | Lo que falta comprobar en otra maquina, y lo que se decidio NO hacer |
 
 ## Por donde entrar: `Menu.bat`
 
-El kit tiene 30 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
+El kit tiene 31 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
 pantalla que ademas responde la pregunta con la que uno llega: **que hay instalado**.
 
 ```
   ============================================================
-   CriisDevKit v2.1.0   -   entornos de desarrollo sin admin
+   CriisDevKit v2.2.0   -   entornos de desarrollo sin admin
   ============================================================
 
    Instalado: python 3.12
@@ -66,7 +67,8 @@ pantalla que ademas responde la pregunta con la que uno llega: **que hay instala
 
    OTROS
     50  Instalar software sin admin
-    51  Pruebas del kit
+    51  Runtime de Visual C++
+    52  Pruebas del kit
 
     q  Salir
 ```
@@ -87,12 +89,13 @@ del trabajo, no la ventana**.
 CriisDevKitPs/
 ├── Empezar.bat               Empieza por aqui en un equipo nuevo
 ├── Menu.bat                  Todo lo que sabe hacer el kit
-├── bin/                      Los 30 comandos, agrupados igual que scripts/
+├── bin/                      Los 31 comandos, agrupados igual que scripts/
 │   ├── setup/                Setup-*.bat   instalar un runtime
 │   ├── start/                Start-*.bat   abrir su shell
 │   ├── env/                  Export, Import, Restore, Uninstall, Update,
 │   │                         Use-Env, Use-CorpCert, Use-VSCodeJava, Verify-Env
-│   └── kit/                  Doctor-Env, Install-NoAdmin, Run-Tests
+│   └── kit/                  Doctor-Env, Install-NoAdmin, Install-VCRuntime,
+│                             Run-Tests
 ├── lib/                     La libreria, un archivo por responsabilidad
 │   ├── Common.ps1           Rutas base y carga de los demas (es el unico que
 │   │                        cargan los scripts; los otros salen de aqui)
@@ -103,6 +106,8 @@ CriisDevKitPs/
 │   ├── Semver.ps1           Rangos de version de npm
 │   ├── Shells.ps1           Los .bat que genera el kit
 │   ├── Tools.ps1            7z, innoextract, Node
+│   ├── Installers.ps1       Leer .exe, bundles Burn y MSI sin ejecutarlos
+│   ├── VCRuntime.ps1        Runtimes de Visual C++ para programas ajenos
 │   ├── Runtimes.ps1         Git, Maven, Gradle, .NET, VS Code
 │   ├── CorpNet.ps1          La CA de la empresa y el proxy por herramienta
 │   ├── VSCode.ps1           Ajustes, extensiones y los JDK que conoce
@@ -116,7 +121,7 @@ CriisDevKitPs/
 │   ├── env/                  Export, Import, Restore, Uninstall, Update,
 │   │                         Use-Env, Use-CorpCert, Use-VSCodeJava, Verify-Env
 │   └── kit/                  Empezar, Menu, Doctor-Env, Install-NoAdmin,
-│                             Run-Tests
+│                             Install-VCRuntime, Run-Tests
 ├── docs/                     La documentacion por temas (ver el indice arriba)
 └── tests/                       Suite de Pester
 ```
@@ -204,9 +209,13 @@ Proyectos Individuales/
 ├── VSCode/
 │   └── vscode-1.135/
 │       └── data/            (tus ajustes y extensiones: esto lo hace portable)
-└── Apps/                    (software instalado en modo portable)
-    ├── tools/               (7z e innoextract, si el kit los necesito)
-    └── <nombre-app>/
+├── Apps/                    (software instalado en modo portable)
+│   ├── tools/               (7z e innoextract, si el kit los necesito)
+│   └── <nombre-app>/
+└── VCRuntime/               (DLL de Visual C++ para dejar junto a un programa)
+    └── vc-2012/
+        ├── x86/
+        └── x64/
 ```
 
 Una carpeta por **linea**, no por version: `python-3.12`, `jdk-21`, `node-22`,

@@ -1,0 +1,16 @@
+@echo off
+echo ============================================
+echo   Install-VCRuntime
+echo   Runtime de Visual C++ sin admin
+echo ============================================
+echo.
+powershell -ExecutionPolicy Bypass -File "%~dp0..\..\scripts\kit\Install-VCRuntime.ps1" %*
+
+rem El codigo de salida se guarda ANTES del pause. El de un .bat es el del
+rem ultimo comando ejecutado, y pause devuelve 0 siempre, asi que el del
+rem script se perdia.
+rem Para encadenar este .bat desde otro script define CRIISDEVKIT_NOPAUSE
+rem y no se detendra a esperar una tecla.
+set "RC=%ERRORLEVEL%"
+if not defined CRIISDEVKIT_NOPAUSE pause
+exit /b %RC%

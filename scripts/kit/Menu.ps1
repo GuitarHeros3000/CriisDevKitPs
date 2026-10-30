@@ -3,7 +3,7 @@
 .SYNOPSIS
     Menu.ps1 - Menu de consola del kit.
 .DESCRIPTION
-    El kit tiene 30 comandos y nadie se los sabe de memoria. Esto los reune en
+    El kit tiene 31 comandos y nadie se los sabe de memoria. Esto los reune en
     una pantalla que ademas dice QUE HAY INSTALADO, que es la pregunta con la
     que uno llega.
 
@@ -94,7 +94,8 @@ function Get-Opciones {
     $ops += [PSCustomObject]@{ Num = 44; Grupo = 'ENTORNO';   Texto = 'Traer de otra maquina';     Bat = 'Import-Env.bat';      Clave = $null; Pide = 'ruta-zip' }
 
     $ops += [PSCustomObject]@{ Num = 50; Grupo = 'OTROS';     Texto = 'Instalar software sin admin'; Bat = 'Install-NoAdmin.bat'; Clave = $null; Pide = 'instalador' }
-    $ops += [PSCustomObject]@{ Num = 51; Grupo = 'OTROS';     Texto = 'Pruebas del kit';           Bat = 'Run-Tests.bat';       Clave = $null; Pide = $null }
+    $ops += [PSCustomObject]@{ Num = 51; Grupo = 'OTROS';     Texto = 'Runtime de Visual C++';     Bat = 'Install-VCRuntime.bat'; Clave = $null; Pide = 'vcruntime' }
+    $ops += [PSCustomObject]@{ Num = 52; Grupo = 'OTROS';     Texto = 'Pruebas del kit';           Bat = 'Run-Tests.bat';       Clave = $null; Pide = $null }
 
     return $ops
 }
@@ -246,6 +247,7 @@ function Invoke-Opcion {
         'ruta'         { $r = Read-Texto -Prompt "   Ruta del devenv.json (vacio = carpeta actual)"; if ($r) { $argumentos = @('-Path', $r) } }
         'ruta-zip'     { $r = Read-Texto -Prompt "   Ruta del .zip"; if (-not $r) { return }; $argumentos = @('-Path', $r) }
         'instalador'   { $r = Read-Texto -Prompt "   Ruta del instalador"; if (-not $r) { return }; $argumentos = @('-Path', $r) }
+        'vcruntime'    { $r = Read-Texto -Prompt "   Ruta del .exe que lo pide (vacio = solo descargarlo)"; if ($r) { $argumentos = @('-App', $r) } }
         'desinstalar'  {
             Write-Host ""
             Write-Host "   Vacio = TODO lo que instalo el kit." -ForegroundColor DarkGray
@@ -255,7 +257,7 @@ function Invoke-Opcion {
     }
 
     # Por el resolutor: la tabla de opciones nombra los .bat a secas, y estan
-    # repartidos entre la raiz (Empezar, Menu) y bin\ (los otros 29).
+    # repartidos entre la raiz (Empezar, Menu) y bin\ (todos los demas).
     $bat = Resolve-KitCommand -Nombre $Op.Bat
     if (-not $bat) { $bat = Join-Path $raiz $Op.Bat }
     if (-not (Test-Path -LiteralPath $bat)) {

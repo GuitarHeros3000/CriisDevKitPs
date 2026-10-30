@@ -140,7 +140,7 @@ que lo lea una persona; esto, para que no.
 ```json
 {
   "version_formato": 1,
-  "kit":      { "version": "2.1.0", "raiz": "...", "workspace": "..." },
+  "kit":      { "version": "2.2.0", "raiz": "...", "workspace": "..." },
   "maquina":  { "equipo": "PC-1234", "usuario": "jperez", "windows": "10.0.26200.0" },
   "resumen":  { "problemas": 0, "avisos": 3 },
   "secciones": [
@@ -191,7 +191,8 @@ Es lo primero que conviene ejecutar cuando algo falla, o al llegar a un equipo n
 No modifica nada: solo lee. Comprueba integridad del kit, sistema y espacio libre,
 proxy y conectividad real a los cuatro dominios de los que depende todo, versiones de
 Angular/Node/Python instaladas (incluido si el `._pth` esta parcheado y si pip responde),
-herramientas de `Install-NoAdmin`, y salud del PATH (duplicados, rutas muertas, longitud).
+herramientas de `Install-NoAdmin`, si Windows encuentra los runtimes de Visual C++ para
+programas de 32 y de 64 bits, y salud del PATH (duplicados, rutas muertas, longitud).
 
 Sale con codigo 1 si encuentra algun problema grave, para poder encadenarlo en scripts.
 

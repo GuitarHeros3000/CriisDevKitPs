@@ -1433,6 +1433,51 @@ function Test-PortableApps {
     }
 }
 
+function Test-VCRuntimes {
+    Write-Section "Runtimes de Visual C++"
+
+    # Lo que cuenta es si Windows las ENCUENTRA, no si hay una entrada en
+    # "Programas instalados": en este mismo equipo de desarrollo estaban las
+    # de 2012 en el sistema sin que ningun registro lo dijera, porque las dejo
+    # alli otro programa. Y se mira por arquitectura, porque un programa de 32
+    # bits busca en SysWOW64 y uno de 64 en System32.
+    foreach ($v in (Get-VCRuntimeCatalog)) {
+        $dlls = @("msvcr$($v.Sufijo).dll", "msvcp$($v.Sufijo).dll", "mfc$($v.Sufijo).dll")
+
+        foreach ($arch in @('x86', 'x64')) {
+            $sistema = Get-SystemDllFolder -Arch $arch
+            if (-not $sistema) { continue }
+
+            $etiqueta = "$($v.Nombre) $arch"
+            $faltan = @($dlls | Where-Object { -not (Test-Path -LiteralPath (Join-Path $sistema $_)) })
+            if ($faltan.Count -eq 0) {
+                Write-Check $etiqueta "en el sistema ($sistema)" 'ok'
+            }
+            elseif ($faltan.Count -lt $dlls.Count) {
+                # A medias: el redistribuible las instala todas, asi que esto lo
+                # dejo otro programa copiando solo las suyas. En este equipo de
+                # desarrollo pasa: msvcr110 y msvcp110 si, mfc110 no. No es un
+                # aviso porque solo importa a quien ejecute un programa que pida
+                # la que falta, pero se dice cual es y que consecuencia tiene.
+                Write-Check $etiqueta "a medias: falta $($faltan -join ', ')" 'info'
+                if ($faltan -contains "mfc$($v.Sufijo).dll") {
+                    Write-Detail "Un programa MFC de esta arquitectura no arrancara."
+                }
+            }
+            else {
+                Write-Check $etiqueta "no esta en el sistema" 'info'
+            }
+
+            $kit = Get-VCRuntimeFolder -Version $v.Version -Arch $arch
+            if (Test-Path -LiteralPath (Join-Path $kit "msvcr$($v.Sufijo).dll")) {
+                Write-Detail "El kit tiene una copia en $kit"
+            }
+        }
+    }
+
+    Write-Detail "Para un programa que lo pida, sin admin:  .\bin\kit\Install-VCRuntime.bat -App <ruta al .exe>"
+}
+
 function Test-UserPath {
     Write-Section "PATH de usuario"
 
@@ -1711,6 +1756,8 @@ function Test-KitIntegrity {
         "lib\Semver.ps1",
         "lib\Shells.ps1",
         "lib\Tools.ps1",
+        "lib\Installers.ps1",
+        "lib\VCRuntime.ps1",
         "lib\Runtimes.ps1",
         "lib\CorpNet.ps1",
         "lib\VSCode.ps1",
@@ -1738,6 +1785,8 @@ function Test-KitIntegrity {
         "bin\start\Start-AngularEnv.bat",
         "bin\start\Start-PythonEnv.bat",
         "bin\kit\Install-NoAdmin.bat",
+        "scripts\kit\Install-VCRuntime.ps1",
+        "bin\kit\Install-VCRuntime.bat",
         "bin\kit\Doctor-Env.bat",
         "bin\env\Uninstall-Env.bat",
         "bin\kit\Run-Tests.bat",
@@ -1829,6 +1878,7 @@ Test-CorpNet
 Test-InstalledSignatures
 Test-LockDrift
 Test-PortableApps
+Test-VCRuntimes
 Test-UserPath
 Test-PathConflicts
 

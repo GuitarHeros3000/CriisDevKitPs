@@ -94,58 +94,6 @@ function Test-FileContainsMarker {
     return $false
 }
 
-function Get-PeSectionNames {
-    <#
-        Lee la tabla de secciones de un ejecutable PE.
-
-        Se usa para reconocer bundles WiX Burn, que anaden una seccion propia
-        llamada ".wixburn". Buscar la cadena "Burn" en el binario no sirve:
-        es una palabra corriente y aparece por casualidad en casi cualquier
-        ejecutable grande.
-    #>
-    param([string]$FilePath)
-
-    try {
-        $fs = [System.IO.File]::OpenRead($FilePath)
-        try {
-            $br = New-Object System.IO.BinaryReader($fs)
-
-            # La cabecera DOS guarda en 0x3C el desplazamiento de la firma PE.
-            $fs.Position = 0x3C
-            $peOffset = $br.ReadInt32()
-            if ($peOffset -le 0 -or $peOffset -ge ($fs.Length - 24)) { return @() }
-
-            $fs.Position = $peOffset
-            if ($br.ReadUInt32() -ne 0x00004550) { return @() }   # "PE\0\0"
-
-            # Cabecera COFF: numero de secciones en +6, tamano de la cabecera
-            # opcional en +20. La tabla de secciones empieza tras ambas.
-            $fs.Position = $peOffset + 6
-            $sectionCount = $br.ReadUInt16()
-
-            $fs.Position = $peOffset + 20
-            $optionalHeaderSize = $br.ReadUInt16()
-
-            $names = @()
-            $fs.Position = $peOffset + 24 + $optionalHeaderSize
-            for ($i = 0; $i -lt $sectionCount; $i++) {
-                $raw = $br.ReadBytes(8)
-                if ($raw.Length -lt 8) { break }
-                $names += ([System.Text.Encoding]::ASCII.GetString($raw)).TrimEnd([char]0)
-                $fs.Position += 32    # resto de la cabecera de seccion (40 en total)
-            }
-
-            return $names
-        }
-        finally {
-            $fs.Dispose()
-        }
-    }
-    catch {
-        return @()
-    }
-}
-
 function Get-InstallerType {
     param([string]$FilePath)
 
@@ -158,7 +106,11 @@ function Get-InstallerType {
     if ($ext -eq '.exe') {
         # Burn primero: un bundle puede llevar dentro instaladores de cualquier
         # otra tecnologia, asi que sus marcadores podrian confundir la deteccion.
-        if ((Get-PeSectionNames -FilePath $FilePath) -contains '.wixburn') {
+        # Se reconoce por su seccion ".wixburn", no buscando la cadena "Burn":
+        # es una palabra corriente y aparece por casualidad en casi cualquier
+        # ejecutable grande.
+        $pe = Get-PeInfo -FilePath $FilePath
+        if ($pe -and (@($pe.Secciones | ForEach-Object { $_.Nombre }) -contains '.wixburn')) {
             return 'Burn'
         }
         # El resto dejan una huella reconocible en el binario.
@@ -712,21 +664,28 @@ function Expand-Installer {
                     Write-Log "El bundle rechazo /layout (codigo $($proc.ExitCode))" "ERROR"
                 }
                 elseif (-not (Test-LayoutUseful -DestDir $DestDir -InstallerPath $InstallerPath)) {
-                    Write-Log "El bundle lleva sus cargas embebidas." "WARN"
-                    Write-Log "  /layout solo ha copiado el propio instalador: no hay nada portable." "WARN"
-                    Write-Log "  Para sacar los MSI de dentro haria falta 'dark.exe' del WiX Toolset." "WARN"
-
                     # /layout devolvio 0, pero no ha producido nada aprovechable.
-                    # Se trata como fallo. Antes esto seguia como exito y el kit
-                    # remataba con "SUCCESS Archivos extraidos" y codigo 0,
-                    # dejando una copia de 57 MB del instalador que el usuario ya
-                    # tenia, presentada como una extraccion completada. Es el
-                    # mismo error que anunciar per-user una instalacion que se
-                    # elevo: dar por cumplido lo que no se cumplio.
+                    # Antes esto seguia como exito y el kit remataba con
+                    # "SUCCESS Archivos extraidos" y codigo 0, dejando una copia
+                    # de 57 MB del instalador que el usuario ya tenia. Esa copia
+                    # sobra en cualquier caso.
                     Get-ChildItem -LiteralPath $DestDir -Recurse -File `
                                   -Filter (Split-Path -Leaf $InstallerPath) -ErrorAction SilentlyContinue |
                         Remove-Item -Force -ErrorAction SilentlyContinue
-                    $ok = $false
+
+                    # Las cargas van embebidas. Antes aqui solo se podia decir
+                    # que haria falta dark.exe, del WiX Toolset; ahora el kit
+                    # abre el bundle por dentro sin ejecutarlo.
+                    Write-Log "El bundle lleva sus cargas embebidas: /layout no las saca." "WARN"
+                    Write-Log "Abriendo el bundle por dentro, sin ejecutarlo..."
+                    $r = Expand-BurnBundle -Path $InstallerPath -DestDir $DestDir
+                    $ok = [bool]$r
+                    if ($r) {
+                        Write-Log "  $(@($r.Extraidas).Count) cargas extraidas, cada una comprobada contra su hash" "SUCCESS"
+                        if (@($r.Externas).Count -gt 0) {
+                            Write-Log "  Otras $(@($r.Externas).Count) no van dentro: el bundle las descarga al instalar." "WARN"
+                        }
+                    }
                 }
             }
             'NSIS' {

@@ -10,6 +10,10 @@ Instala software en tu perfil de usuario **sin permisos de administrador**, usan
 modo per-user que el propio instalador ya soporta. No modifica el instalador ni el
 sistema, y no eleva privilegios: si un software necesita admin de verdad, lo dice y para.
 
+Si lo que tienes es un programa que pide `mfc110.dll`, `msvcr110.dll` o parecidas, no
+le pases aqui el `vcredist`: te dejaria sus MSI sueltos, que no arreglan nada. Para eso
+esta [Install-VCRuntime](vcruntime.md), que deja las DLL junto al programa.
+
 ### Uso
 
 ```powershell
@@ -55,7 +59,7 @@ sin instalar nada.
 | Tipo | Como se detecta | Modo per-user | Extraccion |
 |---|---|---|---|
 | MSI | extension `.msi` | `MSIINSTALLPERUSER=1 ALLUSERS=2` | `msiexec /a` |
-| WiX Burn | seccion PE `.wixburn` | no existe uno estandar | `/layout` |
+| WiX Burn | seccion PE `.wixburn` | no existe uno estandar | `/layout`, o abrirlo por dentro |
 | Inno Setup | cadena `Inno Setup` en el binario | `/CURRENTUSER` | `innoextract` (o `innounp` si lo tienes) |
 | NSIS | cadena `Nullsoft` en el binario | no fiable | `7z x` |
 
@@ -67,10 +71,26 @@ Burn se detecta por su seccion PE, no por buscar la palabra "Burn" en el binario
 esa aparece por casualidad en casi cualquier ejecutable grande.
 
 Un `/layout` de Burn deja los MSI sueltos, no una app portable lista para usar. Si
-alguno de esos MSI instala drivers o servicios, seguira necesitando admin. Y cuando
-el bundle lleva sus cargas **embebidas** -lo normal en un instalador de un solo
-archivo- `/layout` responde 0 pero solo copia el propio instalador: el kit lo trata
-como fallo en vez de anunciar una extraccion que no ha ocurrido.
+alguno de esos MSI instala drivers o servicios, seguira necesitando admin.
+
+Cuando el bundle lleva sus cargas **embebidas** -lo normal en un instalador de un solo
+archivo- `/layout` responde 0 pero solo copia el propio instalador. Antes eso era un
+callejon sin salida: hacia falta `dark.exe`, del WiX Toolset. Ahora el kit **abre el
+bundle por dentro sin ejecutarlo** y deja lo mismo que habria dejado `/layout`:
+
+1. La seccion `.wixburn` dice donde empieza y cuanto mide cada contenedor pegado al
+   `.exe`. Cada uno es un CAB, y se abre con `expand.exe`, que viene con Windows.
+2. El manifiesto del bundle dice el nombre real de cada carga y su hash, y **cada
+   una se comprueba contra ese hash** antes de dejarla. Una que no coincida, o una
+   ruta que se salga de la carpeta destino, para la extraccion entera.
+
+Dos detalles que costaron un fallo cada uno: los contenedores **no van seguidos**
+(entre el primero y el segundo queda la firma original del motor, 16 KB en el
+redistribuible de Visual C++), y `expand.exe` saca un CAB de un solo archivo con el
+nombre del `.cab` en vez del suyo si no se le pasa `-R`.
+
+Las cargas que el bundle no lleva dentro -las descarga de internet al instalar- se
+cuentan aparte, con un aviso.
 
 **Inno Setup reciente no se puede extraer.** `innoextract` 1.9 es la ultima que
 existe y solo cubre hasta Inno Setup 6.0.5; 7-Zip tampoco reconoce el formato.
