@@ -299,9 +299,86 @@ Describe "Constructores de URL de descarga" {
         (Get-NodeArchiveInfo -Version 'v22.23.2').FolderName | Should Be 'node-v22.23.2-win-x64'
     }
 
-    It "Get-PythonArchiveInfo apunta al zip embeddable" {
-        (Get-PythonArchiveInfo -FullVersion '3.12.10').Url |
-            Should Be 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip'
+}
+
+Describe "Python de python-build-standalone" {
+
+    # Un trozo de un SHA256SUMS de verdad (release 20261110), recortado. Lleva
+    # adrede lo que hay que saber descartar: otras plataformas, la variante sin
+    # install_only, i686 y una alfa.
+    $sums = @"
+cf1bc4d6be33e4f739d97eb8b873f3a08bd6562cf4652db771acb82f8f4b7113  cpython-3.11.18+20261110-aarch64-apple-darwin-debug-full.tar.zst
+5ca7e23bbcc8933a75f4ae9c3a5e5d1ffae5fd143aec9a9d77cf5124cc6e0eef  cpython-3.11.18+20261110-x86_64-pc-windows-msvc-install_only.tar.gz
+7122bf62a0cf6000000000000000000000000000000000000000000000000000  cpython-3.12.16+20261110-aarch64-pc-windows-msvc-install_only.tar.gz
+3712f032d863b000000000000000000000000000000000000000000000000000  cpython-3.12.16+20261110-i686-pc-windows-msvc-install_only.tar.gz
+e23fe5b16926de1d81661b1a97352e89fb167549c55a6825796ccd0f32ec7f1b  cpython-3.12.16+20261110-x86_64-pc-windows-msvc-install_only.tar.gz
+1111111111111111111111111111111111111111111111111111111111111111  cpython-3.12.16+20261110-x86_64-pc-windows-msvc-pgo-full.tar.zst
+2222222222222222222222222222222222222222222222222222222222222222  cpython-3.12.16+20261110-x86_64-unknown-linux-gnu-install_only.tar.gz
+ba905da512dc8898a5cc931b0a502a7e274e00a0a9aae9f63a9ff3825831988d  cpython-3.16.0a2+20261110-x86_64-pc-windows-msvc-install_only.tar.gz
+"@
+
+    It "lee solo los de Windows de esa arquitectura y con install_only" {
+        $b = @(ConvertFrom-PythonBuildSums -Texto $sums -Arch x64)
+        ($b.Version -join ',') | Should Be '3.11.18,3.12.16,3.16.0a2'
+    }
+
+    It "compone la URL de descarga con el + escapado y el hash" {
+        $b = Select-PythonBuild -Builds @(ConvertFrom-PythonBuildSums -Texto $sums -Arch x64) -Requested '3.12'
+        $b.Url | Should Be 'https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.12.16%2B20261110-x86_64-pc-windows-msvc-install_only.tar.gz'
+        $b.Sha256 | Should Be 'e23fe5b16926de1d81661b1a97352e89fb167549c55a6825796ccd0f32ec7f1b'
+        $b.Tag | Should Be '20261110'
+    }
+
+    It "en arm64 coge el aarch64" {
+        $b = Select-PythonBuild -Builds @(ConvertFrom-PythonBuildSums -Texto $sums -Arch arm64) -Requested '3.12'
+        $b.FileName | Should Match 'aarch64-pc-windows-msvc'
+    }
+
+    # Pedir una linea no puede traer una alfa: "3.16" no es una version para
+    # trabajar mientras solo haya previas.
+    It "una linea no elige una alfa" {
+        Select-PythonBuild -Builds @(ConvertFrom-PythonBuildSums -Texto $sums -Arch x64) -Requested '3.16' | Should BeNullOrEmpty
+    }
+
+    It "pedida exacta, la alfa si" {
+        (Select-PythonBuild -Builds @(ConvertFrom-PythonBuildSums -Texto $sums -Arch x64) -Requested '3.16.0a2').Version | Should Be '3.16.0a2'
+    }
+
+    It "acepta el nombre que se usaba hasta 2024 (shared-install_only)" {
+        $viejo = '0123456789012345678901234567890123456789012345678901234567890123  cpython-3.12.1+20240107-x86_64-pc-windows-msvc-shared-install_only.tar.gz'
+        (@(ConvertFrom-PythonBuildSums -Texto $viejo -Arch x64)).Version | Should Be '3.12.1'
+    }
+
+    Context "un parche que ya no esta en la ultima release" {
+
+        # Releases de mas nueva a mas vieja, y el 3.12 que trae cada una.
+        $releases = [ordered]@{
+            '20261110' = 16; '20260901' = 15; '20260501' = 13; '20260101' = 12
+            '20250901' = 11; '20250409' = 10; '20250101' = 8;  '20240901' = 6
+        }
+        $script:leidas = 0
+        Mock Invoke-JsonApi { return @($releases.Keys | ForEach-Object { [PSCustomObject]@{ name = $_ } }) }
+        Mock Get-PythonBuildsOfRelease {
+            $script:leidas++
+            $p = $releases[$Tag]
+            return @([PSCustomObject]@{ Version = "3.12.$p"; Linea = '3.12'; Patch = $p; Previa = $false; Tag = $Tag; FileName = "x-$Tag"; Sha256 = 'h'; Url = "u-$Tag" })
+        }
+
+        It "lo encuentra por biseccion" {
+            $script:leidas = 0
+            $b = Search-OlderPythonBuild -Version '3.12.10' -Arch x64
+            $b.Tag | Should Be '20250409'
+            $script:leidas | Should BeLessThan 5
+        }
+
+        It "un parche que no salio en ninguna release no se inventa" {
+            Search-OlderPythonBuild -Version '3.12.9' -Arch x64 | Should BeNullOrEmpty
+        }
+
+        It "encuentra el mas viejo y el mas nuevo" {
+            (Search-OlderPythonBuild -Version '3.12.6' -Arch x64).Tag | Should Be '20240901'
+            (Search-OlderPythonBuild -Version '3.12.16' -Arch x64).Tag | Should Be '20261110'
+        }
     }
 }
 

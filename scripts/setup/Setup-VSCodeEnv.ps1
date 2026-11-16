@@ -129,11 +129,9 @@ function Get-VSCodePortable {
 
     Write-Log "Extrayendo (son bastantes archivos)..."
     # El zip de VS Code NO trae carpeta contenedora: su contenido va directo a
-    # la carpeta destino, al reves que los de Node, Maven o Gradle.
-    if (-not (Test-Path $vscodePath)) {
-        New-Item -ItemType Directory -Path $vscodePath -Force | Out-Null
-    }
-    Expand-Archive -Path $zipPath -DestinationPath $vscodePath -Force
+    # la carpeta destino, al reves que los de Node, Maven o Gradle. El data\
+    # que ya hubiera (ajustes y extensiones) no viene en el zip y se respeta.
+    Expand-ZipArchive -Path $zipPath -Destino $vscodePath
     Remove-Item $zipPath -Force
 
     if (-not (Test-Path $exe)) {

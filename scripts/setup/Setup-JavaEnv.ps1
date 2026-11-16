@@ -259,22 +259,9 @@ function Get-JavaPortable {
     }
 
     Write-Log "Extrayendo..."
-    $temp = Join-Path $JavaRoot "temp_jdk"
-    if (Test-Path $temp) { Remove-Item $temp -Recurse -Force }
-    Expand-Archive -Path $zipPath -DestinationPath $temp -Force
-
     # El zip trae una carpeta raiz con el nombre de la release (jdk-21.0.12+8):
     # se sube su contenido un nivel para que la ruta sea estable.
-    $inner = @(Get-ChildItem $temp -Directory)
-    if ($inner.Count -eq 1) {
-        Move-Item -LiteralPath $inner[0].FullName -Destination $jdkPath -Force
-    }
-    else {
-        New-Item -ItemType Directory -Path $jdkPath -Force | Out-Null
-        Move-Item -Path "$temp\*" -Destination $jdkPath -Force
-    }
-
-    Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
+    Expand-ZipArchive -Path $zipPath -Destino $jdkPath -QuitarEnvoltorio
     Remove-Item $zipPath -Force
 
     Set-InstalledJavaRelease -JdkPath $jdkPath -Release $Binary.Release

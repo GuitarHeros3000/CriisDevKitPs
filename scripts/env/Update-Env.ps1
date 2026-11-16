@@ -125,7 +125,7 @@ function Test-PythonUpdates {
         $instalada = Get-VersionDe -Exe (Join-Path $d.FullName "python.exe")
         if (-not $instalada) { continue }
 
-        Write-Host "  consultando python.org ($serie)..." -ForegroundColor DarkGray
+        Write-Host "  consultando python-build-standalone ($serie)..." -ForegroundColor DarkGray
         $ultima = Get-LatestPythonPatch -MinorPrefix $serie
 
         Add-Fila -Que "Python $serie" -Instalado $instalada `

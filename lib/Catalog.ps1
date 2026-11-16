@@ -292,27 +292,7 @@ function Expand-BundledRuntime {
         return ($proc.ExitCode -eq 0)
     }
 
-    if (-not $Entrada.Envoltorio) {
-        if (-not (Test-Path -LiteralPath $Destino)) {
-            New-Item -ItemType Directory -Path $Destino -Force | Out-Null
-        }
-        Expand-Archive -Path $Archivo -DestinationPath $Destino -Force
-        return $true
-    }
-
-    $temp = "$Destino.tmp"
-    if (Test-Path $temp) { Remove-Item $temp -Recurse -Force }
-    Expand-Archive -Path $Archivo -DestinationPath $temp -Force
-
-    $inner = @(Get-ChildItem $temp -Directory)
-    if ($inner.Count -eq 1) {
-        Move-Item -LiteralPath $inner[0].FullName -Destination $Destino -Force
-    }
-    else {
-        New-Item -ItemType Directory -Path $Destino -Force | Out-Null
-        Move-Item -Path "$temp\*" -Destination $Destino -Force
-    }
-    Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
+    Expand-ZipArchive -Path $Archivo -Destino $Destino -QuitarEnvoltorio:([bool]$Entrada.Envoltorio)
     return $true
 }
 
@@ -745,62 +725,315 @@ function Read-DevEnvLock {
     return [PSCustomObject]@{ Runtimes = $runtimes; Errores = $errores }
 }
 
-$PythonFtpIndexUrl = "https://www.python.org/ftp/python/"
+# --------------------------------------------------------------------------
+# Python: python-build-standalone
+# --------------------------------------------------------------------------
+#
+# Antes el kit instalaba el zip "embeddable" de python.org. Es Python, pero
+# recortado para ir dentro de otro programa: sin venv, sin tkinter y sin pip.
+# "python -m venv" fallaba con "No module named venv", y cualquier proyecto con
+# interfaz tkinter no arrancaba.
+#
+# python-build-standalone (Astral, la gente de uv) publica CPython completo y
+# portable: un .tar.gz que se descomprime y funciona, con venv, tkinter, pip y
+# sqlite. Lo usan uv y Rye. Comprobado con 3.12.16: venv crea el entorno, y
+# tkinter importa tambien DENTRO del venv.
+#
+# Lo que se pierde: python.exe no va firmado (el de python.org si). Lo que lo
+# respalda es el SHA-256 de SHA256SUMS, que se comprueba al descargar y queda
+# anotado en la carpeta.
+#
+# No se usa la API de GitHub para lo normal. Sin autenticar deja 60 consultas
+# por hora y por IP, y en una oficina sale todo el mundo por la misma IP. La
+# ultima release se saca de la redireccion de releases/latest, y lo que trae,
+# de su SHA256SUMS: 140 KB de texto con el nombre y el hash de cada archivo.
+
+$PythonBuildRepo = 'https://github.com/astral-sh/python-build-standalone'
+$script:PythonBuildSumsCache = @{}
+
+function ConvertFrom-PythonBuildSums {
+    <#
+        Del texto de un SHA256SUMS, los Python para Windows de una arquitectura.
+        Cada linea es "<hash>  cpython-3.12.16+20261110-x86_64-pc-windows-msvc-
+        install_only.tar.gz". Hasta 2024 el nombre llevaba "shared-" delante de
+        install_only, y se aceptan los dos para poder buscar versiones viejas.
+    #>
+    param(
+        [AllowNull()][AllowEmptyString()][string]$Texto,
+        [ValidateSet('x64', 'arm64')][string]$Arch
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Texto)) { return @() }
+    if (-not $Arch) { $Arch = Get-KitArchitecture }
+
+    $triple = "$(Get-ArchToken -Fuente pbs -Arch $Arch)-pc-windows-msvc"
+    $patron = '^([0-9a-fA-F]{64})\s+\*?(cpython-(\d+)\.(\d+)\.(\d+)((?:a|b|rc)\d+)?\+(\d+)-' +
+              [regex]::Escape($triple) + '-(?:shared-)?install_only\.tar\.gz)\s*$'
+
+    $builds = @()
+    foreach ($l in ($Texto -split "`r?`n")) {
+        $m = [regex]::Match($l.Trim(), $patron)
+        if (-not $m.Success) { continue }
+        $archivo = $m.Groups[2].Value
+        $tag = $m.Groups[7].Value
+        $builds += [PSCustomObject]@{
+            Version  = "$($m.Groups[3].Value).$($m.Groups[4].Value).$($m.Groups[5].Value)$($m.Groups[6].Value)"
+            Linea    = "$($m.Groups[3].Value).$($m.Groups[4].Value)"
+            Patch    = [int]$m.Groups[5].Value
+            Previa   = [bool]$m.Groups[6].Value
+            Tag      = $tag
+            FileName = $archivo
+            Sha256   = $m.Groups[1].Value.ToLowerInvariant()
+            # El + del nombre va escapado, como lo publica GitHub.
+            Url      = "$PythonBuildRepo/releases/download/$tag/$($archivo -replace '\+', '%2B')"
+        }
+    }
+    return $builds
+}
+
+function Select-PythonBuild {
+    <#
+        De los Python de una release, el que corresponde a lo pedido:
+          "3.12"     la ultima 3.12.x, nunca una alfa, beta o rc
+          "3.12.10"  exactamente esa
+        Devuelve $null si no esta.
+    #>
+    param(
+        [AllowEmptyCollection()][object[]]$Builds = @(),
+        [Parameter(Mandatory=$true)][string]$Requested
+    )
+
+    $r = $Requested.Trim()
+    if ($r -match '^\d+\.\d+$') {
+        return @($Builds | Where-Object { $_.Linea -eq $r -and -not $_.Previa } | Sort-Object Patch -Descending)[0]
+    }
+    return @($Builds | Where-Object { $_.Version -eq $r })[0]
+}
+
+function Get-PythonBuildLatestTag {
+    <#
+        La ultima release, sin gastar una consulta de la API: github.com
+        redirige releases/latest a releases/tag/<fecha>. Si no se puede (un
+        espejo que no redirige), se pregunta a la API como ultimo recurso.
+    #>
+    $uri = Resolve-KitUrl -Uri "$PythonBuildRepo/releases/latest" -Quiet
+    $params = @{ Uri = $uri; Method = 'Head'; UseBasicParsing = $true; TimeoutSec = 30 }
+    Add-ProxyToRequest -Params $params -Uri ([Uri]$uri)
+    try {
+        $r = Invoke-WebRequest @params
+        $final = [string]$r.BaseResponse.ResponseUri
+        if ($final -match '/releases/tag/(\d{8})/?$') { return $Matches[1] }
+    }
+    catch { }
+
+    $api = Invoke-JsonApi -Uri 'https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest' `
+                          -Headers @{ 'User-Agent' = "CriisDevKit/$KitVersion" } -Quiet
+    if ($api -and $api.tag_name -match '^\d{8}$') { return $api.tag_name }
+    return $null
+}
+
+function Get-PythonBuildsOfRelease {
+    <# Los Python de Windows de una release, leidos de su SHA256SUMS. Se guarda por ejecucion. #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Tag,
+        [ValidateSet('x64', 'arm64')][string]$Arch
+    )
+    if (-not $Arch) { $Arch = Get-KitArchitecture }
+
+    if (-not $script:PythonBuildSumsCache.ContainsKey($Tag)) {
+        $script:PythonBuildSumsCache[$Tag] = Get-WebText -Uri "$PythonBuildRepo/releases/download/$Tag/SHA256SUMS" -Quiet
+    }
+    return @(ConvertFrom-PythonBuildSums -Texto $script:PythonBuildSumsCache[$Tag] -Arch $Arch)
+}
+
+function Search-OlderPythonBuild {
+    <#
+    .SYNOPSIS
+        Un parche exacto que ya no esta en la ultima release (3.12.10, por ejemplo).
+    .DESCRIPTION
+        Hace falta para reproducir un lockfile. Cada release trae el ultimo
+        parche de cada linea en ese momento, y el parche solo sube con el
+        tiempo, asi que se busca por biseccion sobre las releases: unas siete
+        lecturas de SHA256SUMS en vez de recorrerlas todas.
+
+        Aqui si se usa la API, solo para la lista de etiquetas (dos consultas).
+        Es el caso raro, no el de todos los dias.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Version,
+        [ValidateSet('x64', 'arm64')][string]$Arch
+    )
+    if (-not $Arch) { $Arch = Get-KitArchitecture }
+    if ($Version -notmatch '^(\d+)\.(\d+)\.(\d+)$') { return $null }
+    $linea = "$($Matches[1]).$($Matches[2])"
+    $patch = [int]$Matches[3]
+
+    $tags = @()
+    foreach ($pagina in 1, 2) {
+        $t = Invoke-JsonApi -Uri "https://api.github.com/repos/astral-sh/python-build-standalone/tags?per_page=100&page=$pagina" `
+                            -Headers @{ 'User-Agent' = "CriisDevKit/$KitVersion" } -Quiet
+        if (-not $t) { break }
+        $tags += @($t | ForEach-Object { $_.name } | Where-Object { $_ -match '^\d{8}$' })
+        if (@($t).Count -lt 100) { break }
+    }
+    $tags = @($tags | Sort-Object -Descending -Unique)
+
+    $lo = 0; $hi = $tags.Count - 1
+    while ($lo -le $hi) {
+        $mid = [int][Math]::Floor(($lo + $hi) / 2)
+        $builds = @(Get-PythonBuildsOfRelease -Tag $tags[$mid] -Arch $Arch)
+        $exacta = Select-PythonBuild -Builds $builds -Requested $Version
+        if ($exacta) { return $exacta }
+
+        $deLinea = Select-PythonBuild -Builds $builds -Requested $linea
+        if ($deLinea) {
+            # Indice mas alto = release mas vieja.
+            if ($deLinea.Patch -gt $patch) { $lo = $mid + 1 } else { $hi = $mid - 1 }
+        }
+        else {
+            # Sin esa linea: o ya no la publicaban (hay lineas mas nuevas) o
+            # aun no existia.
+            $mayor = @($builds | Where-Object { [version]$_.Linea -gt [version]$linea }).Count -gt 0
+            if ($mayor) { $lo = $mid + 1 } else { $hi = $mid - 1 }
+        }
+    }
+    return $null
+}
+
+function Find-PythonBuild {
+    <#
+    .SYNOPSIS
+        El Python que hay que descargar para lo pedido ("3.12" o "3.12.10").
+    .DESCRIPTION
+        Primero en la ultima release; un parche exacto que ya no este ahi se
+        busca hacia atras. Devuelve Version, Linea, Tag, FileName, Url y Sha256,
+        o $null si no existe (o no hay red).
+
+        Lo usan Setup-PythonEnv, Update-Env y Export-Env: con copias distintas
+        acabarian eligiendo versiones distintas.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Requested,
+        [ValidateSet('x64', 'arm64')][string]$Arch
+    )
+    if (-not $Arch) { $Arch = Get-KitArchitecture }
+
+    $tag = Get-PythonBuildLatestTag
+    if (-not $tag) { return $null }
+
+    $b = Select-PythonBuild -Builds @(Get-PythonBuildsOfRelease -Tag $tag -Arch $Arch) -Requested $Requested
+    if ($b) { return $b }
+
+    if ($Requested.Trim() -match '^\d+\.\d+\.\d+$') {
+        return (Search-OlderPythonBuild -Version $Requested.Trim() -Arch $Arch)
+    }
+    return $null
+}
 
 function Get-PythonArchiveInfo {
+    <# El archivo de una version exacta, para Export-Env. $null si no se encuentra. #>
     param([Parameter(Mandatory=$true)][string]$FullVersion)
-
-    $file = "python-$FullVersion-embed-$(Get-ArchToken -Fuente python).zip"
-    return [PSCustomObject]@{
-        FileName = $file
-        Url      = "https://www.python.org/ftp/python/$FullVersion/$file"
-    }
+    return (Find-PythonBuild -Requested $FullVersion)
 }
 
 function Get-LatestPythonPatch {
+    <# Ultima X.Y.Z de una linea, para Update-Env. $null si no se pudo saber. #>
+    param([Parameter(Mandatory=$true)][string]$MinorPrefix)
+    return (Find-PythonBuild -Requested $MinorPrefix)
+}
+
+function Get-InstalledRuntimeOrigin {
     <#
-    .SYNOPSIS
-        Ultima X.Y.Z de una serie que tenga zip embeddable para Windows.
-    .DESCRIPTION
-        No basta con coger el numero mas alto: cuando una serie pasa a modo "solo
-        seguridad", python.org publica esas versiones SOLO como codigo fuente.
-        Por eso se prueban las candidatas de mayor a menor hasta dar con una que
-        tenga de verdad el binario.
-
-        Vive aqui porque lo necesitan Setup-PythonEnv (para decidir que instalar)
-        y Update-Env (para decidir si lo instalado esta al dia). Con dos copias
-        acabarian divergiendo y cada una diria una cosa.
-
-        Devuelve $null si no se pudo determinar. Silencioso salvo con -Verbose:
-        quien llama decide como contarlo.
+        De donde salio una instalacion, si el kit lo anoto: hoy solo Python, que
+        puede ser el embeddable de python.org (instalaciones viejas) o el de
+        python-build-standalone. Importa para la firma: el segundo no firma sus
+        binarios, y decir "sin firma, raro" de el seria una falsa alarma.
     #>
     param(
-        [Parameter(Mandatory=$true)][string]$MinorPrefix,
-        [int]$MaxProbes = 12
+        [Parameter(Mandatory=$true)][PSCustomObject]$Entrada,
+        [Parameter(Mandatory=$true)][string]$Linea
+    )
+    $mk = Join-Path (Get-RuntimeInstallPath -Entrada $Entrada -Linea $Linea) ".criisdevkit-origen"
+    if (Test-Path -LiteralPath $mk) { return (Get-Content -LiteralPath $mk -Raw).Trim() }
+    return $null
+}
+
+# --------------------------------------------------------------------------
+# Lo que el kit instala fuera del catalogo: VCRuntime\ y Apps\
+# --------------------------------------------------------------------------
+#
+# Install-VCRuntime y Install-NoAdmin dejan carpetas junto al kit igual que los
+# Setup, pero no son runtimes: no tienen shell, ni PATH, ni version que
+# actualizar. Exportar, verificar y desinstalar las ignoraban, asi que no
+# llegaban a un equipo sin internet. Un solo sitio dice que hay en ellas, para
+# que los cuatro comandos no acaben contando cosas distintas.
+
+$KitExtraFolders = @('VCRuntime', 'Apps')
+
+function Get-KitExtraItems {
+    <#
+        Las piezas de una de esas carpetas, cada una con Carpeta (VCRuntime o
+        Apps), Item (su ruta relativa: vc-2012\x86, o el nombre de la app) y
+        Ruta. En VCRuntime la pieza es cada arquitectura de cada version: es lo
+        que se descarga junto, y lo que tiene sentido llevar o quitar.
+
+        -Raiz sustituye a la carpeta de trabajo, para las pruebas.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][ValidateSet('VCRuntime', 'Apps')][string]$Carpeta,
+        [string]$Raiz = $WorkspaceRoot
     )
 
-    # El indice de python.org es un listado HTML de directorio, no JSON.
-    $listing = Get-WebText -Uri $PythonFtpIndexUrl -Quiet
-    if (-not $listing) { return $null }
+    $base = Join-Path $Raiz $Carpeta
+    if (-not (Test-Path -LiteralPath $base)) { return @() }
 
-    $pattern = 'href="(' + [regex]::Escape($MinorPrefix) + '\.\d+)/"'
-    $candidates = @([regex]::Matches($listing, $pattern) |
-        ForEach-Object { $_.Groups[1].Value } |
-        Sort-Object { [version]$_ } -Descending)
-
-    if ($candidates.Count -eq 0) { return $null }
-
-    foreach ($candidate in ($candidates | Select-Object -First $MaxProbes)) {
-        if (Test-UrlExists -Uri (Get-PythonArchiveInfo -FullVersion $candidate).Url) {
-            return [PSCustomObject]@{
-                Version   = $candidate
-                MasNueva  = $candidates[0]   # puede existir pero solo como fuente
-                SoloFuente = ($candidate -ne $candidates[0])
+    $items = @()
+    if ($Carpeta -eq 'VCRuntime') {
+        foreach ($v in (Get-ChildItem -LiteralPath $base -Directory -Filter 'vc-*' -ErrorAction SilentlyContinue)) {
+            foreach ($a in (Get-ChildItem -LiteralPath $v.FullName -Directory -ErrorAction SilentlyContinue)) {
+                if ($a.Name -notin @('x86', 'x64')) { continue }
+                $items += [PSCustomObject]@{ Carpeta = $Carpeta; Item = "$($v.Name)\$($a.Name)"; Ruta = $a.FullName }
             }
         }
     }
+    else {
+        foreach ($d in (Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue)) {
+            $items += [PSCustomObject]@{ Carpeta = $Carpeta; Item = $d.Name; Ruta = $d.FullName }
+        }
+    }
+    return $items
+}
 
-    return $null
+function Get-FolderManifest {
+    <#
+        Cada archivo de una carpeta con su SHA-256, en rutas relativas. Es lo que
+        viaja en el bundle para comprobar en destino que llego entero.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Ruta)
+
+    $base = (Resolve-Path -LiteralPath $Ruta).ProviderPath.TrimEnd('\')
+    return @(Get-ChildItem -LiteralPath $base -Recurse -File -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        [ordered]@{ ruta = $_.FullName.Substring($base.Length + 1); sha256 = (Get-FileSha256 -FilePath $_.FullName) }
+    })
+}
+
+function Test-FolderManifest {
+    <#
+        Si una carpeta tiene exactamente esos archivos con esos hashes. Devuelve
+        la lista de lo que no cuadra (vacia si todo bien).
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Ruta,
+        [AllowEmptyCollection()][object[]]$Archivos = @()
+    )
+
+    $malos = @()
+    foreach ($a in $Archivos) {
+        $f = Join-Path $Ruta $a.ruta
+        if (-not (Test-Path -LiteralPath $f)) { $malos += "$($a.ruta): falta"; continue }
+        if ((Get-FileSha256 -FilePath $f) -ne $a.sha256) { $malos += "$($a.ruta): no coincide" }
+    }
+    return $malos
 }
 
 function Get-LatestAngularCliVersion {
@@ -1061,7 +1294,7 @@ function Test-ZipIntegrity {
     <#
         Abrir el zip obliga a leer su indice central, que esta al final del
         archivo: detecta descargas truncadas aqui, en vez de dejar que
-        Expand-Archive falle luego con un error incomprensible.
+        Expand-ZipArchive falle luego con un error incomprensible.
     #>
     param([Parameter(Mandatory=$true)][string]$ZipPath)
 

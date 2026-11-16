@@ -403,6 +403,55 @@ function Add-AutoRunHook {
 }
 
 # --------------------------------------------------------------------------
+# Politica de ejecucion
+# --------------------------------------------------------------------------
+#
+# Con Restricted o AllSigned PowerShell no carga el perfil. Antes se enganchaba
+# igual: el perfil pasaba a existir, cada terminal nueva abria con un error rojo
+# de "la ejecucion de scripts esta deshabilitada", y el runtime seguia sin estar.
+# Paso de verdad en un equipo corporativo.
+
+function Write-PolicyWarning {
+    param([Parameter(Mandatory=$true)][PSCustomObject]$Politica)
+
+    Write-Log "PowerShell NO se va a activar: la politica de ejecucion es $($Politica.Politica) ($($Politica.Origen)) y con ella no se carga el perfil." "WARN"
+    if ($Politica.DeGrupo) {
+        Write-Log "  Viene de una directiva de grupo: solo IT puede cambiarla." "WARN"
+        Write-Log "  En PowerShell, usa el shell del kit (Menu, opcion 20). cmd.exe si queda activado." "WARN"
+    }
+    else {
+        Write-Log "  Se arregla sin admin, desde una terminal de PowerShell:" "WARN"
+        Write-Log "    Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned" "WARN"
+        Write-Log "  y despues vuelve a activar (Menu, opcion 21). cmd.exe ya queda activado." "WARN"
+    }
+}
+
+function Add-Hooks {
+    <#
+        Engancha cmd siempre y PowerShell solo si su politica le deja cargar el
+        perfil. Devuelve donde ha enganchado.
+
+        -SinAviso cuando quien llama ya lo ha avisado antes de pedir confirmacion.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][PSCustomObject]$Politica,
+        [switch]$SinAviso
+    )
+
+    $hechos = @()
+    if ($Politica.BloqueaPerfil) {
+        if (-not $SinAviso) { Write-PolicyWarning -Politica $Politica }
+    }
+    else {
+        Add-ProfileHook
+        $hechos += 'PowerShell'
+    }
+    Add-AutoRunHook
+    $hechos += 'cmd'
+    return $hechos
+}
+
+# --------------------------------------------------------------------------
 # Estado actual
 # --------------------------------------------------------------------------
 
@@ -428,7 +477,10 @@ function Show-Status {
     $psHooked = (Test-Path -LiteralPath $ProfilePath) -and
                 ((Get-Content -LiteralPath $ProfilePath -Raw) -like "*$MarkerStart*")
     $cmdHooked = (Get-AutoRun) -like "*$ActivateCmd*"
-    Write-Host "  PowerShell : $(if ($psHooked) { 'si' } else { 'no' })"
+    $pol = Get-PersistedExecutionPolicy
+    $psTexto = if ($psHooked) { 'si' } else { 'no' }
+    if ($pol.BloqueaPerfil) { $psTexto += "  (la politica $($pol.Politica) no deja cargar el perfil)" }
+    Write-Host "  PowerShell : $psTexto" -ForegroundColor $(if ($pol.BloqueaPerfil) { 'Yellow' } else { 'Gray' })
     Write-Host "  cmd.exe    : $(if ($cmdHooked) { 'si' } else { 'no' })"
 
     Write-Host ""
@@ -509,13 +561,22 @@ if (-not (Test-Path -LiteralPath $shellBat)) {
 
 $state = Get-State
 $state[$Runtime] = $Version
+$politica = Get-PersistedExecutionPolicy
 
 Write-Host ""
 Write-Host "Se va a activar $Runtime v$Version en TODAS las terminales nuevas." -ForegroundColor Yellow
 Write-Host ""
-Write-Host "Esto modifica dos cosas de tu perfil de usuario (nunca del sistema):" -ForegroundColor Yellow
-Write-Host "  1. $ProfilePath"
-Write-Host "  2. HKCU\$AutoRunKey  (valor AutoRun)"
+if ($politica.BloqueaPerfil) {
+    Write-Host "Esto modifica una cosa de tu perfil de usuario (nunca del sistema):" -ForegroundColor Yellow
+    Write-Host "  HKCU\$AutoRunKey  (valor AutoRun)"
+    Write-Host ""
+    Write-PolicyWarning -Politica $politica
+}
+else {
+    Write-Host "Esto modifica dos cosas de tu perfil de usuario (nunca del sistema):" -ForegroundColor Yellow
+    Write-Host "  1. $ProfilePath"
+    Write-Host "  2. HKCU\$AutoRunKey  (valor AutoRun)"
+}
 Write-Host ""
 Write-Host "Se puede revertir en cualquier momento con:  .\bin\env\Use-Env.bat -Off" -ForegroundColor Gray
 Write-Host ""
@@ -531,12 +592,11 @@ if (-not $Force) {
 
 $paths = Write-ActivateScripts -State $state
 Save-State -State $state
-Add-ProfileHook
-Add-AutoRunHook
+$enganchado = Add-Hooks -Politica $politica -SinAviso
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  ACTIVADO" -ForegroundColor Cyan
+Write-Host "  ACTIVADO en: $($enganchado -join ' y ')" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Rutas que se antepondran:" -ForegroundColor Yellow

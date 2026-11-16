@@ -202,9 +202,28 @@ Todas las descargas pasan por `Invoke-Download` en `lib\Common.ps1`, que:
 - Detecta el **proxy** automaticamente: primero `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`,
   y si no, el proxy del sistema (WPAD/PAC u Opciones de Internet).
 - Reintenta solo los fallos transitorios; un 404 o un 407 no se reintentan.
+- **Si la conexion se corta, sigue desde donde iba** en vez de empezar de cero. Un
+  corte que avanza no gasta reintentos, y una conexion que se queda un minuto sin
+  datos (el proxy que se cuelga) cuenta como corte.
+- Si se rinde del todo, guarda lo descargado y **la siguiente ejecucion sigue desde
+  ahi**, pero solo si es la misma URL y el servidor confirma con `If-Range` que el
+  archivo no ha cambiado. Si no lo puede confirmar, empieza de cero: pegar trozos de
+  dos versiones daria un archivo que parece bueno.
+- Ensena el **progreso**: cuanto lleva, cuanto falta y a que velocidad.
 - Descarga a un archivo `.part` y solo lo publica si termino bien, para no dejar
   nunca un zip a medias que parezca valido.
+- Lo que llega con hash oficial y cuadra se guarda en una **cache de descargas**
+  (`%LOCALAPPDATA%\CriisDevKit\descargas`, hasta 3 GB). Reinstalar con `-Force` o
+  exportar despues de instalar ya no repite la descarga. Al sacarlo de la cache se
+  vuelve a comprobar el hash. Se apaga con `$env:CRIISDEVKIT_NOCACHE = '1'`, y se
+  puede borrar sin romper nada. Esta fuera del kit a proposito: la carpeta de trabajo
+  suele estar en OneDrive, y no tiene sentido subir cientos de MB de zips a la nube.
 - Traduce el error a la causa real (proxy, certificado, DNS, version inexistente).
+
+Por dentro va con `HttpWebRequest` y no con `Invoke-WebRequest`: en PowerShell 5.1
+este no deja mandar la cabecera `Range`, y sin ella no hay forma de pedir "lo que
+falta". El proxy y sus credenciales se montan con las mismas funciones de siempre, y
+las pruebas lo comprueban contra un proxy de prueba que pide usuario y clave.
 
 Si el proxy pide credenciales:
 
@@ -278,9 +297,9 @@ clave quedaba visible para cualquier proceso del equipo mientras pip corriera
 (`Win32_Process`, Administrador de tareas); el bloque de entorno de un proceso ajeno,
 en cambio, no se lee sin permiso para abrir su memoria.
 
-Cubre los **dos** momentos en que se usa pip: instalar los paquetes de
-`-InstallPackages` y arrancar pip con `get-pip.py`. El segundo tambien necesita red
-(ver [portabilidad](portabilidad.md)), y sin proxy el Python recien instalado se quedaba sin pip.
+Se usa al instalar los paquetes de `-InstallPackages`. Arrancar pip ya no necesita
+red: el Python que instala el kit lo trae, y si faltara se repone con `ensurepip`, que
+va dentro de Python.
 
 Si el proxy inspecciona HTTPS y falla el certificado, pide a IT el certificado raiz e
 importalo en *Certificados - Usuario actual* > *Entidades de certificacion raiz de
@@ -292,8 +311,7 @@ confianza* (no necesita admin).
 |---|---|---|
 | Node.js | SHA-256 contra el `SHASUMS256.txt` de nodejs.org | integridad |
 | JDK (Temurin) | SHA-256 que publica la API de Adoptium | integridad |
-| Python | el zip abre y no llego truncado; se anota su SHA-256 | integridad |
-| get-pip.py | HTTPS | — |
+| Python | SHA-256 contra el `SHA256SUMS` de python-build-standalone; se anota | integridad |
 
 **Ninguno de los tres es verificacion de autenticidad, y conviene saberlo.**
 

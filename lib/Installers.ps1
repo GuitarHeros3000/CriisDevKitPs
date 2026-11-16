@@ -130,6 +130,7 @@ function Get-PeInfo {
         }
 
         $importa = New-Object 'System.Collections.Generic.List[string]'
+        $diferidas = New-Object 'System.Collections.Generic.List[string]'
         $vistas  = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 
         # Entrada 1 del directorio: importaciones normales, 20 bytes por DLL.
@@ -167,15 +168,29 @@ function Get-PeInfo {
                 $pos = & $aPosicion $rvaNombre
                 if ($null -eq $pos) { continue }
                 $nombre = & $leerNombre $pos
-                if ($nombre -and $vistas.Add($nombre)) { $importa.Add($nombre) }
+                if ($nombre -and $vistas.Add($nombre)) {
+                    $importa.Add($nombre)
+                    if ($t.Indice -eq 13) { $diferidas.Add($nombre) }
+                }
             }
+        }
+
+        # Entrada 14: la cabecera de .NET. Un programa .NET solo importa
+        # mscoree.dll; lo que le falta, si le falta algo, es el runtime de .NET.
+        $esDotNet = $false
+        if ($null -ne $dirs -and $nDirs -gt 14) {
+            $fs.Position = $dirs + 8 * 14
+            $esDotNet = ($br.ReadUInt32() -ne 0)
         }
 
         return [PSCustomObject]@{
             Arquitectura = $arquitectura
             Machine      = $machine
             Secciones    = $secciones
+            # Todas, incluidas las diferidas; Diferidas dice cuales lo son.
             Importa      = @($importa)
+            Diferidas    = @($diferidas)
+            EsDotNet     = $esDotNet
         }
     }
     catch {
@@ -215,6 +230,170 @@ function Expand-Cabinet {
     $expand = Join-Path $env:SystemRoot 'System32\expand.exe'
     $run = Invoke-NativeCommand -FilePath $expand -Arguments @('-R', '-F:*', $CabPath, $DestDir) -Quiet
     return ($run.ExitCode -eq 0)
+}
+
+function Expand-ZipArchive {
+    <#
+    .SYNOPSIS
+        Saca un .zip a una carpeta. Es lo que usa el kit en vez de Expand-Archive.
+    .DESCRIPTION
+        Mismo motor de .NET que Expand-Archive, sin su contabilidad por archivo,
+        que es donde se le iba el tiempo: el zip de Node (2.032 archivos) tardaba
+        8,1 s y ahora 3,0; encima de una instalacion previa, 11,4 s frente a 2,8.
+
+        Se extrae primero a una carpeta hermana y solo al final se pone en su
+        sitio, asi que un fallo a mitad no deja en -Destino media instalacion que
+        la siguiente ejecucion daria por buena.
+
+        Al ponerla en su sitio, lo que trae el zip SUSTITUYE a lo que hubiera con
+        el mismo nombre, y lo demas se respeta: el data\ de VS Code, que no viene
+        en el zip, sigue ahi despues de actualizarlo.
+
+        -QuitarEnvoltorio: si todo el zip cuelga de una sola carpeta
+        (jdk-21.0.12+8\, apache-maven-3.9.9\), su contenido sube un nivel. Era el
+        mismo bloque de "extraer, mirar y mover" copiado en seis sitios.
+
+        Nada sale de -Destino: una entrada con ..\ en el nombre (zip slip) hace
+        fallar la extraccion entera antes de escribir nada.
+
+        Lanza una excepcion si algo falla, igual que Expand-Archive.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$Destino,
+        [switch]$QuitarEnvoltorio
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    $destino = [IO.Path]::GetFullPath($Destino).TrimEnd('\')
+    $temp = "$destino.part-" + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+    $base = $temp + '\'
+
+    $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $Path).ProviderPath)
+    try {
+        $entradas = @($zip.Entries)
+        $nombres = @($entradas | ForEach-Object { $_.FullName -replace '\\', '/' })
+
+        $quitar = 0
+        if ($QuitarEnvoltorio -and $nombres.Count -gt 0) {
+            $raices = @($nombres | ForEach-Object { $_.Split('/')[0] } | Select-Object -Unique)
+            $sueltas = @($nombres | Where-Object { $_ -notmatch '^[^/]+/' })
+            if ($raices.Count -eq 1 -and $sueltas.Count -eq 0) { $quitar = $raices[0].Length + 1 }
+        }
+
+        # Primero se calcula y comprueba cada destino; despues se escribe.
+        $plan = New-Object 'System.Collections.Generic.List[object]'
+        for ($i = 0; $i -lt $entradas.Count; $i++) {
+            $rel = $nombres[$i].Substring($quitar)
+            if (-not $rel) { continue }
+            $t = [IO.Path]::GetFullPath([IO.Path]::Combine($base, $rel))
+            if (-not $t.StartsWith($base, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "El zip intenta escribir fuera de su carpeta: $($entradas[$i].FullName)"
+            }
+            $plan.Add(@($entradas[$i], $t, $rel.EndsWith('/')))
+        }
+
+        [void][IO.Directory]::CreateDirectory($temp)
+        foreach ($p in $plan) {
+            if ($p[2]) { [void][IO.Directory]::CreateDirectory($p[1]); continue }
+            [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($p[1]))
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($p[0], $p[1], $true)
+        }
+    }
+    catch {
+        Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
+    finally { $zip.Dispose() }
+
+    Publish-ExtractedFolder -Temporal $temp -Destino $destino
+}
+
+function Publish-ExtractedFolder {
+    <#
+        Pone en -Destino lo que se acaba de extraer en -Temporal, y borra la
+        temporal. Si -Destino no existe, es un renombrado (mismo volumen: nada
+        que copiar). Si existe, cada cosa de la temporal SUSTITUYE a la del
+        mismo nombre y lo demas se queda: ver Expand-ZipArchive.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Temporal,
+        [Parameter(Mandatory=$true)][string]$Destino
+    )
+
+    try {
+        if (-not (Test-Path -LiteralPath $Destino)) {
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $Destino))
+            Move-Item -LiteralPath $Temporal -Destination $Destino
+            return
+        }
+        foreach ($h in @(Get-ChildItem -LiteralPath $Temporal -Force)) {
+            $d = Join-Path $Destino $h.Name
+            if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }
+            Move-Item -LiteralPath $h.FullName -Destination $d
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $Temporal -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Expand-TarArchive {
+    <#
+    .SYNOPSIS
+        Saca un .tar.gz a una carpeta, con las mismas garantias que Expand-ZipArchive.
+    .DESCRIPTION
+        Con el tar.exe que trae Windows desde la version 1803 (bsdtar), por ruta
+        completa: uno cualquiera en el PATH -el de Git, por ejemplo, que no
+        entiende las rutas de Windows- no deberia colarse aqui.
+
+        bsdtar ya se niega a escribir fuera de la carpeta (rutas con .. o
+        absolutas), y se extrae a una temporal hermana: un fallo a mitad no deja
+        nada en -Destino.
+
+        -QuitarEnvoltorio: si todo cuelga de una sola carpeta (el python\ de
+        python-build-standalone), su contenido sube un nivel.
+
+        Lanza una excepcion si algo falla.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$Destino,
+        [switch]$QuitarEnvoltorio
+    )
+
+    $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+    if (-not (Test-Path -LiteralPath $tar)) {
+        throw "Este Windows no trae tar.exe (llego con Windows 10 1803); no se puede abrir $Path."
+    }
+
+    $destino = [IO.Path]::GetFullPath($Destino).TrimEnd('\')
+    $temp = "$destino.part-" + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+    [void][IO.Directory]::CreateDirectory($temp)
+
+    try {
+        $r = Invoke-NativeCommand -FilePath $tar -Arguments @('-xzf', (Resolve-Path -LiteralPath $Path).ProviderPath, '-C', $temp) -Quiet
+        if ($r.ExitCode -ne 0) { throw "tar no pudo abrir $Path (codigo $($r.ExitCode)): $($r.Output.Trim())" }
+
+        $origen = $temp
+        if ($QuitarEnvoltorio) {
+            $hijos = @(Get-ChildItem -LiteralPath $temp -Force)
+            if ($hijos.Count -eq 1 -and $hijos[0].PSIsContainer) { $origen = $hijos[0].FullName }
+        }
+    }
+    catch {
+        Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
+
+    if ($origen -ne $temp) {
+        # La carpeta de dentro pasa a ser la temporal: asi Publish la trata igual.
+        $plano = "$temp-x"
+        Move-Item -LiteralPath $origen -Destination $plano
+        Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+        $temp = $plano
+    }
+    Publish-ExtractedFolder -Temporal $temp -Destino $destino
 }
 
 function Copy-FileRange {

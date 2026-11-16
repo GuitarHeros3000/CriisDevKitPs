@@ -24,8 +24,9 @@ softwares_locked/
 *.zip
 env.json
 
-# Descargas interrumpidas de Invoke-Download.
+# Descargas interrumpidas de Invoke-Download, y de donde salieron.
 *.part
+*.part.json
 
 # Copias que dejan Use-Env e Install-NoAdmin al respaldar algo del usuario.
 *.criisdevkit-backup

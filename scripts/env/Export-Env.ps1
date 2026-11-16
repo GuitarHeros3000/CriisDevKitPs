@@ -6,8 +6,8 @@
     Genera un .zip con un manifiesto (env.json) y todo lo necesario para
     reproducir el entorno SIN internet en la maquina destino.
 
-    Esto existe porque el kit depende de seis dominios (nodejs.org,
-    registry.npmjs.org, python.org, pypi.org, api.adoptium.net y github.com).
+    Esto existe porque el kit depende de varios dominios (nodejs.org,
+    registry.npmjs.org, pypi.org, api.adoptium.net y github.com, entre otros).
     En una laptop corporativa basta con que bloqueen uno para que ese runtime
     sea inalcanzable. Con el bundle se pasa por USB y se instala en local.
 
@@ -16,10 +16,12 @@
       - npm-global\: el arbol del Angular CLI ya instalado, para no depender
                      del registro de npm en destino.
       - wheels\    : los paquetes pip descargados como .whl.
+      - extras\    : VCRuntime\ y Apps\ tal cual, con el SHA-256 de cada
+                     archivo: no se pueden volver a descargar como un runtime.
 .PARAMETER Output
     Ruta del .zip a generar. Por defecto: entorno-<fecha>.zip junto al kit.
 .PARAMETER Runtime
-    Exporta solo un runtime (Angular, Python o Java). Por defecto, todos.
+    Exporta solo un runtime, o VCRuntime, o Apps. Por defecto, todo.
 .PARAMETER SkipBinaries
     Genera solo el manifiesto, sin descargar los binarios. El .zip pesa unos KB
     pero la maquina destino necesitara internet.
@@ -34,7 +36,7 @@
 param(
     [string]$Output,
 
-    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode', 'VCRuntime', 'Apps')]
     [string]$Runtime,
 
     [switch]$SkipBinaries,
@@ -55,6 +57,10 @@ $JavaRoot    = Join-Path $WorkspaceRoot "Java"
 # 2 porque el manifiesto lleva ahora la seccion "otros", con los seis runtimes
 # que antes se quedaban fuera. Un Import viejo debe RECHAZAR un bundle nuevo en
 # vez de importarlo a medias sin decir nada.
+#
+# 3 SOLO si lleva "extras" (VCRuntime, Apps): un Import de antes se las saltaria
+# sin avisar. Sin extras sigue siendo 2, para que un kit de antes no rechace un
+# bundle que si sabe importar entero.
 $ManifestVersion = 2
 
 if ([string]::IsNullOrWhiteSpace($Output)) {
@@ -223,7 +229,16 @@ foreach ($e in (Get-RuntimeCatalog | Where-Object { $_.Bundle })) {
     }
 }
 
-if ($angular.Count -eq 0 -and $python.Count -eq 0 -and $java.Count -eq 0 -and $otros.Count -eq 0) {
+# VCRuntime\ y Apps\: no se vuelven a descargar, viajan tal cual. Sin
+# binarios no tiene sentido llevarlas, porque son SOLO binarios.
+$extras = @()
+if (-not $SkipBinaries) {
+    foreach ($c in $KitExtraFolders) {
+        if (Test-RuntimeSelected -Name $c -Selected $Runtime) { $extras += @(Get-KitExtraItems -Carpeta $c) }
+    }
+}
+
+if ($angular.Count -eq 0 -and $python.Count -eq 0 -and $java.Count -eq 0 -and $otros.Count -eq 0 -and $extras.Count -eq 0) {
     Write-Log "No hay nada instalado que exportar." "WARN"
     Write-Log "  Instala algo primero, o revisa con  .\bin\kit\Doctor-Env.bat" "WARN"
     exit 0
@@ -234,6 +249,10 @@ foreach ($a in $angular) { Write-Host "  Angular v$($a.Version)  (CLI $($a.CliVe
 foreach ($p in $python)  { Write-Host "  Python $($p.Full)  ($($p.Packages.Count) paquetes pip)" }
 foreach ($j in $java)    { Write-Host "  Java $($j.Version)  ($($j.Release))" }
 foreach ($o in $otros)   { Write-Host "  $($o.Entrada.Nombre) $($o.Version)" }
+foreach ($x in $extras)  {
+    $mb = (Get-ChildItem -LiteralPath $x.Ruta -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB
+    Write-Host ("  {0}\{1}  ({2:N0} MB, tal cual)" -f $x.Carpeta, $x.Item, $mb)
+}
 Write-Host ""
 
 # --- Carpeta temporal donde se arma el bundle ---
@@ -327,8 +346,15 @@ try {
 
         if (-not $SkipBinaries) {
             New-Item -ItemType Directory -Path $runtimesDir -Force | Out-Null
+            # Siempre el completo de python-build-standalone, aunque aqui
+            # hubiera un embeddable viejo: en destino se instala el que trae
+            # venv y tkinter, con su SHA-256 oficial.
             $info = Get-PythonArchiveInfo -FullVersion $p.Full
-            $saved = Save-RuntimeArchive -Url $info.Url -FileName $info.FileName -Sha256 $null `
+            if (-not $info) {
+                Write-Log "  Python $($p.Full) no esta en python-build-standalone; se omite" "ERROR"
+                continue
+            }
+            $saved = Save-RuntimeArchive -Url $info.Url -FileName $info.FileName -Sha256 $info.Sha256 `
                                          -DestDir $runtimesDir -Label "Python $($p.Full)"
             if (-not $saved) {
                 Write-Log "  no se pudo traer Python $($p.Full); se omite" "ERROR"
@@ -336,6 +362,7 @@ try {
             }
             $entry.archive = "runtimes/$($saved.File)"
             $entry.sha256  = $saved.Sha256
+            $entry.origen  = "python-build-standalone $($info.Tag)"
 
             if ($p.Packages.Count -gt 0) {
                 $target = Join-Path $wheelsDir "python-$($p.Version)"
@@ -350,24 +377,12 @@ try {
                     '--disable-pip-version-check'
                 )
 
-                # El Python embeddable no trae pip, y "pip freeze" nunca se lista
-                # a si mismo. Para instalarlo sin red hacen falta LAS DOS COSAS:
-                #   - get-pip.py : arranca un pip temporal con el que ejecutar
-                #   - pip-*.whl  : el paquete que ese pip instalara
-                # get-pip.py con --no-index NO instala el pip que lleva dentro:
-                # lo busca en --find-links, asi que sin el wheel falla.
-                $getPip = Join-Path $target "get-pip.py"
-                $gotPip = Invoke-Download -Uri "https://bootstrap.pypa.io/get-pip.py" `
-                                          -OutFile $getPip -Description "get-pip.py"
-
-                $dlPip = Invoke-NativeCommand -FilePath $p.Exe -Arguments @(
-                    '-m', 'pip', 'download', 'pip', '-d', $target,
-                    '--disable-pip-version-check'
-                ) -Quiet
-
-                if ($dl.ExitCode -eq 0 -and $gotPip -and $dlPip.ExitCode -eq 0) {
+                # Ya no hace falta get-pip.py: el Python que viaja en el bundle
+                # (python-build-standalone) trae pip, y si faltara se repone con
+                # ensurepip, que va dentro de Python y no necesita red.
+                if ($dl.ExitCode -eq 0) {
                     $entry.wheels = "wheels/python-$($p.Version)"
-                    Write-Log "  incluidos get-pip.py y el wheel de pip" "SUCCESS"
+                    Write-Log "  incluidos los paquetes como .whl" "SUCCESS"
                 }
                 else {
                     Write-Log "  pip download fallo; el destino necesitara acceso a pypi.org" "WARN"
@@ -443,6 +458,21 @@ try {
         }
 
         $manifest.otros += $entry
+    }
+
+    # --- VCRuntime\ y Apps\, tal cual ---
+    if ($extras.Count -gt 0) {
+        $manifest.manifestVersion = 3
+        $manifest.extras = @()
+        foreach ($x in $extras) {
+            Write-Log "$($x.Carpeta)\$($x.Item)..."
+            $dest = Join-Path $staging (Join-Path "extras\$($x.Carpeta)" $x.Item)
+            New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force | Out-Null
+            Copy-Item -LiteralPath $x.Ruta -Destination $dest -Recurse -Force
+            $archivos = @(Get-FolderManifest -Ruta $dest)
+            $manifest.extras += [ordered]@{ carpeta = $x.Carpeta; item = $x.Item; archivos = $archivos }
+            Write-Log "  $($archivos.Count) archivo(s), cada uno con su SHA-256" "SUCCESS"
+        }
     }
 
     # --- Manifiesto ---

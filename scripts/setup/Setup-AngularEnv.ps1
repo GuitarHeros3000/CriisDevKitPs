@@ -309,7 +309,7 @@ function Get-NodeJsPortable {
     }
 
     Write-Log "Extrayendo..."
-    Expand-Archive -Path $nodeZipPath -DestinationPath $EnvSetup.AngularRoot -Force
+    Expand-ZipArchive -Path $nodeZipPath -Destino $EnvSetup.AngularRoot
     Remove-Item $nodeZipPath -Force
     Write-Log "Node.js instalado" "SUCCESS"
 

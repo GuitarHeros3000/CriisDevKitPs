@@ -567,7 +567,7 @@ function Get-InnoExtractor {
         }
 
         $extraido = Join-Path $tmp "x"
-        Expand-Archive -Path $zip -DestinationPath $extraido -Force
+        Expand-ZipArchive -Path $zip -Destino $extraido
 
         $exe = @(Get-ChildItem -LiteralPath $extraido -Filter 'innoextract.exe' -Recurse -File -ErrorAction SilentlyContinue)
         if ($exe.Count -eq 0) {

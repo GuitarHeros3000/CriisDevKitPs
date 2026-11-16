@@ -191,20 +191,36 @@ function Set-MavenCorpProxy {
     $u = [Uri]$proxy
     $cred = Split-ProxyCredential -Proxy $proxy
 
+    # Todo lo que viene del usuario se escapa. Una clave con & o < dejaba el XML
+    # invalido, Maven no arrancaba y esta funcion decia que todo habia ido bien.
+    $x = { param($t) [Security.SecurityElement]::Escape([string]$t) }
+
     $bloque = @($marcaIni, '  <proxies>', '    <proxy>',
                 '      <id>criisdevkit</id>', '      <active>true</active>',
                 "      <protocol>$($u.Scheme)</protocol>",
-                "      <host>$($u.Host)</host>",
+                "      <host>$(& $x $u.Host)</host>",
                 "      <port>$($u.Port)</port>")
     if ($cred -and $cred.Credencial) {
-        $bloque += "      <username>$($cred.Credencial.UserName)</username>"
-        $bloque += "      <password>$($cred.Credencial.GetNetworkCredential().Password)</password>"
+        $bloque += "      <username>$(& $x $cred.Credencial.UserName)</username>"
+        $bloque += "      <password>$(& $x $cred.Credencial.GetNetworkCredential().Password)</password>"
     }
     $bloque += @('    </proxy>', '  </proxies>', $marcaFin)
 
     # Va justo despues de <settings ...>, que es donde Maven espera <proxies>.
-    $nuevo = [regex]::Replace($limpio, '(<settings[^>]*>)', "`$1`n" + ($bloque -join "`n"), 'Singleline')
-    if ($nuevo -eq $limpio) { return $false }
+    # Se inserta a mano y no con Regex.Replace: ahi un $1 o un $& de la clave se
+    # leian como referencias del patron y la clave salia cambiada por "<settings>".
+    $m = [regex]::Match($limpio, '<settings[^>]*>', 'Singleline')
+    if (-not $m.Success) { return $false }
+    $fin = $m.Index + $m.Length
+    $nuevo = $limpio.Substring(0, $fin) + "`n" + ($bloque -join "`n") + $limpio.Substring($fin)
+
+    # Ultima red: si el resultado no es XML, no se escribe. Mejor no tener proxy
+    # en Maven que dejarle un settings.xml con el que no arranca.
+    try { [xml]$nuevo | Out-Null }
+    catch {
+        Write-Log "  El settings.xml de $MavenPath no quedaria valido; no se toca." "WARN"
+        return $false
+    }
 
     Write-TextoSinBom -Ruta $cfg -Texto $nuevo
     return $true

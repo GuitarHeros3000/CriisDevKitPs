@@ -59,18 +59,18 @@ function Get-ArchToken {
         Un solo sitio con toda la nomenclatura, porque NO hay un nombre comun y
         suponerlo cuesta una descarga que devuelve 404 sin explicar nada:
 
-          Adoptium   aarch64  (no arm64: es el unico que usa el nombre de ARM)
-          python.org amd64    (no x64: tambien es el unico raro en 64 bits)
-          Node       arm64 / x64
-          .NET       arm64 / x64
-          VS Code    arm64 / x64
+          Adoptium                 aarch64 / x64
+          python-build-standalone  aarch64 / x86_64  (los nombres de GCC y LLVM)
+          Node                     arm64 / x64
+          .NET                     arm64 / x64
+          VS Code                  arm64 / x64
 
         Maven y Gradle no aparecen: son Java puro y su zip vale para las dos.
         Git tampoco, y ese caso es distinto -ver Test-ArchSoportada.
     #>
     param(
         [Parameter(Mandatory=$true)]
-        [ValidateSet('adoptium', 'node', 'python', 'dotnet', 'vscode')]
+        [ValidateSet('adoptium', 'node', 'pbs', 'dotnet', 'vscode')]
         [string]$Fuente,
 
         [ValidateSet('x64', 'arm64')]
@@ -82,13 +82,13 @@ function Get-ArchToken {
     if ($Arch -eq 'arm64') {
         switch ($Fuente) {
             'adoptium' { return 'aarch64' }
-            'python'   { return 'arm64' }
+            'pbs'      { return 'aarch64' }
             default    { return 'arm64' }
         }
     }
 
     switch ($Fuente) {
-        'python' { return 'amd64' }
+        'pbs'    { return 'x86_64' }
         default  { return 'x64' }
     }
 }

@@ -3,7 +3,7 @@
 .SYNOPSIS
     Menu.ps1 - Menu de consola del kit.
 .DESCRIPTION
-    El kit tiene 31 comandos y nadie se los sabe de memoria. Esto los reune en
+    El kit tiene 34 comandos y nadie se los sabe de memoria. Esto los reune en
     una pantalla que ademas dice QUE HAY INSTALADO, que es la pregunta con la
     que uno llega.
 
@@ -81,6 +81,7 @@ function Get-Opciones {
     $ops += [PSCustomObject]@{ Num = 34; Grupo = 'MANTENER';  Texto = 'Desinstalar';               Bat = 'Uninstall-Env.bat';   Clave = $null; Pide = 'desinstalar' }
     $ops += [PSCustomObject]@{ Num = 35; Grupo = 'MANTENER';  Texto = 'Verificar lo instalado';    Bat = 'Verify-Env.bat';      Clave = $null; Pide = $null }
     $ops += [PSCustomObject]@{ Num = 36; Grupo = 'MANTENER';  Texto = 'Aplicar actualizaciones';   Bat = 'Update-Env.bat';      Clave = $null; Pide = 'apply' }
+    $ops += [PSCustomObject]@{ Num = 37; Grupo = 'MANTENER';  Texto = 'Actualizar el propio kit';  Bat = 'Update-Kit.bat';      Clave = $null; Pide = $null }
 
     # Empezar va aparte y con el 0: es lo primero que hace falta en un equipo
     # nuevo, y enterrado en ENTORNO no lo encontraba nadie. Ademas, meterlo con
@@ -92,10 +93,12 @@ function Get-Opciones {
     $ops += [PSCustomObject]@{ Num = 42; Grupo = 'ENTORNO';   Texto = 'Fijar versiones (lock)';    Bat = 'Restore-Env.bat';     Clave = $null; Pide = 'lock' }
     $ops += [PSCustomObject]@{ Num = 43; Grupo = 'ENTORNO';   Texto = 'Llevar a otra maquina';     Bat = 'Export-Env.bat';      Clave = $null; Pide = $null }
     $ops += [PSCustomObject]@{ Num = 44; Grupo = 'ENTORNO';   Texto = 'Traer de otra maquina';     Bat = 'Import-Env.bat';      Clave = $null; Pide = 'ruta-zip' }
+    $ops += [PSCustomObject]@{ Num = 45; Grupo = 'ENTORNO';   Texto = 'Dejar listo un proyecto';   Bat = 'Setup-Project.bat';   Clave = $null; Pide = 'proyecto' }
 
     $ops += [PSCustomObject]@{ Num = 50; Grupo = 'OTROS';     Texto = 'Instalar software sin admin'; Bat = 'Install-NoAdmin.bat'; Clave = $null; Pide = 'instalador' }
     $ops += [PSCustomObject]@{ Num = 51; Grupo = 'OTROS';     Texto = 'Runtime de Visual C++';     Bat = 'Install-VCRuntime.bat'; Clave = $null; Pide = 'vcruntime' }
-    $ops += [PSCustomObject]@{ Num = 52; Grupo = 'OTROS';     Texto = 'Pruebas del kit';           Bat = 'Run-Tests.bat';       Clave = $null; Pide = $null }
+    $ops += [PSCustomObject]@{ Num = 52; Grupo = 'OTROS';     Texto = 'Por que no arranca un programa'; Bat = 'Doctor-App.bat'; Clave = $null; Pide = 'app' }
+    $ops += [PSCustomObject]@{ Num = 53; Grupo = 'OTROS';     Texto = 'Pruebas del kit';           Bat = 'Run-Tests.bat';       Clave = $null; Pide = $null }
 
     return $ops
 }
@@ -247,7 +250,27 @@ function Invoke-Opcion {
         'ruta'         { $r = Read-Texto -Prompt "   Ruta del devenv.json (vacio = carpeta actual)"; if ($r) { $argumentos = @('-Path', $r) } }
         'ruta-zip'     { $r = Read-Texto -Prompt "   Ruta del .zip"; if (-not $r) { return }; $argumentos = @('-Path', $r) }
         'instalador'   { $r = Read-Texto -Prompt "   Ruta del instalador"; if (-not $r) { return }; $argumentos = @('-Path', $r) }
-        'vcruntime'    { $r = Read-Texto -Prompt "   Ruta del .exe que lo pide (vacio = solo descargarlo)"; if ($r) { $argumentos = @('-App', $r) } }
+        'app'          { $r = Read-Texto -Prompt "   Ruta del .exe (o de su carpeta)"; if (-not $r) { return }; $argumentos = @('-Path', $r.Trim('"')) }
+        'proyecto'     { $r = Read-Texto -Prompt "   Carpeta del proyecto (vacio = la actual)"; if ($r) { $argumentos = @('-Path', $r.Trim('"')) } }
+        'vcruntime'    {
+            # Vaciar la ruta descargaba todo en verde y parecia que el programa ya
+            # estaba servido: por eso ahora se dice antes, y se pregunta la version.
+            Write-Host ""
+            Write-Host "   Dale el .exe que falla: el kit ve que version pide y deja las DLL" -ForegroundColor DarkGray
+            Write-Host "   en su carpeta. Vacio = solo descargarlas, SIN copiar nada." -ForegroundColor DarkGray
+            $r = Read-Texto -Prompt "   Ruta del .exe"
+            if ($r) { $argumentos = @('-App', $r.Trim('"')) }
+            else {
+                $versiones = @(Get-VCRuntimeCatalog | ForEach-Object { $_.Version })
+                $v = Read-Texto -Prompt "   Version que descargar ($($versiones -join ', '))" -PorDefecto $versiones[-1]
+                $vc = Get-VCRuntimeEntry -Version $v
+                if (-not $vc) {
+                    Write-Host "   No conozco esa version." -ForegroundColor Yellow
+                    return
+                }
+                $argumentos = @('-Version', $vc.Version)
+            }
+        }
         'desinstalar'  {
             Write-Host ""
             Write-Host "   Vacio = TODO lo que instalo el kit." -ForegroundColor DarkGray

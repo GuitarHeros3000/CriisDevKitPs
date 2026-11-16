@@ -74,18 +74,56 @@ ng build             Compilar produccion
 .\bin\setup\Setup-PythonEnv.bat -PythonVersion 3.12 -InstallPackages django,flask
 ```
 
-Descarga el Python *embeddable*, lo parchea para que pip funcione
-(`import site` + `Lib\site-packages`) y genera un `pyXYZ-shell.bat`.
+Instala **CPython completo y portable**, de
+[python-build-standalone](https://github.com/astral-sh/python-build-standalone) (el
+que usan `uv` y Rye): un `.tar.gz` que se descomprime y funciona, **con `venv`,
+`tkinter`, `sqlite3` y pip**, sin instalador ni registro. Genera un `pyXYZ-shell.bat`.
+
+```powershell
+python -m venv .venv          Un entorno por proyecto, como en cualquier Python
+.venv\Scripts\activate
+```
+
+O que lo haga el kit, con la version que pide el proyecto y sus dependencias:
+`.\bin\env\Setup-Project.bat -Path C:\proyectos\mi-app` (ver
+[portabilidad](portabilidad.md#dejar-listo-un-proyecto-setup-project)).
+
+#### Por que no el de python.org
+
+Hasta la version 2.2 el kit instalaba el zip *embeddable* de python.org. Es Python,
+pero recortado para ir dentro de otro programa: **sin `venv` ni `tkinter`**, y sin pip
+(habia que parchear el `._pth` y arrancarlo con `get-pip.py`). `python -m venv`
+fallaba con *"No module named venv"* y ningun proyecto con interfaz `tkinter`
+arrancaba.
+
+Lo que se pierde a cambio: `python.exe` **no va firmado** (el de python.org si). Lo
+que lo respalda es el **SHA-256** de su `SHA256SUMS`, que se comprueba al descargar y
+queda anotado en la carpeta. `Doctor` y `Verify-Env` lo saben y no lo tratan como
+algo raro.
+
+Si ya tenias un Python embeddable de antes, sigue funcionando. `Doctor` y el propio
+setup lo senalan y dicen como cambiarlo por el completo:
+
+```
+[WARN] Ya hay Python 3.11.9 en python-3.11, pero es el EMBEDDABLE de python.org:
+[WARN]   no trae venv ni tkinter, asi que 'python -m venv' falla.
+[WARN]   Para cambiarlo por el completo:  .\bin\setup\Setup-PythonEnv.bat -PythonVersion 3.11 -Force
+```
 
 ### Que patch se instala
 
-Si indicas `3.12`, el script busca la **ultima 3.12.x que tenga binario para Windows**.
-No basta con coger el numero mas alto: cuando una serie pasa a modo *solo seguridad*,
-python.org publica esas versiones unicamente como codigo fuente. Hoy, por ejemplo,
-3.12.13 existe pero no tiene zip embeddable, asi que se instala 3.12.10 y el script
-dice por que.
+Si indicas `3.12`, se instala la **ultima 3.12.x** de la ultima release de
+python-build-standalone. Nunca una alfa, beta o rc: esas solo si las pides exactas.
 
-Con `-PythonVersion 3.12.9` se instala exactamente esa.
+Con `-PythonVersion 3.12.10` se instala exactamente esa, aunque ya no este en la
+ultima release: se busca hacia atras entre las anteriores (lo necesita un
+`devenv.lock.json`). Cada release trae el ultimo parche de cada linea, asi que la
+busqueda es por biseccion: unas pocas lecturas, no todas.
+
+**Sin gastar la API de GitHub** para lo normal. Sin autenticar deja 60 consultas por
+hora y por IP, y en una oficina sale todo el mundo por la misma. La ultima release se
+saca de la redireccion de `releases/latest`, y lo que trae, de su `SHA256SUMS` (unos
+140 KB). La API solo se usa al buscar un parche antiguo, para la lista de releases.
 
 ### Actualizar el patch
 

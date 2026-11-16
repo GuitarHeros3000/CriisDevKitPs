@@ -11,8 +11,8 @@
     -o peor, un binario de la arquitectura que no es- sin explicar nada. Los dos
     nombres raros estan comprobados contra las APIs reales:
 
-      Adoptium   aarch64  y no arm64
-      python.org amd64    y no x64
+      Adoptium                 aarch64  y no arm64
+      python-build-standalone  aarch64 y x86_64, los nombres de GCC
 #>
 
 $KitRoot = Split-Path -Parent $PSScriptRoot
@@ -54,8 +54,9 @@ Describe "Get-ArchToken" {
         Get-ArchToken -Fuente adoptium -Arch arm64 | Should Be 'aarch64'
     }
 
-    It "python.org dice amd64, no x64" {
-        Get-ArchToken -Fuente python -Arch x64 | Should Be 'amd64'
+    It "python-build-standalone dice x86_64 y aarch64" {
+        Get-ArchToken -Fuente pbs -Arch x64   | Should Be 'x86_64'
+        Get-ArchToken -Fuente pbs -Arch arm64 | Should Be 'aarch64'
     }
 
     It "el resto usa los nombres normales" {
@@ -64,7 +65,6 @@ Describe "Get-ArchToken" {
             Get-ArchToken -Fuente $f -Arch arm64 | Should Be 'arm64'
         }
         Get-ArchToken -Fuente adoptium -Arch x64   | Should Be 'x64'
-        Get-ArchToken -Fuente python   -Arch arm64 | Should Be 'arm64'
     }
 
     It "sin -Arch usa la de la maquina" {
@@ -103,11 +103,13 @@ Describe "Las URLs cambian con la arquitectura" {
         (Get-BundleArchiveInfo -Clave 'vscode' -Version '1.136.0').Url | Should Match 'win32-x64-archive'
     }
 
-    It "Python pide el embed de la arquitectura" {
+    It "Python elige el archivo de la arquitectura de la maquina" {
+        $sums = "aaaa000000000000000000000000000000000000000000000000000000000000  cpython-3.12.16+20261110-aarch64-pc-windows-msvc-install_only.tar.gz`n" +
+                "bbbb000000000000000000000000000000000000000000000000000000000000  cpython-3.12.16+20261110-x86_64-pc-windows-msvc-install_only.tar.gz"
         $env:CRIISDEVKIT_ARCH = 'arm64'
-        (Get-PythonArchiveInfo -FullVersion '3.12.10').FileName | Should Be 'python-3.12.10-embed-arm64.zip'
+        (@(ConvertFrom-PythonBuildSums -Texto $sums)).FileName | Should Match 'aarch64-pc-windows'
         $env:CRIISDEVKIT_ARCH = 'x64'
-        (Get-PythonArchiveInfo -FullVersion '3.12.10').FileName | Should Be 'python-3.12.10-embed-amd64.zip'
+        (@(ConvertFrom-PythonBuildSums -Texto $sums)).FileName | Should Match 'x86_64-pc-windows'
     }
 }
 

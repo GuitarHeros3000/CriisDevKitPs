@@ -258,6 +258,251 @@ function Get-HashFromChecksumText {
     return $null
 }
 
+# --------------------------------------------------------------------------
+# Descarga por trozos, reanudable
+# --------------------------------------------------------------------------
+
+function Get-KitUserAgent {
+    <#
+        El mismo agente que manda Invoke-WebRequest. Hay proxies corporativos
+        que filtran por agente, y cambiar de motor no deberia cambiar quien dice
+        el kit que es.
+    #>
+    try {
+        $p = [Microsoft.PowerShell.Commands.PSUserAgent].GetProperty('UserAgent', [Reflection.BindingFlags]'NonPublic, Static')
+        $ua = $p.GetValue($null)
+        if ($ua) { return [string]$ua }
+    }
+    catch { }
+    return "Mozilla/5.0 (Windows NT) WindowsPowerShell/$($PSVersionTable.PSVersion)"
+}
+
+function ConvertTo-DownloadErrorRecord {
+    <#
+        Un fallo de HttpWebRequest llega a PowerShell envuelto: "Excepcion al
+        llamar a GetResponse..." con la WebException DENTRO. Get-WebErrorStatus
+        busca el codigo HTTP en la excepcion de fuera, asi que sin desenvolverla
+        un 404 no tenia codigo, contaba como transitorio y se reintentaba.
+    #>
+    param([Parameter(Mandatory=$true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    $e = $ErrorRecord.Exception
+    while ($e -is [System.Management.Automation.MethodInvocationException] -and $e.InnerException) {
+        $e = $e.InnerException
+    }
+    if ($e -eq $ErrorRecord.Exception) { return $ErrorRecord }
+    return (New-Object System.Management.Automation.ErrorRecord(
+        $e, 'Descarga', [System.Management.Automation.ErrorCategory]::ConnectionError, $null))
+}
+
+function Read-PartialDownloadInfo {
+    <# De donde salio un .part y con que se comprueba que no ha cambiado. #>
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    try {
+        $j = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        return [PSCustomObject]@{ Url = [string]$j.url; Validador = [string]$j.validador }
+    }
+    catch { return $null }
+}
+
+function Receive-HttpFile {
+    <#
+        UNA peticion: escribe en -Parte, siguiendo desde el byte -Desde si el
+        servidor lo admite (206) o desde cero si no (200). Lanza la excepcion
+        de red tal cual; reintentar es cosa de Invoke-Download.
+
+        Si el servidor da un validador fuerte (ETag que no sea W/, o
+        Last-Modified), se anota en -Meta: es lo que deja continuar en otra
+        ejecucion sin riesgo de pegar trozos de dos versiones.
+    #>
+    param(
+        [string]$Uri,
+        [string]$Parte,
+        [string]$Meta,
+        [long]$Desde = 0,
+        [string]$Validador,
+        [string]$Proxy,
+        [string]$Description
+    )
+
+    $req = [System.Net.HttpWebRequest][System.Net.WebRequest]::Create($Uri)
+    $req.UserAgent = Get-KitUserAgent
+    $req.AllowAutoRedirect = $true
+    $req.Timeout = 300000
+    # Sin datos en un minuto es un corte, aunque la conexion siga abierta: un
+    # proxy que se queda colgado no tiene que dejar la descarga parada para
+    # siempre. Lo que llevaba se conserva y se sigue.
+    $req.ReadWriteTimeout = 60000
+
+    # El mismo montaje que Add-ProxyToRequest le hace a Invoke-WebRequest.
+    if ($Proxy) {
+        $partes = Split-ProxyCredential -Proxy $Proxy
+        $wp = New-Object System.Net.WebProxy($partes.Direccion)
+        $wp.BypassProxyOnLocal = $false
+        if ($partes.Credencial) { $wp.Credentials = $partes.Credencial.GetNetworkCredential() }
+        else { $wp.UseDefaultCredentials = $true }
+        $req.Proxy = $wp
+    }
+
+    if ($Desde -gt 0) {
+        $req.AddRange($Desde)
+        if ($Validador) { $req.Headers.Add('If-Range', $Validador) }
+    }
+
+    $resp = $req.GetResponse()
+    try {
+        $sigue = ($Desde -gt 0 -and [int]$resp.StatusCode -eq 206)
+        $base = if ($sigue) { $Desde } else { [long]0 }
+        $total = if ($resp.ContentLength -ge 0) { $base + $resp.ContentLength } else { [long]-1 }
+
+        if (-not $sigue) {
+            $etag = $resp.Headers['ETag']
+            $nuevo = if ($etag -and -not $etag.StartsWith('W/')) { $etag } else { $resp.Headers['Last-Modified'] }
+            if ($nuevo) {
+                (@{ url = $Uri; validador = $nuevo } | ConvertTo-Json) | Set-Content -LiteralPath $Meta -Encoding UTF8
+            }
+            else {
+                Remove-Item -LiteralPath $Meta -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        $modo = if ($sigue) { [IO.FileMode]::Append } else { [IO.FileMode]::Create }
+        $entrada = $resp.GetResponseStream()
+        $salida = [IO.File]::Open($Parte, $modo, [IO.FileAccess]::Write, [IO.FileShare]::None)
+
+        # Los scripts apagan el progreso porque el de Invoke-WebRequest frena
+        # la descarga. Este se pinta cada medio segundo y no cuesta nada.
+        $ProgressPreference = 'Continue'
+        $reloj = [Diagnostics.Stopwatch]::StartNew()
+        $pintado = -1000
+        $hecho = $base
+        try {
+            $buffer = New-Object byte[] 81920
+            while (($n = $entrada.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $salida.Write($buffer, 0, $n)
+                $hecho += $n
+                if ($reloj.ElapsedMilliseconds - $pintado -ge 500) {
+                    $pintado = $reloj.ElapsedMilliseconds
+                    $vel = ($hecho - $base) / [Math]::Max($reloj.Elapsed.TotalSeconds, 0.001) / 1MB
+                    if ($total -gt 0) {
+                        Write-Progress -Id 7 -Activity "Descargando $Description" -PercentComplete ([int](100 * $hecho / $total)) `
+                                       -Status ("{0:N1} de {1:N1} MB  ({2:N1} MB/s)" -f ($hecho / 1MB), ($total / 1MB), $vel)
+                    }
+                    else {
+                        Write-Progress -Id 7 -Activity "Descargando $Description" `
+                                       -Status ("{0:N1} MB  ({1:N1} MB/s)" -f ($hecho / 1MB), $vel)
+                    }
+                }
+            }
+        }
+        finally {
+            $salida.Dispose()
+            $entrada.Dispose()
+            Write-Progress -Id 7 -Activity "Descargando $Description" -Completed
+        }
+
+        # Hay servidores y proxies que cierran antes de tiempo sin dar error:
+        # el flujo termina y faltan bytes. Se trata como un corte.
+        if ($total -gt 0 -and $hecho -lt $total) {
+            throw (New-Object System.IO.IOException("La conexion se cerro a los $hecho de $total bytes"))
+        }
+
+        return [PSCustomObject]@{ Bytes = $hecho; Segundos = $reloj.Elapsed.TotalSeconds; Siguio = $sigue }
+    }
+    finally {
+        $resp.Close()
+    }
+}
+
+# --------------------------------------------------------------------------
+# Cache de descargas
+# --------------------------------------------------------------------------
+#
+# Solo entra lo que llego con hash oficial y cuadro con el: el nombre es el
+# propio hash, asi que lo que se saca de aqui es lo mismo que se bajaria.
+#
+# En %LOCALAPPDATA% y no junto al kit: la carpeta de trabajo suele estar en
+# OneDrive, y llenarla de cientos de MB de zips los subiria a la nube.
+
+$KitDownloadCache = Join-Path $env:LOCALAPPDATA "CriisDevKit\descargas"
+$script:KitDownloadCacheMaxBytes = 3GB
+
+function Get-CachedDownload {
+    <#
+        La copia de la cache con ese hash, o $null. Se vuelve a comprobar el
+        hash al sacarla: un archivo tocado en la cache no tiene que poder pasar
+        por bueno solo por como se llama.
+    #>
+    param([string]$Hash)
+
+    if ([string]::IsNullOrWhiteSpace($Hash) -or $env:CRIISDEVKIT_NOCACHE) { return $null }
+    if (-not (Test-Path -LiteralPath $KitDownloadCache)) { return $null }
+
+    $h = $Hash.Trim().ToLowerInvariant()
+    $f = @(Get-ChildItem -LiteralPath $KitDownloadCache -Filter "$h-*" -File -ErrorAction SilentlyContinue)[0]
+    if (-not $f) { return $null }
+
+    $real = if ($h.Length -eq 128) { Get-FileSha512 -FilePath $f.FullName } else { Get-FileSha256 -FilePath $f.FullName }
+    if ($real -ne $h) {
+        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+
+    # La fecha de escritura hace de "ultimo uso" para saber que tirar primero.
+    try { $f.LastWriteTimeUtc = [DateTime]::UtcNow } catch { }
+    return $f.FullName
+}
+
+function Save-CachedDownload {
+    <#
+        Guarda una copia de lo recien descargado y verificado. Nunca es fatal:
+        sin disco o sin permiso, simplemente no hay cache.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$FilePath,
+        [Parameter(Mandatory=$true)][string]$Hash
+    )
+
+    if ($env:CRIISDEVKIT_NOCACHE) { return }
+    try {
+        if (-not (Test-Path -LiteralPath $KitDownloadCache)) {
+            New-Item -ItemType Directory -Path $KitDownloadCache -Force | Out-Null
+        }
+        $h = $Hash.Trim().ToLowerInvariant()
+        $dest = Join-Path $KitDownloadCache ("$h-" + (Split-Path -Leaf $FilePath))
+        Copy-Item -LiteralPath $FilePath -Destination $dest -Force
+        Limit-DownloadCache
+    }
+    catch { }
+}
+
+function Limit-DownloadCache {
+    <# Tira lo que lleva mas tiempo sin usarse hasta quedar por debajo del tope. #>
+    param(
+        [string]$Carpeta = $KitDownloadCache,
+        [long]$Maximo = $script:KitDownloadCacheMaxBytes
+    )
+
+    $todo = @(Get-ChildItem -LiteralPath $Carpeta -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc)
+    $suma = ($todo | Measure-Object -Property Length -Sum).Sum
+    foreach ($f in $todo) {
+        if ($suma -le $Maximo) { break }
+        $suma -= $f.Length
+        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-DownloadCacheInfo {
+    <# Cuantos archivos y cuanto ocupa la cache, para Doctor. #>
+    $todo = @(Get-ChildItem -LiteralPath $KitDownloadCache -File -ErrorAction SilentlyContinue)
+    return [PSCustomObject]@{
+        Carpeta  = $KitDownloadCache
+        Archivos = $todo.Count
+        Bytes    = [long](($todo | Measure-Object -Property Length -Sum).Sum)
+    }
+}
+
 function Invoke-Download {
     <#
     .SYNOPSIS
@@ -265,11 +510,20 @@ function Invoke-Download {
     .DESCRIPTION
         - Detecta y usa el proxy (variables de entorno o proxy del sistema).
         - Reintenta solo los fallos transitorios.
+        - Si la conexion se corta, sigue desde donde iba en vez de empezar de
+          cero; y si se cae del todo, la siguiente ejecucion tambien.
+        - Ensena el progreso: cuanto lleva, cuanto falta y a que velocidad.
         - Descarga a un archivo .part y solo lo publica si todo salio bien, para
           no dejar nunca un archivo a medias que parezca una descarga valida.
-        - Verifica SHA-256 si se le pasa uno.
+        - Verifica SHA-256 o SHA-512 si se le pasa uno, y entonces lo guarda en
+          la cache de descargas: la proxima vez no hace falta la red.
         - Explica en castellano que fallo y como arreglarlo.
         Devuelve $true / $false; no lanza excepciones.
+
+        Va con HttpWebRequest y no con Invoke-WebRequest porque en PowerShell
+        5.1 este no deja mandar la cabecera Range, y sin ella no hay forma de
+        pedir "lo que falta". El proxy se monta igual que antes, con las mismas
+        funciones (Resolve-DownloadProxy y Split-ProxyCredential).
     #>
     param(
         [Parameter(Mandatory=$true)][string]$Uri,
@@ -293,84 +547,133 @@ function Invoke-Download {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
 
-    $temp = "$OutFile.part"
-    if (Test-Path -LiteralPath $temp) {
-        Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+    $esperado = $null
+    $algoritmo = $null
+    if (-not [string]::IsNullOrWhiteSpace($Sha256)) {
+        $esperado = $Sha256.Trim().ToLowerInvariant(); $algoritmo = 'SHA-256'
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($Sha512)) {
+        $esperado = $Sha512.Trim().ToLowerInvariant(); $algoritmo = 'SHA-512'
+    }
+
+    # Lo que ya se bajo una vez y cuadra con su hash no se vuelve a bajar:
+    # reinstalar con -Force o exportar despues de instalar repetia cientos de MB.
+    $cache = Get-CachedDownload -Hash $esperado
+    if ($cache) {
+        Copy-Item -LiteralPath $cache -Destination $OutFile -Force
+        Write-Log "  De la cache de descargas, sin red ($algoritmo verificado)" "SUCCESS"
+        Write-SignerReport -FilePath $OutFile -Esperado $FirmanteEsperado
+        return $true
     }
 
     # El espejo interno, si lo hay, antes que nada: todo lo de abajo -incluido
     # el mensaje de error- debe hablar de la URL por la que se salio de verdad.
     $Uri = Resolve-KitUrl -Uri $Uri
 
-    $params = @{
-        Uri             = $Uri
-        OutFile         = $temp
-        UseBasicParsing = $true
-        TimeoutSec      = 300
+    $temp = "$OutFile.part"
+    $meta = "$OutFile.part.json"
+
+    # Una descarga a medias de otra ejecucion se continua SOLO si es de la misma
+    # URL y el servidor dio con que comprobar que el archivo no ha cambiado
+    # (ETag o Last-Modified, que se le devuelven en If-Range). Si no, se tira:
+    # pegar dos trozos de archivos distintos daria uno que parece bueno.
+    $desde = [long]0
+    $validador = $null
+    if (Test-Path -LiteralPath $temp) {
+        $previa = Read-PartialDownloadInfo -Path $meta
+        if ($previa -and $previa.Url -eq $Uri -and $previa.Validador) {
+            $desde = (Get-Item -LiteralPath $temp).Length
+            $validador = $previa.Validador
+            Write-Log ("  Hay {0:N1} MB de una descarga anterior: se sigue desde ahi" -f ($desde / 1MB))
+        }
+        else {
+            Remove-Item -LiteralPath $temp, $meta -Force -ErrorAction SilentlyContinue
+        }
     }
 
-    Add-ProxyToRequest -Params $params -Uri ([Uri]$Uri) -Announce
+    $proxy = Resolve-DownloadProxy -Uri ([Uri]$Uri)
+    if ($proxy) { Write-Log "  Proxy detectado: $(Format-ProxyForDisplay $proxy)" }
 
-    $attempt = 0
+    # Un corte que deja el archivo MAS LARGO que antes no cuenta como fallo: la
+    # conexion va, solo se cae. Con un tope para no quedarse en bucle.
+    $fallos = 0
+    $intentos = 0
     while ($true) {
-        $attempt++
+        $intentos++
+        $antes = $desde
         try {
-            Invoke-WebRequest @params
+            $r = Receive-HttpFile -Uri $Uri -Parte $temp -Meta $meta -Desde $desde -Validador $validador `
+                                  -Proxy $proxy -Description $Description
             break
         }
         catch {
-            if (Test-Path -LiteralPath $temp) {
-                Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+            $err = ConvertTo-DownloadErrorRecord -ErrorRecord $_
+            $status = Get-WebErrorStatus -ErrorRecord $err
+            $desde = if (Test-Path -LiteralPath $temp) { (Get-Item -LiteralPath $temp).Length } else { [long]0 }
+            $previa = Read-PartialDownloadInfo -Path $meta
+            $validador = if ($previa) { $previa.Validador } else { $null }
+
+            # 416: lo que habia no encaja con el archivo de ahora. Desde cero.
+            if ($status -eq 416 -and $antes -gt 0 -and $intentos -lt 10) {
+                Remove-Item -LiteralPath $temp, $meta -Force -ErrorAction SilentlyContinue
+                $desde = [long]0; $validador = $null
+                continue
             }
 
-            if ($attempt -le $Retries -and (Test-TransientError -ErrorRecord $_)) {
-                Write-Log "  Intento $attempt fallo; reintentando..." "WARN"
-                Start-Sleep -Seconds (2 * $attempt)
+            $avanzo = $desde -gt $antes
+            if (-not $avanzo) { $fallos++ }
+            if ($fallos -le $Retries -and $intentos -lt 10 -and (Test-TransientError -ErrorRecord $err)) {
+                if ($avanzo) {
+                    Write-Log ("  Se corto a los {0:N1} MB; se sigue desde ahi..." -f ($desde / 1MB)) "WARN"
+                }
+                else {
+                    Write-Log "  Intento $intentos fallo; reintentando..." "WARN"
+                    Start-Sleep -Seconds (2 * $fallos)
+                }
                 continue
             }
 
             Write-Log "No se pudo descargar: $Description" "ERROR"
             Write-Log "  URL: $Uri" "ERROR"
-            Write-Log "  $(Get-WebErrorText -ErrorRecord $_)" "ERROR"
+            Write-Log "  $(Get-WebErrorText -ErrorRecord $err)" "ERROR"
 
-            $hint = Get-DownloadErrorHint -ErrorRecord $_
+            $hint = Get-DownloadErrorHint -ErrorRecord $err
             if ($hint) { Write-Log "  -> $hint" "WARN" }
 
+            # Lo bajado se guarda solo si se podra continuar con garantias.
+            if ($desde -gt 0 -and $validador) {
+                Write-Log ("  Lo descargado ({0:N1} MB) se guarda: la proxima vez se sigue desde ahi." -f ($desde / 1MB))
+            }
+            else {
+                Remove-Item -LiteralPath $temp, $meta -Force -ErrorAction SilentlyContinue
+            }
             return $false
         }
     }
 
-    $esperado = $null
-    $algoritmo = $null
-    if (-not [string]::IsNullOrWhiteSpace($Sha256)) {
-        $esperado = $Sha256.Trim().ToLowerInvariant(); $algoritmo = 'SHA-256'
-        $obtenido = Get-FileSha256 -FilePath $temp
-    }
-    elseif (-not [string]::IsNullOrWhiteSpace($Sha512)) {
-        $esperado = $Sha512.Trim().ToLowerInvariant(); $algoritmo = 'SHA-512'
-        $obtenido = Get-FileSha512 -FilePath $temp
-    }
+    Write-Log ("  {0:N1} MB en {1:N1} s" -f ($r.Bytes / 1MB), $r.Segundos)
 
     if ($esperado) {
+        $obtenido = if ($algoritmo -eq 'SHA-256') { Get-FileSha256 -FilePath $temp } else { Get-FileSha512 -FilePath $temp }
         if ($obtenido -ne $esperado) {
             Write-Log "El archivo descargado no coincide con el hash oficial." "ERROR"
             Write-Log "  esperado: $esperado" "ERROR"
             Write-Log "  obtenido: $obtenido" "ERROR"
             Write-Log "  -> Descarga corrupta o alterada en transito. No se va a usar." "WARN"
-            Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $temp, $meta -Force -ErrorAction SilentlyContinue
             return $false
         }
 
         Write-Log "  $algoritmo verificado" "SUCCESS"
     }
 
-    # La firma se mira SIEMPRE, haya checksum o no, y se cuenta sin decidir
-    # nada por el usuario. Es lo unico que dice de QUIEN viene el archivo: el
-    # checksum solo dice que llego entero, y encima sale del mismo sitio.
+    Remove-Item -LiteralPath $meta -Force -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $OutFile) {
         Remove-Item -LiteralPath $OutFile -Force
     }
     Move-Item -LiteralPath $temp -Destination $OutFile -Force
+
+    if ($esperado) { Save-CachedDownload -FilePath $OutFile -Hash $esperado }
 
     # La firma se mira SIEMPRE, haya checksum o no, y se cuenta sin decidir nada
     # por el usuario. Es lo unico que dice de QUIEN viene el archivo: el checksum

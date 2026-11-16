@@ -130,20 +130,7 @@ function Get-MavenPortable {
     Write-Log "Extrayendo..."
     # El zip trae dentro apache-maven-X.Y.Z; la instalacion se guarda como
     # maven-<linea>, una carpeta por linea igual que python-3.12 y git-2.55.
-    $temp = Join-Path $MavenRoot "temp_maven"
-    if (Test-Path $temp) { Remove-Item $temp -Recurse -Force }
-    Expand-Archive -Path $zipPath -DestinationPath $temp -Force
-
-    $inner = @(Get-ChildItem $temp -Directory)
-    if ($inner.Count -eq 1) {
-        Move-Item -LiteralPath $inner[0].FullName -Destination $mavenPath -Force
-    }
-    else {
-        New-Item -ItemType Directory -Path $mavenPath -Force | Out-Null
-        Move-Item -Path "$temp\*" -Destination $mavenPath -Force
-    }
-
-    Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
+    Expand-ZipArchive -Path $zipPath -Destino $mavenPath -QuitarEnvoltorio
     Remove-Item $zipPath -Force
 
     Write-Log "Maven instalado en $mavenPath" "SUCCESS"

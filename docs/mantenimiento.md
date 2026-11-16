@@ -102,6 +102,42 @@ Tres decisiones que se notan cuando algo va mal:
 
 Termina diciendo como comprobar que quedo bien: `.\bin\env\Verify-Env.bat`.
 
+## Actualizar el propio kit
+
+```powershell
+.\bin\kit\Update-Kit.bat -Check       Dice si hay una version nueva
+.\bin\kit\Update-Kit.bat              La pone
+.\bin\kit\Update-Kit.bat -Revertir    Vuelve a la de antes
+```
+
+Antes, para tener la version nueva en el equipo del trabajo habia que llevarla a mano.
+Ahora sale de las **releases de GitHub**, y del menu, opcion **37**:
+
+- Mira la ultima siguiendo la redireccion de `releases/latest`, sin gastar consultas
+  de la API (sin autenticar deja 60 por hora y por IP, y en una oficina sale todo el
+  mundo por la misma).
+- Baja el zip y lo comprueba contra el **SHA-256** que se publica a su lado. Sin el
+  no actualiza: un kit a medias no arranca. Despues comprueba que dentro esta el kit
+  entero y que dice ser la version que se pidio.
+- Antes de tocar nada guarda lo que va a cambiar en
+  `%LOCALAPPDATA%\CriisDevKit\kit-anterior`, y `-Revertir` lo deja como estaba.
+- `bin`, `scripts`, `lib`, `tests` y `docs` quedan **exactamente** como en la version
+  nueva: lo que ya no trae, se borra (un script que cambio de carpeta dejaba una
+  copia vieja que podia encontrarse antes que la buena). En la raiz solo se escribe
+  lo que trae la version nueva: **tu `sources.json` y tus bundles se respetan**. Los
+  runtimes instalados viven fuera de la carpeta del kit y no se tocan.
+- Los `.bat` que cambian se ponen unos segundos **despues** de terminar: cmd lee un
+  `.bat` a trozos mientras lo ejecuta, y sobrescribir el que esta en marcha le hace
+  ejecutar lineas que no son.
+- En un **clon de git** no hace nada: ahi se actualiza con `git pull`, y sobrescribir
+  los archivos dejaria el repositorio lleno de cambios.
+
+Se puede apuntar a otra copia del repositorio (un fork, o el espejo interno) con
+`$env:CRIISDEVKIT_REPO = "usuario/repositorio"`, o a un espejo con `sources.json`.
+
+> La 2.3.0 es la primera que trae `Update-Kit`. A un equipo con una anterior hay que
+> llevarla a mano una ultima vez; a partir de ahi, ya no.
+
 ## Diagnostico
 
 ```powershell
@@ -140,7 +176,7 @@ que lo lea una persona; esto, para que no.
 ```json
 {
   "version_formato": 1,
-  "kit":      { "version": "2.2.0", "raiz": "...", "workspace": "..." },
+  "kit":      { "version": "2.3.0", "raiz": "...", "workspace": "..." },
   "maquina":  { "equipo": "PC-1234", "usuario": "jperez", "windows": "10.0.26200.0" },
   "resumen":  { "problemas": 0, "avisos": 3 },
   "secciones": [
@@ -175,7 +211,7 @@ arreglar sin descargar, y pide confirmacion antes:
 | Se repara | |
 |---|---|
 | Shells que faltan | `shell-vN.bat`, `pyXYZ-shell.bat`, `javaN-shell.bat` |
-| `._pth` sin parchear | Python embeddable donde pip no importaria |
+| `._pth` sin parchear | Python embeddable de los de antes, donde pip no importaria |
 | `JAVA_HOME` roto | Apuntando a una carpeta que ya no existe |
 | PATH duplicado | Entradas repetidas |
 | PATH con rutas muertas | **Solo las que cuelgan de las carpetas del kit** |
@@ -247,6 +283,18 @@ Authenticode, y esa si se comprueba. Es la diferencia entre "este archivo es el 
 descargue" (que ya no se puede saber) y "este archivo lo sigue firmando quien tiene
 que firmarlo" (que si).
 
+Python es la excepcion al reves: el de python-build-standalone **no va firmado**, asi
+que su firma sale como "no aplica" y lo que lo respalda es el SHA-256 anotado.
+
+### VCRuntime y Apps
+
+Tambien se verifican, sin `-Version` porque no tienen lineas:
+
+| | Que se mira |
+|---|---|
+| `VCRuntime` | que todas las DLL sigan firmadas por Microsoft, y que sean de la arquitectura de su carpeta: una de 64 bits en `x86\` daria `0xc000007b` |
+| `Apps` | que ningun `.exe` tenga la firma **rota** (firmado, pero cambiado despues). Sin firma no es fallo: hay mucho software legitimo sin firmar |
+
 ## JAVA_HOME: el descuadre que no se ve
 
 `java` en consola lo decide el **PATH**. Pero Maven, Gradle y los IDE leen
@@ -271,12 +319,19 @@ Alinearlo **no necesita admin**: el `JAVA_HOME` de usuario le gana al de maquina
 .\bin\env\Uninstall-Env.bat -Runtime Python -Version 3.12              Retira esa version
 .\bin\env\Uninstall-Env.bat -Runtime Angular -Version 20 -Node 22.23.2 Angular y su Node
 .\bin\env\Uninstall-Env.bat -Runtime Angular -All                      Todo el runtime
+.\bin\env\Uninstall-Env.bat -Runtime VCRuntime -Version 2012          Visual C++ 2012 (x86 y x64)
+.\bin\env\Uninstall-Env.bat -Runtime Apps -Version MiApp               Una app portable
 .\bin\env\Uninstall-Env.bat -Everything                                TODO, de todos
 ```
 
 `-Everything` recorre el catalogo de runtimes, asi que uno nuevo queda cubierto por
 estar en el catalogo y no por acordarse de tocar este comando. Sustituye a ejecutarlo
-nueve veces para dejar limpia una maquina.
+nueve veces para dejar limpia una maquina. Incluye `VCRuntime\` y `Apps\`.
+
+Lo que **no** deshace, y lo dice antes de confirmar: las DLL que `Install-VCRuntime`
+copio junto a tus programas (esos programas siguen funcionando) y lo que
+`Install-NoAdmin` instalo por usuario, que se quita desde *Configuracion >
+Aplicaciones* como cualquier otra.
 
 > Nunca toca la carpeta madre del workspace, la que contiene el kit y tus proyectos.
 > Con `-Everything` esa era la ruta que quedaba en la variable de "retirar la carpeta
@@ -361,7 +416,13 @@ Nada especial salvo una cosa: la **ExecutionPolicy** de PowerShell. Si esta en
 `Restricted` o `AllSigned`, el perfil no se ejecuta y el enganche de PowerShell no
 funciona (el de `cmd.exe` si, porque no es PowerShell).
 
-`.\bin\kit\Doctor-Env.bat` lo comprueba y lo reporta en la seccion *Sistema*:
+`Use-Env` lo mira antes de pedir confirmacion. Con la politica bloqueando, **no
+engancha PowerShell**: solo cmd, y te dice como arreglarlo. Enganchar igual dejaba
+un perfil que no se puede cargar, y cada terminal nueva abria con un error rojo sin
+activar nada. Cuando cambies la politica, vuelve a activar y entonces engancha los
+dos.
+
+`.\bin\kit\Doctor-Env.bat` tambien lo comprueba y lo reporta en la seccion *Sistema*:
 
 - Si viene de `CurrentUser`, se arregla sin admin:
   `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`

@@ -29,19 +29,22 @@ porque la sintaxis de asercion cambio (`Should Be` paso a `Should -Be`).
 | `Arch.Tests.ps1` | x64 y arm64: como llama cada fuente a cada arquitectura, y que ningun patron se quede en x64 |
 | `Catalog.Tests.ps1` | El catalogo, `devenv.json` y el lockfile, y que ningun comando se quede sin un runtime |
 | `CorpNet.Tests.ps1` | Lo que se escribe en la configuracion del usuario: el `settings.xml` de Maven, el `pip.ini`, el PEM de la CA |
-| `Doctor.Tests.ps1` | La tuberia de `-Json`: que cada detalle cuelgue de su comprobacion y el archivo tenga la forma prometida |
+| `Doctor.Tests.ps1` | La tuberia de `-Json`, que la red se compruebe a la vez (y en orden), y leer la version de `ng` y `npm` sin ejecutarlos |
 | `Documentacion.Tests.ps1` | Que la documentacion no contradiga al codigo: version, opciones del menu, cuenta de comandos y enlaces |
-| `Download.Tests.ps1` | El diagnostico de un 407 y los cuatro estados de la firma Authenticode |
+| `Download.Tests.ps1` | El diagnostico de un 407, los cuatro estados de la firma Authenticode, y descargas de verdad contra un servidor local que se corta, ignora `Range`, cambia el archivo o hace de proxy con clave; y la cache |
 | `InstallNoAdmin.Tests.ps1` | El ambito de una instalacion y si de verdad se evito el admin |
-| `Installers.Tests.ps1` | Leer un `.exe` (32, 64 bits y arm64), abrir un bundle Burn con la firma original en medio, y sacar los archivos de un MSI sin msiexec |
+| `Installers.Tests.ps1` | Leer un `.exe` (32, 64 bits y arm64), abrir un bundle Burn con la firma original en medio, sacar los archivos de un MSI sin msiexec, y sacar un zip sin salirse de la carpeta ni dejarla a medias |
+| `KitUpdate.Tests.ps1` | Poner una version nueva del kit sin tocar lo del usuario, dejar pendientes los `.bat` en marcha, volver atras, y que el zip que publica el CI sea el que busca `Update-Kit` |
+| `Project.Tests.ps1` | Que pide un proyecto: la linea de Python de un `requires-python`, las dependencias de `pyproject.toml` (con corchetes dentro), el JDK de un `pom.xml` y un `.venv` roto |
 | `Proxy.Tests.ps1` | Enmascarado de la clave, reglas de espejo y la URL del proxy |
 | `Referencias.Tests.ps1` | Que ningun archivo mencione un comando que no esta donde dice |
 | `Runtimes.Tests.ps1` | Resolver la version de Git y de los JDK, y el shell por cada JDK |
 | `Semver.Tests.ps1` | `Test-SemverRange` contra los `engines` reales del CLI |
 | `Shells.Tests.ps1` | Que el `.bat` generado **funciona al ejecutarlo en cmd**, incluso con una ruta hostil, y que `Use-Env` recupera de el la ruta exacta |
 | `UpdateEnv.Tests.ps1` | Que el comando que `-Apply` ejecuta sea el mismo que se imprime |
+| `UseEnv.Tests.ps1` | Que `Use-Env` no enganche el perfil de PowerShell cuando la politica de ejecucion no lo dejaria cargar |
 | `UserPath.Tests.ps1` | `Add-UserPathEntry` y `Remove-UserPathEntry` |
-| `VCRuntime.Tests.ps1` | Que DLL de Visual C++ necesita un programa, siguiendo la cadena, y que nunca se pise una de la otra arquitectura |
+| `VCRuntime.Tests.ps1` | Que version y que DLL de Visual C++ necesita un programa, siguiendo la cadena, y que nunca se pise una de la otra arquitectura (ni las de ARM que trae el redistribuible x64); y por que no arranca un programa (`Doctor-App`) |
 
 Esta tabla la vigila una prueba: un archivo de pruebas que no aparezca aqui pone la
 suite en rojo. Se quedo desfasada dos veces antes de que la hubiera.
@@ -53,6 +56,12 @@ Los ejecutables, bundles y MSI que necesitan `Installers` y `VCRuntime` se fabri
 en la propia prueba (`New-PeDePrueba` en `tests\Helpers.ps1`, `makecab.exe` y la API
 de Windows Installer), en vez de leer los de System32: esos cambian de arquitectura
 segun la maquina, y en el runner no hay ningun programa MFC.
+
+Las descargas se prueban contra `Start-ServidorDePrueba`, un servidor HTTP minimo sobre
+`TcpListener` (no necesita admin, al reves que `HttpListener`) que se porta mal a
+proposito: corta a mitad, cierra sin avisar, ignora `Range`, cambia de ETag o pide
+credenciales de proxy. Los zips con nombres que `Compress-Archive` no deja crear
+(`..\fuera.txt`) salen de `New-ZipDePrueba`.
 
 ### En cada push: un Windows que nadie ha tocado
 
@@ -92,6 +101,27 @@ maquina de quien desarrolla el kit**:
 Probar el kit a mano en la propia maquina no encuentra nada de esto. Por eso las
 pruebas usan una carpeta llamada `Marks & Spencer 100% ^O'Brien`.
 
+## Publicar una version
+
+```powershell
+# 1. Subir $KitVersion en lib\Common.ps1 (y el README, que la prueba lo vigila)
+git tag v2.3.0
+git push origin v2.3.0
+```
+
+La etiqueta dispara `.github\workflows\publicar.yml`, que:
+
+1. comprueba que la etiqueta **es** la version del kit: si no, `Update-Kit`
+   rechazaria el zip por decir ser otra;
+2. pasa la suite entera: una version publicada la instala `Update-Kit` sin que nadie
+   la mire;
+3. empaqueta con `git archive` (solo lo del repositorio, con los `.bat` en CRLF) en
+   `CriisDevKitPs-X.Y.Z.zip`, y escribe su SHA-256 en `CriisDevKitPs-X.Y.Z.zip.sha256`;
+4. crea la release con los dos archivos.
+
+El nombre del zip es un contrato entre el flujo y `Update-Kit`, y hay una prueba
+(`KitUpdate.Tests.ps1`) que lee los dos lados.
+
 ## Anadir un runtime nuevo
 
 El patron esta pensado para crecer (Java, Go, .NET, Git portable...):
@@ -101,7 +131,19 @@ El patron esta pensado para crecer (Java, Go, .NET, Git portable...):
 3. Usar `$WorkspaceRoot` para la carpeta destino, `Invoke-Download` para bajar,
    `Test-ZipIntegrity` antes de extraer y `Add-UserPathEntry` para el PATH.
 4. Copiar un `.bat` existente de la raiz y cambiarle el nombre del `.ps1`.
-5. Anadir una comprobacion en `Doctor-Env.ps1` y el archivo a su lista `$expected`.
+5. Anadir una comprobacion en `lib\Doctor.ps1`, llamarla desde el cuerpo de
+   `Doctor-Env.ps1`, y el archivo a la lista `$expected` de `Test-KitIntegrity`.
+
+### Doctor: las comprobaciones en `lib\Doctor.ps1`
+
+`Doctor-Env.ps1` es solo los parametros y el orden en que se comprueba; las casi dos
+mil lineas de comprobaciones estan en `lib\Doctor.ps1`. **No lo carga `Common.ps1`**:
+solo Doctor y sus pruebas, para que el resto de comandos no paguen lo que no usan.
+
+Antes estaba todo en el script, que al terminar sale con `exit`. Para probar una
+funcion habia que sacarla con el analizador de sintaxis (`Get-TextoDeFunciones`); ahora
+basta con cargar el archivo. Asi se prueban las comprobaciones de red en paralelo y
+la lectura de versiones sin ejecutar `ng`, que bajaron Doctor de 13-17 s a 3-4 s.
 
 ### Convencion: las funciones no llaman a `exit`
 
@@ -143,7 +185,8 @@ por una version anterior del kit siguen en disco y tienen que seguir entendiendo
 | Funcion | Para que |
 |---|---|
 | `Write-Log` | Log con timestamp y color |
-| `Invoke-Download` | Descarga con proxy, TLS, reintentos, SHA-256 y diagnostico |
+| `Invoke-Download` | Descarga con proxy, TLS, reintentos, reanudacion, progreso, SHA-256, cache y diagnostico |
+| `Expand-ZipArchive` | Saca un zip (unas 3 veces mas rapido que `Expand-Archive`), sin dejar media instalacion si falla |
 | `Invoke-JsonApi` | GET de una API JSON con el mismo tratamiento de proxy |
 | `Get-Sha256FromShasums` | Lee un `SHASUMS256.txt` remoto |
 | `Get-FileSha256` | SHA-256 de un archivo local |

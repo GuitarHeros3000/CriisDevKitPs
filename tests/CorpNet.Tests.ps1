@@ -266,6 +266,43 @@ Describe "Set-MavenCorpProxy y Get-MavenCorpProxy" {
         Get-MavenCorpProxy -MavenPath $mvn | Should BeNullOrEmpty
     }
 
+    # Paso de verdad: con una clave como "a&b" el settings.xml quedaba invalido
+    # y Maven no arrancaba, mientras la funcion devolvia $true. Con "a$1b" era
+    # peor: Regex.Replace leia el $1 y la clave salia cambiada por "<settings>".
+    Context "con usuario y clave que llevan caracteres especiales" {
+
+        $claves = @('a&b', 'a<b>c', 'a$1b', 'a$&b', "comi'lla""s", 'normal123')
+
+        It "la lista de claves no esta vacia" {
+            $claves.Count | Should Not Be 0
+        }
+
+        foreach ($clave in $claves) {
+            It "con la clave [$clave] el XML sigue siendo valido y la clave llega igual" {
+                $script:proxyDePrueba = "http://ACME%5Cjperez:$([Uri]::EscapeDataString($clave))@proxy.empresa:8080"
+                Mock Resolve-DownloadProxy { return $script:proxyDePrueba }
+
+                $mvn = New-MavenDePrueba -Carpeta (New-CarpetaTemporal)
+                Set-MavenCorpProxy -MavenPath $mvn | Should Be $true
+
+                [xml]$doc = Get-Content -LiteralPath (Join-Path $mvn "conf\settings.xml") -Raw
+                $doc.settings.proxies.proxy.password | Should BeExactly $clave
+                $doc.settings.proxies.proxy.username | Should BeExactly 'ACME\jperez'
+            }
+        }
+    }
+
+    It "un settings.xml que ya venia roto no se toca" {
+        $mvn = New-CarpetaTemporal
+        New-Item -ItemType Directory -Path (Join-Path $mvn "conf") -Force | Out-Null
+        $cfg = Join-Path $mvn "conf\settings.xml"
+        [IO.File]::WriteAllText($cfg, "<settings>`n  <servers>`n</settings>")
+        $antes = [IO.File]::ReadAllBytes($cfg)
+
+        Set-MavenCorpProxy -MavenPath $mvn 3>$null | Should Be $false
+        (@(Compare-Object $antes ([IO.File]::ReadAllBytes($cfg)))).Count | Should Be 0
+    }
+
     Context "sin proxy configurado" {
         Mock Resolve-DownloadProxy { return $null }
 

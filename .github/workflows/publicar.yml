@@ -1,0 +1,70 @@
+# Publica una version del kit al subir una etiqueta vX.Y.Z.
+#
+# Es lo que lee Update-Kit: el zip del kit y, al lado, su SHA-256. Sin este
+# flujo no habia nada que leer, y para tener la version nueva en otro equipo
+# habia que llevarla a mano.
+#
+# Antes de publicar se comprueba que la etiqueta sea la version que dice el
+# propio kit ($KitVersion en lib\Common.ps1) y se pasa la suite entera: una
+# version publicada la instala Update-Kit sin que nadie la mire.
+#
+# Para publicar la 2.3.0:   git tag v2.3.0   y   git push origin v2.3.0
+
+name: Publicar
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    name: Probar, empaquetar y publicar
+    runs-on: windows-latest
+
+    env:
+      CRIISDEVKIT_NOPAUSE: "1"
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: La etiqueta es la version del kit
+        shell: powershell
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $m = Select-String -Path lib\Common.ps1 -Pattern '^\s*\$KitVersion\s*=\s*"([^"]+)"' | Select-Object -First 1
+          $v = $m.Matches[0].Groups[1].Value
+          if ($tag -ne "v$v") {
+            Write-Host "::error::La etiqueta es $tag pero el kit dice ser $v (lib\Common.ps1). Update-Kit rechazaria el zip."
+            exit 1
+          }
+          Write-Host "Etiqueta $tag = KitVersion $v"
+
+      - name: Suite del kit
+        shell: powershell
+        run: .\bin\kit\Run-Tests.bat
+
+      # git archive y no comprimir la carpeta: solo lo que esta en el
+      # repositorio, con los .bat en CRLF segun .gitattributes, y dentro de una
+      # carpeta CriisDevKitPs\ que Update-Kit quita al extraer.
+      - name: Empaquetar
+        shell: powershell
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          $zip = "CriisDevKitPs-$v.zip"
+          git archive --format=zip --prefix=CriisDevKitPs/ -o $zip HEAD
+          $h = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$PWD\$zip.sha256", "$h  $zip`n")
+          Write-Host "$zip  $h"
+          "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Crear la release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" "$env:ZIP" "$env:ZIP.sha256" `
+            --title "CriisDevKit ${{ github.ref_name }}" --generate-notes

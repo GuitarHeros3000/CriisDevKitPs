@@ -14,7 +14,8 @@
     Descarga el zip oficial de nodejs.org verificando su SHA-256 contra el
     SHASUMS256.txt de la misma release.
 .PARAMETER NodeVersion
-    Version concreta (ej: 22.23.2). Si se omite, la ultima LTS disponible.
+    Version concreta (ej: 22.23.2) o una linea LTS (ej: 22, la ultima de esa
+    linea). Si se omite, la ultima LTS disponible.
 .PARAMETER Force
     Reinstala aunque ya exista esa version mayor.
 .PARAMETER WhatIf
@@ -52,9 +53,14 @@ function Resolve-StandaloneNodeVersion {
     #>
     param([string]$Forced)
 
-    if (-not [string]::IsNullOrWhiteSpace($Forced)) {
-        Write-Log "Version forzada por parametro: v$($Forced.TrimStart('v'))"
-        return $Forced.TrimStart('v')
+    $Forced = "$Forced".Trim().TrimStart('v')
+
+    # La exacta se respeta tal cual. Solo la linea ("22") se resuelve: el menu
+    # promete para todos los runtimes "admite la linea o la exacta", y con Node
+    # se pedia v22 literal a nodejs.org y salia un 404.
+    if ($Forced -and $Forced -notmatch '^\d+$') {
+        Write-Log "Version forzada por parametro: v$Forced"
+        return $Forced
     }
 
     Write-Log "Consultando las LTS disponibles en nodejs.org..."
@@ -63,6 +69,17 @@ function Resolve-StandaloneNodeVersion {
         Write-Log "No se pudo leer el indice de nodejs.org." "ERROR"
         Write-Log "  Indica la version a mano:  -NodeVersion 22.23.2" "WARN"
         return $null
+    }
+
+    if ($Forced) {
+        $linea = @($lts | Where-Object { $_.Major -eq [int]$Forced })
+        if ($linea.Count -eq 0) {
+            Write-Log "Node $Forced no es una linea LTS con zip para Windows." "ERROR"
+            Write-Log "  LTS disponibles: $(($lts | ForEach-Object { $_.Major }) -join ', ')" "WARN"
+            return $null
+        }
+        Write-Log "  Linea $Forced -> v$($linea[0].Version) (LTS $($linea[0].Lts))" "SUCCESS"
+        return $linea[0].Version
     }
 
     $elegida = @($lts | Sort-Object Major -Descending)[0]
@@ -140,20 +157,7 @@ function Get-NodePortable {
     # una carpeta por linea, y -Force actualiza el patch DENTRO. Con el nombre
     # completo del zip, cada patch creaba una carpeta nueva y -Force instalaba al
     # lado en vez de reemplazar, dejando la vieja para siempre.
-    $temp = Join-Path $NodeRoot "temp_node"
-    if (Test-Path $temp) { Remove-Item $temp -Recurse -Force }
-    Expand-Archive -Path $zipPath -DestinationPath $temp -Force
-
-    $inner = @(Get-ChildItem $temp -Directory)
-    if ($inner.Count -eq 1) {
-        Move-Item -LiteralPath $inner[0].FullName -Destination $nodePath -Force
-    }
-    else {
-        New-Item -ItemType Directory -Path $nodePath -Force | Out-Null
-        Move-Item -Path "$temp\*" -Destination $nodePath -Force
-    }
-
-    Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
+    Expand-ZipArchive -Path $zipPath -Destino $nodePath -QuitarEnvoltorio
     Remove-Item $zipPath -Force
 
     Write-Log "Node.js instalado en $nodePath" "SUCCESS"

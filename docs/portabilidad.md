@@ -6,9 +6,10 @@ El bundle para una maquina sin internet, y reproducir un entorno con devenv.json
 
 ## Llevarlo a una maquina sin internet
 
-El kit depende de seis dominios: `nodejs.org`, `registry.npmjs.org`, `python.org`,
-`pypi.org`, `api.adoptium.net` y `github.com`. En una laptop corporativa basta con
-que bloqueen **uno** para que ese runtime sea inalcanzable.
+El kit depende de varios dominios: `nodejs.org`, `registry.npmjs.org`, `pypi.org`,
+`api.adoptium.net` y `github.com` (de ahi salen el JDK y Python), entre otros. En una
+laptop corporativa basta con que bloqueen **uno** para que ese runtime sea
+inalcanzable.
 
 ```powershell
 .\bin\env\Export-Env.bat -Output D:\usb\entorno.zip     En la maquina CON internet
@@ -22,7 +23,15 @@ que bloqueen **uno** para que ese runtime sea inalcanzable.
 | `env.json` | manifiesto: versiones exactas de cada runtime y paquete |
 | `runtimes/` | los archivos originales de **los nueve** runtimes, con su SHA-256 |
 | `npm-global/` | el Angular CLI ya instalado, para no depender del registro de npm |
-| `wheels/` | los paquetes pip como `.whl`, mas `get-pip.py` y el wheel de `pip` |
+| `wheels/` | los paquetes pip como `.whl` |
+| `extras/` | `VCRuntime\` y `Apps\` tal cual, con el SHA-256 de **cada archivo** |
+
+`VCRuntime\` y `Apps\` no son runtimes que se puedan volver a descargar: viajan como
+estan. `Import-Env` comprueba cada archivo antes de poner cada pieza, y si uno no
+cuadra no pone esa pieza. Solo esas: `-Runtime VCRuntime` o `-Runtime Apps`.
+
+Un bundle con `extras/` lleva formato 3. Uno sin ellos sigue siendo 2, para que un
+kit anterior pueda seguir importandolo entero en vez de rechazarlo.
 
 `Import-Env` verifica el SHA-256 de cada archivo antes de extraerlo (un USB puede
 corromperlo) y **regenera los shells y el PATH con las rutas de la maquina destino**:
@@ -40,20 +49,24 @@ Cada archivo se coloca segun como venga empaquetado, que no es igual para todos:
 |---|---|
 | con envoltorio | el zip trae dentro una carpeta (`node-vX`, `apache-maven-X`) que se sube un nivel |
 | plano | el zip vuelca su contenido directo (.NET, VS Code) |
+| `.tar.gz` | Python (python-build-standalone): se abre con el `tar.exe` de Windows y se sube su `python\` |
 | autoextraible | PortableGit no es un zip; se ejecuta con `-o` |
 
 Y los remates propios de cada uno tambien: a Git se le ejecuta su `post-install`
 (si no, Git Bash queda a medias) y a VS Code se le crea la carpeta `data\` (si no,
 deja de ser portable en silencio).
 
+Python viaja siempre como el **completo** (con `venv` y `tkinter`), aunque en origen
+hubiera un embeddable de los que instalaba el kit antes. Ya no lleva `get-pip.py`:
+ese Python trae pip. Un bundle viejo, con el zip embeddable y su `get-pip.py`, se
+sigue pudiendo importar.
+
 ### Detalles que costaron encontrar
 
-- Instalar pip sin red necesita **dos** piezas: `get-pip.py` *y* el `pip-*.whl`.
-  `get-pip.py --no-index` no instala el pip que lleva embebido, solo lo usa para
-  ejecutarse; el paquete lo busca en `--find-links`.
+- `pip freeze` nunca se lista a si mismo, asi que pip hay que pedirlo aparte (si
+  hiciera falta: el Python del bundle ya lo trae).
 - Instalar el wheel de pip con el propio pip falla con *"To modify pip, please run
   the following command"*: pip se protege de modificarse a si mismo.
-- `pip freeze` nunca se lista a si mismo, asi que pip hay que pedirlo aparte.
 
 ### Opciones
 
@@ -71,6 +84,44 @@ pero no bloquea. `Doctor` muestra la version del kit de esta maquina.
 `manifestVersion` va por la **2** desde que el bundle cubre los nueve runtimes. Un
 kit viejo rechaza un bundle nuevo en vez de importarlo a medias sin decir nada; un
 kit nuevo sigue leyendo los bundles v1, a los que simplemente les falta esa seccion.
+
+## Dejar listo un proyecto: `Setup-Project`
+
+```powershell
+.\bin\env\Setup-Project.bat                                  En la carpeta del proyecto
+.\bin\env\Setup-Project.bat -Path C:\proyectos\mi-app -WhatIf Ensena que haria
+.\bin\env\Setup-Project.bat -Path C:\proyectos\mi-app -Force  Rehace un .venv roto
+```
+
+Lo que viene **despues** de instalar Python: saber que version pide el proyecto,
+crear su `.venv` con esa, y meterle sus dependencias. Lo lee de los archivos que ya
+tiene el proyecto; no hace falta escribir nada nuevo.
+
+| | De donde lo saca | Que hace |
+|---|---|---|
+| Python | `.python-version`, `devenv.json` o el `requires-python` de `pyproject.toml` | instala esa linea, crea `.venv` con ella e instala `requirements.txt` o las dependencias de `pyproject.toml` |
+| Node | `.nvmrc`, `.node-version` o `engines.node` de `package.json` | instala esa Node y ejecuta `npm ci` (con `package-lock.json`) o `npm install` |
+| Java | `maven.compiler.release`, `java.version` o `source` del `pom.xml`; el toolchain o `sourceCompatibility` de Gradle | instala ese JDK, y Maven o Gradle si el proyecto no trae `mvnw` o `gradlew`. No compila |
+
+Un `requires-python = ">=3.11"` no dice cual instalar. Se elige asi: la mas alta **ya
+instalada** que lo cumpla (no se descarga nada); si no, la 3.12, que es la del kit; y
+si tampoco, **la mas baja** que lo cumpla, que es la que el proyecto dice soportar.
+
+Un `.venv` que ya existe se respeta. Si esta **roto** -apunta a un Python que aqui no
+existe, lo normal al copiar un proyecto de otra maquina- o es de otra linea, se dice,
+y con `-Force` se rehace:
+
+```
+.venv: ROTO, su Python ya no existe (C:\Users\otro\...\Python311)
+  Para rehacerlo con Python 3.12:  .\bin\env\Setup-Project.bat -Path "..." -Force
+```
+
+Lo que no hace, y lo dice: con `uv.lock` instala las dependencias de `pyproject.toml`
+pero no las versiones fijadas del lock; un proyecto de Poetry tiene sus dependencias
+en otra seccion (`poetry install`). Con un `devenv.json`, `Restore-Env` instala
+exactamente lo que dice; aqui solo se usa para elegir Python.
+
+Tambien desde el menu, opcion **45**.
 
 ## Reproducir un entorno: `Restore-Env` y `devenv.json`
 

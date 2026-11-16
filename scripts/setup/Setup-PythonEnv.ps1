@@ -3,15 +3,22 @@
 .SYNOPSIS
     Setup-PythonEnv.ps1 - Configura entorno Python sin permisos de administrador
 .DESCRIPTION
-    Descarga Python portable e instala paquetes en carpeta por version.
-    La estructura se crea en una carpeta 'Python' junto a la raiz del kit.
+    Instala CPython completo y portable, de python-build-standalone: con venv,
+    tkinter y pip, sin instalador ni registro. La estructura se crea en una
+    carpeta 'Python' junto a la raiz del kit, una por linea (python-3.12).
+
+    Antes era el zip "embeddable" de python.org, que no trae venv ni tkinter
+    (ver el comentario de lib\Catalog.ps1). Una instalacion vieja asi se
+    detecta, y se cambia por la completa con -Force.
 .PARAMETER PythonVersion
-    Version de Python a instalar (ej: 3.12)
+    Version de Python a instalar: una linea (3.12, la ultima 3.12.x) o una
+    version exacta (3.12.10).
 .PARAMETER InstallPackages
     Paquetes pip a instalar separados por coma (ej: django,flask)
 .PARAMETER Force
     Reinstala aunque ya exista esa version menor. Necesario para actualizar el
-    patch (3.12.9 -> 3.12.10), porque la carpeta se llama solo python-3.12.
+    patch (3.12.9 -> 3.12.10), porque la carpeta se llama solo python-3.12, y
+    para cambiar un Python embeddable por el completo.
     Borra la carpeta: se pierden los paquetes pip instalados ahi.
 .PARAMETER WhatIf
     Muestra el plan y no toca nada. Resuelve la version por red (solo lectura),
@@ -42,64 +49,40 @@ $ProgressPreference = "SilentlyContinue"
 
 $PythonRoot = Join-Path $WorkspaceRoot "Python"
 
-$PythonFtpUrl = "https://www.python.org/ftp/python/"
+# El SHA-256 del archivo instalado, ya comprobado contra SHA256SUMS, y de donde
+# salio. Doctor y Verify-Env los leen.
+$ShaMarker    = ".criisdevkit-sha256"
+$OrigenMarker = ".criisdevkit-origen"
 
-# Archivo donde se anota el SHA-256 del zip instalado. Trazabilidad, no
-# autenticidad: ver el comentario en Get-PythonPortable.
-$ShaMarker = ".criisdevkit-sha256"
-
-function Get-EmbedZipUrl {
-    param([string]$FullVersion)
-    return "$PythonFtpUrl$FullVersion/python-$FullVersion-embed-$(Get-ArchToken -Fuente python).zip"
-}
-
-function Resolve-PythonVersion {
+function Resolve-PythonBuild {
     <#
-    .SYNOPSIS
-        Convierte "3.12" en la ultima X.Y.Z que tenga binario para Windows.
-    .DESCRIPTION
-        Antes se rellenaba el patch con "0", asi que "-PythonVersion 3.12"
-        instalaba 3.12.0, de octubre de 2023, con dos anos y medio de parches
-        de seguridad sin aplicar.
-
-        No basta con coger el numero mas alto: cuando una serie pasa a modo
-        "solo seguridad", python.org publica esas versiones SOLO como codigo
-        fuente. Por eso se prueban las candidatas de mayor a menor hasta dar
-        con una que tenga de verdad el zip embeddable.
-
-        Devuelve $null si no se pudo resolver, despues de explicar por que. No
-        llama a exit: matar el proceso desde dentro de una funcion la hace
-        intesteable e impide que nadie la reutilice. Misma convencion que
-        Invoke-Download e Invoke-JsonApi en Common.ps1.
+        Convierte "3.12" en la ultima 3.12.x de python-build-standalone, o
+        encuentra "3.12.10" exacta. Devuelve $null si no se pudo, despues de
+        explicar por que. El exit vive en el cuerpo del script, no aqui: asi se
+        puede probar y reutilizar.
     #>
     param([string]$Requested)
 
-    $parts = $Requested.Split('.')
-    if ($parts.Count -ge 3) {
-        Write-Log "Version exacta pedida: $Requested"
-        return $Requested
-    }
-
-    $minorPrefix = "$($parts[0]).$($parts[1])"
-    Write-Log "Buscando la ultima $minorPrefix.x con binario para Windows..."
-
-    # La busqueda vive en Common.ps1 porque Update-Env necesita exactamente lo
-    # mismo para decidir si lo instalado esta al dia. Aqui solo se cuenta.
-    $encontrada = Get-LatestPythonPatch -MinorPrefix $minorPrefix
-
-    if (-not $encontrada) {
-        Write-Log "No se encontro ninguna $minorPrefix.x con zip embeddable para Windows." "ERROR"
-        Write-Log "  Puede ser que no haya red, o que esa serie ya solo se publique" "WARN"
-        Write-Log "  como codigo fuente. Prueba una serie mas nueva, o indica la" "WARN"
-        Write-Log "  version completa a mano:  -PythonVersion $minorPrefix.10" "WARN"
+    $r = $Requested.Trim()
+    if ($r -notmatch '^\d+\.\d+(\.\d+)?$') {
+        Write-Log "Version no valida: $Requested. Usa una linea (3.12) o una version exacta (3.12.10)." "ERROR"
         return $null
     }
 
-    Write-Log "  Elegida: $($encontrada.Version)" "SUCCESS"
-    if ($encontrada.SoloFuente) {
-        Write-Log "  ($($encontrada.MasNueva) es mas nueva pero solo se publica como codigo fuente)"
+    if ($r -match '^\d+\.\d+$') { Write-Log "Buscando la ultima $r.x..." }
+    else { Write-Log "Buscando Python $r..." }
+
+    $build = Find-PythonBuild -Requested $r
+    if (-not $build) {
+        Write-Log "No se encontro Python $r en python-build-standalone." "ERROR"
+        Write-Log "  Puede que no haya red hasta github.com, o que esa version no exista" "WARN"
+        Write-Log "  para Windows (las lineas muy viejas dejan de publicarse)." "WARN"
+        Write-Log "  Diagnostico de la red:  .\bin\kit\Doctor-Env.bat" "WARN"
+        return $null
     }
-    return $encontrada.Version
+
+    Write-Log "  Elegida: $($build.Version) (build $($build.Tag))" "SUCCESS"
+    return $build
 }
 
 Write-Log "========================================" "INFO"
@@ -107,52 +90,16 @@ Write-Log "  Python Environment Setup" "INFO"
 Write-Log "========================================" "INFO"
 Write-Log ""
 
-# Acepta "3.12" o "3.12.4". El zip embeddable requiere la version completa X.Y.Z;
-# el archivo ._pth usa solo el tag mayor+menor (ej: python312._pth).
-#
-# El exit vive AQUI, en el cuerpo del script, y no dentro de las funciones: ellas
-# explican que fallo y devuelven $null, y es este nivel el que decide que eso es
-# fatal. Asi se pueden probar por separado y reutilizar desde otro script sin que
-# se lleven por delante el proceso entero.
-$fullVersion = Resolve-PythonVersion -Requested $PythonVersion
-if (-not $fullVersion) { exit 1 }
-
-$versionParts = $fullVersion.Split('.')
-$major = $versionParts[0]
-$minor = $versionParts[1]
-$minorVersion = "$major.$minor"
-$minorTag = "$major$minor"
+$build = Resolve-PythonBuild -Requested $PythonVersion
+if (-not $build) { exit 1 }
 
 $EnvSetup = @{
-    PythonRoot = $PythonRoot
-    Version = $minorVersion
-    FullVersion = $fullVersion
-    MinorTag = $minorTag
-    FolderName = "python-$minorVersion"
-    DownloadUrl = (Get-EmbedZipUrl -FullVersion $fullVersion)
-    GetPipUrl = "https://bootstrap.pypa.io/get-pip.py"
-}
-
-function Initialize-PythonDirectories {
-    $pythonPath = Join-Path $EnvSetup.PythonRoot $EnvSetup.FolderName
-    $scriptsPath = Join-Path $pythonPath "Scripts"
-
-    Write-Log "Creando estructura en:"
-    Write-Log "  $pythonPath"
-
-    $directories = @(
-        $EnvSetup.PythonRoot,
-        $pythonPath,
-        $scriptsPath
-    )
-
-    foreach ($dir in $directories) {
-        if (-not (Test-Path -LiteralPath $dir)) {
-            New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        }
-    }
-
-    return $pythonPath
+    PythonRoot  = $PythonRoot
+    Version     = $build.Linea
+    FullVersion = $build.Version
+    MinorTag    = $build.Linea -replace '\.', ''
+    FolderName  = "python-$($build.Linea)"
+    Build       = $build
 }
 
 function Get-InstalledPythonVersion {
@@ -164,6 +111,12 @@ function Get-InstalledPythonVersion {
     return $null
 }
 
+function Test-PythonEmbeddable {
+    <# El embeddable de python.org es el unico que trae un ._pth en la raiz. #>
+    param([string]$PythonPath)
+    return [bool](Get-ChildItem -LiteralPath $PythonPath -Filter 'python*._pth' -File -ErrorAction SilentlyContinue)
+}
+
 function Get-PythonPortable {
     $pythonFolderPath = Join-Path $EnvSetup.PythonRoot $EnvSetup.FolderName
     $pythonExe = Join-Path $pythonFolderPath "python.exe"
@@ -173,11 +126,19 @@ function Get-PythonPortable {
         # ya instalada tapa a cualquier patch posterior. Se compara el patch real
         # para no dejar al usuario con parches viejos sin enterarse.
         $installed = Get-InstalledPythonVersion -PythonExe $pythonExe
+        $embeddable = Test-PythonEmbeddable -PythonPath $pythonFolderPath
 
         if ($Force) {
             Write-Log "-Force: se reinstala $($EnvSetup.FolderName) desde cero" "WARN"
             if ($installed) { Write-Log "  habia: $installed  ->  se pondra: $($EnvSetup.FullVersion)" }
             Remove-Item -LiteralPath $pythonFolderPath -Recurse -Force
+        }
+        elseif ($embeddable) {
+            Write-Log "Ya hay Python $installed en $($EnvSetup.FolderName), pero es el EMBEDDABLE de python.org:" "WARN"
+            Write-Log "  no trae venv ni tkinter, asi que 'python -m venv' falla." "WARN"
+            Write-Log "  Para cambiarlo por el completo:  .\bin\setup\Setup-PythonEnv.bat -PythonVersion $($EnvSetup.Version) -Force" "WARN"
+            Write-Log "  (-Force borra la carpeta; anota antes tus paquetes con:  pip freeze > requirements.txt)" "WARN"
+            return $pythonFolderPath
         }
         elseif ($installed -eq $EnvSetup.FullVersion) {
             Write-Log "Python $installed ya esta instalado y al dia" "SUCCESS"
@@ -197,152 +158,74 @@ function Get-PythonPortable {
         }
     }
 
-    $zipPath = Join-Path $EnvSetup.PythonRoot "python-win.zip"
-    $tempExtract = Join-Path $EnvSetup.PythonRoot "temp_python"
+    if (-not (Test-Path -LiteralPath $EnvSetup.PythonRoot)) {
+        New-Item -ItemType Directory -Path $EnvSetup.PythonRoot -Force | Out-Null
+    }
 
-    # python.org no publica un archivo de checksums junto al zip embeddable
-    # (solo firmas GPG/sigstore, que necesitan herramientas extra). Nos apoyamos
-    # en HTTPS para la autenticidad y comprobamos la integridad abriendo el zip.
-    Write-Log "Descargando Python v$($EnvSetup.FullVersion)..."
-    $ok = Invoke-Download -Uri $EnvSetup.DownloadUrl `
-                          -OutFile $zipPath `
-                          -Description "Python v$($EnvSetup.FullVersion) (embeddable)"
-    if (-not $ok) {
-        Write-Log "Sugerencia: comprueba que la version $($EnvSetup.FullVersion) exista en python.org/ftp/python" "WARN"
+    $b = $EnvSetup.Build
+    $archivo = Join-Path $EnvSetup.PythonRoot $b.FileName
+
+    Write-Log "Descargando Python $($b.Version)..."
+    $ok = Invoke-Download -Uri $b.Url -OutFile $archivo -Sha256 $b.Sha256 `
+                          -Description "Python $($b.Version) (python-build-standalone)"
+    if (-not $ok) { return $null }
+
+    Write-Log "Extrayendo (son unos 3.500 archivos)..."
+    try {
+        Expand-TarArchive -Path $archivo -Destino $pythonFolderPath -QuitarEnvoltorio
+    }
+    catch {
+        Write-Log "No se pudo extraer: $($_.Exception.Message)" "ERROR"
+        return $null
+    }
+    finally {
+        Remove-Item -LiteralPath $archivo -Force -ErrorAction SilentlyContinue
+    }
+
+    if (-not (Test-Path -LiteralPath $pythonExe)) {
+        Write-Log "Tras extraer no hay python.exe en $pythonFolderPath" "ERROR"
         return $null
     }
 
-    if (-not (Test-ZipIntegrity -ZipPath $zipPath)) {
-        Write-Log "El zip de Python llego danado o incompleto" "ERROR"
-        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-        return $null
-    }
-
-    # Se anota el SHA-256 de lo que se instalo. NO es verificacion de
-    # autenticidad -no hay con que compararlo- sino trazabilidad: permite
-    # comparar dos maquinas que dicen tener la misma version, y detectar que los
-    # archivos han cambiado despues. python.org ya no publica hashes junto al
-    # zip embeddable; solo firmas sigstore/GPG, que necesitan herramientas que
-    # una maquina bloqueada no tiene (y para Python seria la pescadilla que se
-    # muerde la cola). Mismo patron que la marca de release del JDK.
-    $sha = Get-FileSha256 -FilePath $zipPath
-
-    Write-Log "Extrayendo..."
-    if (Test-Path $tempExtract) {
-        Remove-Item $tempExtract -Recurse -Force
-    }
-    New-Item -ItemType Directory -Path $tempExtract -Force | Out-Null
-    Expand-Archive -Path $zipPath -DestinationPath $tempExtract -Force
-
-    if (-not (Test-Path $pythonFolderPath)) {
-        New-Item -ItemType Directory -Path $pythonFolderPath -Force | Out-Null
-    }
-
-    Move-Item -Path "$tempExtract\*" -Destination $pythonFolderPath -Force
-    Remove-Item $tempExtract -Recurse -Force
-    Remove-Item $zipPath -Force
-
-    Set-Content -LiteralPath (Join-Path $pythonFolderPath $ShaMarker) -Value $sha -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $pythonFolderPath $ShaMarker) -Value $b.Sha256 -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $pythonFolderPath $OrigenMarker) -Value "python-build-standalone $($b.Tag)" -Encoding ASCII
 
     Write-Log "Python instalado en $pythonFolderPath" "SUCCESS"
-    Write-Log "  SHA-256 del zip: $sha"
+    Write-Log "  SHA-256 comprobado: $($b.Sha256)"
 
     return $pythonFolderPath
 }
 
-function Enable-Pip {
-    param([string]$PythonPath)
-
-    # El nombre del ._pth usa solo mayor+menor (ej: python312._pth), nunca el patch.
-    $pthFile = Join-Path $PythonPath "python$($EnvSetup.MinorTag)._pth"
-
-    if (-not (Test-Path $pthFile)) {
-        Write-Log "No se encontro $pthFile (zip embeddable inesperado)" "WARN"
-        return
-    }
-
-    $lines = Get-Content $pthFile
-
-    # 1) Habilitar site (necesario para que pip y sus scripts funcionen)
-    $lines = $lines | ForEach-Object { $_ -replace '^\s*#\s*import site\s*$', 'import site' }
-
-    # 2) Exponer Lib\site-packages para que los paquetes instalados sean importables.
-    #    El embeddable no lo incluye por defecto.
-    if ($lines -notcontains 'Lib\site-packages') {
-        $lines += 'Lib\site-packages'
-    }
-    if ($lines -notcontains 'import site') {
-        $lines += 'import site'
-    }
-
-    Set-Content -Path $pthFile -Value $lines -Encoding ASCII
-    Write-Log "Archivo ._pth configurado (site + site-packages)" "SUCCESS"
-}
-
-function Install-Pip {
+function Test-Pip {
+    <#
+        python-build-standalone ya trae pip. Si faltara (alguien lo desinstalo),
+        se repone con ensurepip, que va DENTRO de Python y no necesita red.
+    #>
     param([string]$PythonPath)
 
     $pythonExe = Join-Path $PythonPath "python.exe"
 
-    # Si pip ya responde, no hacemos nada. En una instalacion nueva escribe
-    # "No module named pip" en stderr, por eso va con Invoke-NativeCommand.
+    # En una instalacion sin pip escribe "No module named pip" en stderr, por
+    # eso va con Invoke-NativeCommand.
     $probe = Invoke-NativeCommand -FilePath $pythonExe -Arguments @('-m', 'pip', '--version') -Quiet
     if ($probe.ExitCode -eq 0) {
-        Write-Log "pip ya esta disponible" "SUCCESS"
+        Write-Log "pip disponible" "SUCCESS"
         return $true
     }
 
-    # El zip embeddable no trae pip: hay que arrancarlo con get-pip.py.
-    $getPip = Join-Path $PythonPath "get-pip.py"
-
-    Write-Log "Descargando get-pip.py..."
-    if (-not (Invoke-Download -Uri $EnvSetup.GetPipUrl -OutFile $getPip -Description "get-pip.py")) {
+    if (Test-PythonEmbeddable -PythonPath $PythonPath) {
+        Write-Log "Este Python es el embeddable y no trae pip. Reinstala con -Force para tener el completo." "ERROR"
         return $false
     }
 
-    Write-Log "Instalando pip..."
-
-    # get-pip.py NO instala el pip que lleva embebido: lo usa solo para poder
-    # ejecutarse, y el paquete lo BAJA de PyPI (junto a setuptools y wheel). Asi
-    # que detras de un proxy corporativo hay que decirselo, o este paso falla y el
-    # Python recien instalado se queda sin pip.
-    #
-    # Va por PIP_PROXY, igual que en Install-Packages y por el mismo motivo: con
-    # --proxy la clave acabaria en la linea de comandos del proceso.
-    #
-    # Verificado con un venv --without-pip y la cache desactivada: con PIP_PROXY
-    # apuntando a un puerto cerrado, get-pip.py falla. Ojo al comprobarlo a mano,
-    # que con la cache de pip caliente la instalacion sale bien sin tocar la red
-    # y parece que el proxy no se usa.
-    $proxy = Resolve-DownloadProxy -Uri ([Uri]"https://pypi.org")
-    $previousPipProxy = $env:PIP_PROXY
-    if ($proxy) {
-        Write-Log "  Usando proxy para pip: $(Format-ProxyForDisplay $proxy)"
-        $env:PIP_PROXY = $proxy
+    Write-Log "Falta pip; se repone con ensurepip (sin red)..."
+    $run = Invoke-NativeCommand -FilePath $pythonExe -Arguments @('-m', 'ensurepip', '--default-pip') -Quiet
+    if ($run.ExitCode -eq 0) {
+        Write-Log "pip repuesto" "SUCCESS"
+        return $true
     }
-
-    try {
-        $run = Invoke-NativeCommand -FilePath $pythonExe -Arguments @($getPip, '--no-warn-script-location')
-    }
-    finally {
-        if ($proxy) { Restore-EnvVar -Name 'PIP_PROXY' -Value $previousPipProxy }
-    }
-    $ok = ($run.ExitCode -eq 0)
-
-    Remove-Item $getPip -Force -ErrorAction SilentlyContinue
-
-    if ($ok) {
-        Write-Log "pip instalado" "SUCCESS"
-    }
-    else {
-        Write-Log "get-pip.py fallo (codigo $($run.ExitCode))" "ERROR"
-        Write-Log "  get-pip.py descarga pip de PyPI, asi que este paso necesita red." "WARN"
-        if (-not $proxy) {
-            Write-Log "  Si sales a internet por proxy, declaralo:  `$env:HTTPS_PROXY = ..." "WARN"
-        }
-    }
-
-    return $ok
+    Write-Log "ensurepip fallo (codigo $($run.ExitCode))" "ERROR"
+    return $false
 }
 
 function Install-Packages {
@@ -356,13 +239,6 @@ function Install-Packages {
     }
 
     $pythonExe = Join-Path $PythonPath "python.exe"
-
-    # Verifica que pip realmente exista antes de intentar instalar.
-    $probe = Invoke-NativeCommand -FilePath $pythonExe -Arguments @('-m', 'pip', '--version') -Quiet
-    if ($probe.ExitCode -ne 0) {
-        Write-Log "pip no esta disponible; se omite la instalacion de paquetes" "ERROR"
-        return
-    }
 
     Write-Log "Instalando paquetes: $Packages"
 
@@ -427,7 +303,7 @@ Write-Log ""
 
 if ($WhatIf) {
     # El plan se imprime DESPUES de resolver la version por red (solo lectura) y
-    # ANTES de crear ninguna carpeta: lo que interesa saber antes de bajar 10 MB
+    # ANTES de crear ninguna carpeta: lo que interesa saber antes de bajar 45 MB
     # por un proxy lento es que version exacta va a caer y donde.
     $destino = Join-Path $EnvSetup.PythonRoot $EnvSetup.FolderName
     $exe = Join-Path $destino "python.exe"
@@ -436,15 +312,19 @@ if ($WhatIf) {
     Write-Host ""
     Write-Host "Se va a instalar:" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host ("  [version]  Python {0}" -f $EnvSetup.FullVersion)
-    Write-Host ("  [descarga] {0}" -f $EnvSetup.DownloadUrl) -ForegroundColor DarkGray
+    Write-Host ("  [version]  Python {0}  (completo: venv, tkinter y pip)" -f $EnvSetup.FullVersion)
+    Write-Host ("  [descarga] {0}" -f $EnvSetup.Build.Url) -ForegroundColor DarkGray
+    Write-Host ("  [sha-256]  {0}" -f $EnvSetup.Build.Sha256) -ForegroundColor DarkGray
     Write-Host ("  [carpeta]  {0}" -f $destino)
     if ($yaHay) {
-        if ($yaHay -eq $EnvSetup.FullVersion) {
-            Write-Host ("             ya esta instalada esa misma version: no se descargaria nada") -ForegroundColor Green
-        }
-        elseif ($Force) {
+        if ($Force) {
             Write-Host ("             -Force BORRARIA la actual ({0}) y con ella sus paquetes pip" -f $yaHay) -ForegroundColor Red
+        }
+        elseif (Test-PythonEmbeddable -PythonPath $destino) {
+            Write-Host ("             ya hay {0}, pero embeddable; sin -Force no se tocaria" -f $yaHay) -ForegroundColor Yellow
+        }
+        elseif ($yaHay -eq $EnvSetup.FullVersion) {
+            Write-Host ("             ya esta instalada esa misma version: no se descargaria nada") -ForegroundColor Green
         }
         else {
             Write-Host ("             ya hay {0}; sin -Force no se tocaria" -f $yaHay) -ForegroundColor Yellow
@@ -462,13 +342,13 @@ if ($WhatIf) {
     exit 0
 }
 
-Initialize-PythonDirectories | Out-Null
-
 $pythonPath = Get-PythonPortable
 if (-not $pythonPath) { exit 1 }
 
-Enable-Pip -PythonPath $pythonPath
-$pipReady = Install-Pip -PythonPath $pythonPath
+$scripts = Join-Path $pythonPath "Scripts"
+if (-not (Test-Path -LiteralPath $scripts)) { New-Item -ItemType Directory -Path $scripts -Force | Out-Null }
+
+$pipReady = Test-Pip -PythonPath $pythonPath
 
 if (-not [string]::IsNullOrWhiteSpace($InstallPackages)) {
     if ($pipReady) {
@@ -480,7 +360,7 @@ if (-not [string]::IsNullOrWhiteSpace($InstallPackages)) {
 }
 
 Show-PathConflicts -Root $EnvSetup.PythonRoot -Keep $pythonPath -Label "Python"
-Add-UserPathEntry -Path @($pythonPath, (Join-Path $pythonPath "Scripts"))
+Add-UserPathEntry -Path @($pythonPath, $scripts)
 
 Write-PythonShell -PythonPath $pythonPath -Version $EnvSetup.Version | Out-Null
 Write-Log "Shell creado: $pythonPath\py$($EnvSetup.MinorTag)-shell.bat" "SUCCESS"
@@ -500,11 +380,12 @@ Write-Host "  $($EnvSetup.PythonRoot)"
 Write-Host "  +-- $($EnvSetup.FolderName)\"
 Write-Host "      +-- python.exe"
 Write-Host "      +-- Scripts\"
-Write-Host "      +-- py$($EnvSetup.Version -replace '\.', '')-shell.bat"
+Write-Host "      +-- py$($EnvSetup.MinorTag)-shell.bat"
 Write-Host ""
 Write-Host "PATH actualizado." -ForegroundColor Green
 Write-Host ""
 Write-Host "Para comenzar:" -ForegroundColor Yellow
-Write-Host "  Usa el shell: ..\Python\$($EnvSetup.FolderName)\py$($EnvSetup.Version -replace '\.', '')-shell.bat" -ForegroundColor White
+Write-Host "  Usa el shell: ..\Python\$($EnvSetup.FolderName)\py$($EnvSetup.MinorTag)-shell.bat" -ForegroundColor White
+Write-Host "  En un proyecto, su propio entorno:  python -m venv .venv" -ForegroundColor White
 Write-Host "  O copia el shell a tu escritorio para acceso rapido." -ForegroundColor Gray
 Write-Host ""

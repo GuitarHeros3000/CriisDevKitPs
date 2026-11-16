@@ -277,6 +277,194 @@ Describe "Expand-BurnBundle" {
     }
 }
 
+Describe "Expand-ZipArchive" {
+
+    function Get-Arbol {
+        param([string]$Carpeta)
+        @(Get-ChildItem -LiteralPath $Carpeta -Recurse -File | ForEach-Object {
+            $_.FullName.Substring($Carpeta.Length + 1) + '=' + [IO.File]::ReadAllText($_.FullName)
+        } | Sort-Object) -join ';'
+    }
+
+    It "saca archivos y carpetas, vacias incluidas" {
+        $d = New-CarpetaTemporal
+        try {
+            $z = New-ZipDePrueba -Ruta (Join-Path $d 'a.zip') -Entradas ([ordered]@{ 'uno.txt' = '1'; 'sub/dos.txt' = '2'; 'vacia/' = $null })
+            Expand-ZipArchive -Path $z -Destino (Join-Path $d 'x')
+            Get-Arbol (Join-Path $d 'x') | Should Be 'sub\dos.txt=2;uno.txt=1'
+            Test-Path -LiteralPath (Join-Path $d 'x\vacia') -PathType Container | Should Be $true
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    # Lo que pide VS Code al actualizarse: sus archivos nuevos, y su data\ (los
+    # ajustes y extensiones del usuario, que no vienen en el zip) intacto.
+    It "sustituye lo que trae el zip y respeta lo demas" {
+        $d = New-CarpetaTemporal
+        try {
+            $x = Join-Path $d 'x'
+            New-Item -ItemType Directory -Path (Join-Path $x 'data'), (Join-Path $x 'bin') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $x 'data\ajustes.json') -Value 'mios' -NoNewline
+            Set-Content -LiteralPath (Join-Path $x 'bin\viejo.dll') -Value 'v1' -NoNewline
+            Set-Content -LiteralPath (Join-Path $x 'Code.exe') -Value 'v1' -NoNewline
+
+            $z = New-ZipDePrueba -Ruta (Join-Path $d 'a.zip') -Entradas ([ordered]@{ 'Code.exe' = 'v2'; 'bin/nuevo.dll' = 'v2' })
+            Expand-ZipArchive -Path $z -Destino $x
+
+            Get-Arbol $x | Should Be 'bin\nuevo.dll=v2;Code.exe=v2;data\ajustes.json=mios'
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "-QuitarEnvoltorio sube un nivel lo que cuelga de una sola carpeta" {
+        $d = New-CarpetaTemporal
+        try {
+            $z = New-ZipDePrueba -Ruta (Join-Path $d 'a.zip') -Entradas ([ordered]@{ 'jdk-21.0.12+8/' = $null; 'jdk-21.0.12+8/bin/java.exe' = 'j'; 'jdk-21.0.12+8/release' = 'r' })
+            Expand-ZipArchive -Path $z -Destino (Join-Path $d 'jdk-21') -QuitarEnvoltorio
+            Get-Arbol (Join-Path $d 'jdk-21') | Should Be 'bin\java.exe=j;release=r'
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    # La version anterior movia la unica carpeta y perdia los archivos sueltos
+    # de la raiz. Si no TODO cuelga de una carpeta, no hay envoltorio que quitar.
+    It "-QuitarEnvoltorio no quita nada si hay algo suelto en la raiz" {
+        $d = New-CarpetaTemporal
+        try {
+            $z = New-ZipDePrueba -Ruta (Join-Path $d 'a.zip') -Entradas ([ordered]@{ 'LEEME.txt' = 'l'; 'app/a.exe' = 'a' })
+            Expand-ZipArchive -Path $z -Destino (Join-Path $d 'x') -QuitarEnvoltorio
+            Get-Arbol (Join-Path $d 'x') | Should Be 'app\a.exe=a;LEEME.txt=l'
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "-QuitarEnvoltorio no quita nada si hay dos carpetas en la raiz" {
+        $d = New-CarpetaTemporal
+        try {
+            $z = New-ZipDePrueba -Ruta (Join-Path $d 'a.zip') -Entradas ([ordered]@{ 'bin/a.exe' = 'a'; 'lib/b.jar' = 'b' })
+            Expand-ZipArchive -Path $z -Destino (Join-Path $d 'x') -QuitarEnvoltorio
+            Get-Arbol (Join-Path $d 'x') | Should Be 'bin\a.exe=a;lib\b.jar=b'
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    # Zip slip: un nombre con ..\ escribiria donde quisiera quien hizo el zip.
+    It "una entrada que sale de la carpeta hace fallar todo, sin escribir nada" {
+        $d = New-CarpetaTemporal
+        try {
+            $z = New-ZipDePrueba -Ruta (Join-Path $d 'a.zip') -Entradas ([ordered]@{ 'bien.txt' = 'b'; '../fuera.txt' = 'f' })
+            { Expand-ZipArchive -Path $z -Destino (Join-Path $d 'x') } | Should Throw
+            Test-Path -LiteralPath (Join-Path $d 'fuera.txt') | Should Be $false
+            Test-Path -LiteralPath (Join-Path $d 'x') | Should Be $false
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    # Un fallo a mitad no puede dejar media instalacion en el destino, que la
+    # siguiente ejecucion daria por buena. Aqui falla porque "a" es un archivo
+    # y despues se pide "a\b.txt".
+    It "si falla a mitad, el destino queda como estaba y no deja restos" {
+        $d = New-CarpetaTemporal
+        try {
+            $x = Join-Path $d 'x'
+            New-Item -ItemType Directory -Path $x -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $x 'previo.txt') -Value 'p' -NoNewline
+
+            $z = New-ZipDePrueba -Ruta (Join-Path $d 'a.zip') -Entradas ([ordered]@{ 'a' = 'archivo'; 'a/b.txt' = 'b' })
+            { Expand-ZipArchive -Path $z -Destino $x } | Should Throw
+
+            Get-Arbol $x | Should Be 'previo.txt=p'
+            @(Get-ChildItem -LiteralPath $d -Directory | Where-Object { $_.Name -like 'x.part-*' }).Count | Should Be 0
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "al terminar bien no deja la carpeta temporal" {
+        $d = New-CarpetaTemporal
+        try {
+            $z = New-ZipDePrueba -Ruta (Join-Path $d 'a.zip') -Entradas ([ordered]@{ 'uno.txt' = '1' })
+            Expand-ZipArchive -Path $z -Destino (Join-Path $d 'x')
+            Expand-ZipArchive -Path $z -Destino (Join-Path $d 'x')
+            @(Get-ChildItem -LiteralPath $d -Directory).Name -join ',' | Should Be 'x'
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    # El guardian de que ya no queda ningun Expand-Archive: con uno solo, ese
+    # camino volveria a tardar el doble y a mezclar versiones al reinstalar.
+    It "ningun script del kit usa ya Expand-Archive" {
+        $kit = Split-Path -Parent $PSScriptRoot
+        $ps1 = @(Get-ChildItem -LiteralPath (Join-Path $kit 'lib'), (Join-Path $kit 'scripts') -Recurse -Filter *.ps1)
+        $ps1.Count | Should BeGreaterThan 20
+        # El patron tiene que casar con una llamada de verdad: la primera version
+        # exigia un caracter ANTES del nombre y no habria visto ninguna.
+        $patron = '^(?!\s*#).*\bExpand-Archive\s+-'
+        '        Expand-Archive -Path $z -DestinationPath $d' | Should Match $patron
+        '    # Expand-Archive -Path antiguo' | Should Not Match $patron
+
+        $usos = @($ps1 | Select-String -Pattern $patron | ForEach-Object { "$($_.Filename):$($_.LineNumber)" })
+        ($usos -join ', ') | Should Be ''
+    }
+}
+
+Describe "Expand-TarArchive" {
+
+    # Un .tar.gz de verdad, con el tar.exe de Windows: es como llega Python.
+    function New-TarDePrueba {
+        param([string]$Carpeta, [hashtable]$Archivos)
+        $fuente = Join-Path $Carpeta 'fuente'
+        foreach ($k in $Archivos.Keys) {
+            $f = Join-Path $fuente $k
+            New-Item -ItemType Directory -Path (Split-Path -Parent $f) -Force | Out-Null
+            [IO.File]::WriteAllText($f, $Archivos[$k])
+        }
+        $tgz = Join-Path $Carpeta 'a.tar.gz'
+        & "$env:SystemRoot\System32\tar.exe" -czf $tgz -C $fuente . 2>$null
+        Remove-Item -LiteralPath $fuente -Recurse -Force
+        return $tgz
+    }
+
+    function Get-Arbol {
+        param([string]$Carpeta)
+        @(Get-ChildItem -LiteralPath $Carpeta -Recurse -File | ForEach-Object {
+            $_.FullName.Substring($Carpeta.Length + 1) + '=' + [IO.File]::ReadAllText($_.FullName)
+        } | Sort-Object) -join ';'
+    }
+
+    It "-QuitarEnvoltorio sube el python\ de dentro un nivel" {
+        $d = New-CarpetaTemporal
+        try {
+            $t = New-TarDePrueba -Carpeta $d -Archivos @{ 'python\python.exe' = 'p'; 'python\Lib\os.py' = 'o' }
+            Expand-TarArchive -Path $t -Destino (Join-Path $d 'python-3.12') -QuitarEnvoltorio
+            Get-Arbol (Join-Path $d 'python-3.12') | Should Be 'Lib\os.py=o;python.exe=p'
+            @(Get-ChildItem -LiteralPath $d -Directory | Where-Object { $_.Name -like '*.part-*' }).Count | Should Be 0
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "sin envoltorio que quitar, lo deja como viene" {
+        $d = New-CarpetaTemporal
+        try {
+            $t = New-TarDePrueba -Carpeta $d -Archivos @{ 'a.txt' = '1'; 'b\c.txt' = '2' }
+            Expand-TarArchive -Path $t -Destino (Join-Path $d 'x') -QuitarEnvoltorio
+            Get-Arbol (Join-Path $d 'x') | Should Be 'a.txt=1;b\c.txt=2'
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "un archivo que no es un tar falla y no toca el destino" {
+        $d = New-CarpetaTemporal
+        try {
+            $malo = Join-Path $d 'malo.tar.gz'
+            [IO.File]::WriteAllText($malo, 'no soy un tar')
+            { Expand-TarArchive -Path $malo -Destino (Join-Path $d 'x') } | Should Throw
+            Test-Path -LiteralPath (Join-Path $d 'x') | Should Be $false
+            @(Get-ChildItem -LiteralPath $d -Directory).Count | Should Be 0
+        }
+        finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 Describe "Expand-MsiFiles" {
 
     It "renombra cada archivo del CAB al nombre largo de la tabla File" {

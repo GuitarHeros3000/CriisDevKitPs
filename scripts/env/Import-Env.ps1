@@ -28,7 +28,7 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$Path,
 
-    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode', 'VCRuntime', 'Apps')]
     [string]$Runtime,
 
     [switch]$WhatIf,
@@ -48,7 +48,7 @@ $JavaRoot    = Join-Path $WorkspaceRoot "Java"
 # 2 desde que el manifiesto lleva la seccion "otros" con los seis runtimes que
 # antes no se empaquetaban. Los bundles v1 se siguen leyendo: solo les falta esa
 # seccion y la lista sale vacia.
-$SupportedManifest = 2
+$SupportedManifest = 3
 
 
 function Expand-BundleArchive {
@@ -66,7 +66,9 @@ function Expand-BundleArchive {
         # Verifica y COPIA el archivo sin extraerlo. Lo necesitan los runtimes
         # que no vienen en zip -PortableGit es un autoextraible- o que se
         # descomprimen de otra forma; de eso se encarga Expand-BundledRuntime.
-        [switch]$SoloCopiar
+        [switch]$SoloCopiar,
+        # El zip trae una carpeta raiz (la del JDK): su contenido va a DestDir.
+        [switch]$QuitarEnvoltorio
     )
 
     $archive = Join-Path $BundleDir ($RelativePath -replace '/', '\')
@@ -86,12 +88,21 @@ function Expand-BundleArchive {
         Write-Log "  SHA-256 verificado" "SUCCESS"
     }
 
-    if (-not (Test-Path -LiteralPath $DestDir)) {
-        New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+    if ($SoloCopiar) {
+        if (-not (Test-Path -LiteralPath $DestDir)) {
+            New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $archive -Destination $DestDir -Force
+        return $true
     }
 
-    if ($SoloCopiar) {
-        Copy-Item -LiteralPath $archive -Destination $DestDir -Force
+    # Python llega como .tar.gz (python-build-standalone); lo demas, en zip.
+    if ($archive -like '*.tar.gz') {
+        try { Expand-TarArchive -Path $archive -Destino $DestDir -QuitarEnvoltorio:$QuitarEnvoltorio }
+        catch {
+            Write-Log "$Label : no se pudo abrir: $($_.Exception.Message)" "ERROR"
+            return $false
+        }
         return $true
     }
 
@@ -100,7 +111,7 @@ function Expand-BundleArchive {
         return $false
     }
 
-    Expand-Archive -Path $archive -DestinationPath $DestDir -Force
+    Expand-ZipArchive -Path $archive -Destino $DestDir -QuitarEnvoltorio:$QuitarEnvoltorio
     return $true
 }
 
@@ -128,7 +139,7 @@ $bundleDir = Join-Path $env:TEMP ("criisdevkit-import-" + [Guid]::NewGuid().ToSt
 
 try {
     Write-Log "Abriendo el bundle..."
-    Expand-Archive -Path $Path -DestinationPath $bundleDir -Force
+    Expand-ZipArchive -Path $Path -Destino $bundleDir
 
     $manifestPath = Join-Path $bundleDir "env.json"
     if (-not (Test-Path -LiteralPath $manifestPath)) {
@@ -170,6 +181,20 @@ try {
         $otros += $o
     }
 
+    # VCRuntime\ y Apps\, que viajan tal cual. El nombre de la pieza sale del
+    # manifiesto y acaba en una ruta de destino: se exige que sea uno de los
+    # dos de siempre y que no salga de su carpeta.
+    $extras = @()
+    foreach ($x in @($m.extras)) {
+        if (-not $x -or $KitExtraFolders -notcontains $x.carpeta) { continue }
+        if ([string]$x.item -match '(^|\\|/)\.\.(\\|/|$)' -or [IO.Path]::IsPathRooted([string]$x.item)) {
+            Write-Log "El bundle trae una pieza con una ruta que no vale: $($x.item); se ignora" "WARN"
+            continue
+        }
+        if (-not (Test-RuntimeSelected -Name $x.carpeta -Selected $Runtime)) { continue }
+        $extras += $x
+    }
+
     Write-Host "Se va a instalar:" -ForegroundColor Yellow
     foreach ($a in $angular) { Write-Host "  Angular v$($a.version)  (CLI $($a.cliVersion), Node $($a.node))" }
     foreach ($p in $python)  { Write-Host "  Python $($p.full)  ($(@($p.packages).Count) paquetes)" }
@@ -178,6 +203,7 @@ try {
         $n = @(Get-RuntimeCatalog | Where-Object { $_.Clave -eq $o.clave })[0].Nombre
         Write-Host "  $n $($o.version)"
     }
+    foreach ($x in $extras)  { Write-Host "  $($x.carpeta)\$($x.item)  ($(@($x.archivos).Count) archivos)" }
     if ($m.corpCa) {
         Write-Host ("  + la CA de la empresa: {0}" -f $m.corpCa.emisor) -ForegroundColor Yellow
         Write-Host ("    caduca el {0}; se pondra en los JDK, Git y pip" -f $m.corpCa.caduca) -ForegroundColor DarkGray
@@ -253,24 +279,27 @@ try {
             Write-Log "  ya existe python-$($p.version); se conserva" "WARN"
         }
         else {
-            $temp = Join-Path $PythonRoot "temp_import"
+            # El .tar.gz de python-build-standalone lo trae todo dentro de un
+            # python\; el zip embeddable de los bundles viejos, suelto. Quitar
+            # el envoltorio solo actua si lo hay, asi que vale para los dos.
             if (-not (Expand-BundleArchive -BundleDir $bundleDir -RelativePath $p.archive `
-                                           -Sha256 $p.sha256 -DestDir $temp -Label "Python $($p.full)")) {
+                                           -Sha256 $p.sha256 -DestDir $pythonPath -Label "Python $($p.full)" `
+                                           -QuitarEnvoltorio)) {
                 continue
             }
-            New-Item -ItemType Directory -Path $pythonPath -Force | Out-Null
-            Move-Item -Path "$temp\*" -Destination $pythonPath -Force
-            Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
             New-Item -ItemType Directory -Path (Join-Path $pythonPath "Scripts") -Force | Out-Null
 
-            # Misma marca de trazabilidad que deja Setup-PythonEnv. Aqui el hash
-            # ya viene verificado en el manifiesto, asi que solo hay que
-            # anotarlo: sin esto, un Python importado quedaba sin marca y Doctor
-            # no lo mostraba, o sea que los dos caminos de instalacion dejaban
-            # estados distintos.
+            # Las mismas marcas que deja Setup-PythonEnv. Aqui el hash ya viene
+            # verificado en el manifiesto, asi que solo hay que anotarlo: sin
+            # esto, un Python importado quedaba sin marca y Doctor no lo
+            # mostraba, o sea que los dos caminos dejaban estados distintos.
             if ($p.sha256) {
                 Set-Content -LiteralPath (Join-Path $pythonPath ".criisdevkit-sha256") `
                             -Value $p.sha256 -Encoding ASCII
+            }
+            if ($p.origen) {
+                Set-Content -LiteralPath (Join-Path $pythonPath ".criisdevkit-origen") `
+                            -Value $p.origen -Encoding ASCII
             }
         }
 
@@ -299,6 +328,14 @@ try {
                 # asi que Python puede ejecutarlo directamente: es la forma
                 # estandar de arrancar pip sin tener pip ni red.
                 $tienePip = (Invoke-NativeCommand -FilePath $exe -Arguments @('-m', 'pip', '--version') -Quiet).ExitCode -eq 0
+
+                # Un Python completo que haya perdido pip lo repone con
+                # ensurepip, sin red. El embeddable no trae ensurepip: para ese
+                # (bundles viejos) queda el get-pip.py del bundle.
+                if (-not $tienePip) {
+                    $tienePip = (Invoke-NativeCommand -FilePath $exe -Arguments @('-m', 'ensurepip', '--default-pip') -Quiet).ExitCode -eq 0
+                    if ($tienePip) { Write-Log "  pip repuesto con ensurepip, sin red" "SUCCESS" }
+                }
 
                 if (-not $tienePip) {
                     $getPip = Join-Path $wheelDir "get-pip.py"
@@ -350,21 +387,12 @@ try {
             Write-Log "  ya existe jdk-$($j.version); se conserva" "WARN"
         }
         else {
-            $temp = Join-Path $JavaRoot "temp_import"
+            # El zip del JDK trae una carpeta raiz con el nombre de la release.
             if (-not (Expand-BundleArchive -BundleDir $bundleDir -RelativePath $j.archive `
-                                           -Sha256 $j.sha256 -DestDir $temp -Label "JDK $($j.release)")) {
+                                           -Sha256 $j.sha256 -DestDir $jdkPath -Label "JDK $($j.release)" `
+                                           -QuitarEnvoltorio)) {
                 continue
             }
-            # El zip del JDK trae una carpeta raiz con el nombre de la release.
-            $inner = @(Get-ChildItem $temp -Directory)
-            if ($inner.Count -eq 1) {
-                Move-Item -LiteralPath $inner[0].FullName -Destination $jdkPath -Force
-            }
-            else {
-                New-Item -ItemType Directory -Path $jdkPath -Force | Out-Null
-                Move-Item -Path "$temp\*" -Destination $jdkPath -Force
-            }
-            Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
 
             if ($j.release) {
                 Set-Content -LiteralPath (Join-Path $jdkPath ".criisdevkit-release") `
@@ -451,6 +479,35 @@ try {
             default  { Join-Path $destino "bin" }
         }
         $pathsToAdd += $bin
+    }
+
+    # --- VCRuntime\ y Apps\ ---
+    #
+    # Cada archivo se comprueba contra su SHA-256 antes de copiar la pieza
+    # entera: o llega bien o no se pone. Lo que ya haya en destino se respeta,
+    # igual que con los runtimes.
+    foreach ($x in $extras) {
+        $etiqueta = "$($x.carpeta)\$($x.item)"
+        $origen = Join-Path $bundleDir (Join-Path "extras\$($x.carpeta)" $x.item)
+        $destino = Join-Path (Join-Path $WorkspaceRoot $x.carpeta) $x.item
+
+        if (Test-Path -LiteralPath $destino) {
+            Write-Log "$etiqueta ya existe; se conserva" "WARN"
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $origen)) {
+            Write-Log "$etiqueta : el bundle no lo trae" "ERROR"
+            continue
+        }
+        $malos = @(Test-FolderManifest -Ruta $origen -Archivos @($x.archivos))
+        if ($malos.Count -gt 0) {
+            Write-Log "$etiqueta : $($malos.Count) archivo(s) no cuadran con su SHA-256; no se pone" "ERROR"
+            foreach ($b in ($malos | Select-Object -First 5)) { Write-Log "  $b" "ERROR" }
+            continue
+        }
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destino) -Force | Out-Null
+        Copy-Item -LiteralPath $origen -Destination $destino -Recurse -Force
+        Write-Log "$etiqueta : $(@($x.archivos).Count) archivo(s) verificados y en su sitio" "SUCCESS"
     }
 
     # La CA de la empresa, si el bundle la trae. Antes que los shells: asi los

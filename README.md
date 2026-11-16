@@ -17,18 +17,18 @@ lo encontraba nadie -y se desfasaba sin que se notara.
 | [Redes corporativas](docs/red-corporativa.md) | Proxy, NTLM, la CA que intercepta TLS, el espejo interno y las firmas Authenticode |
 | [Llevarse el entorno](docs/portabilidad.md) | El bundle para una maquina sin internet, y reproducir un entorno con `devenv.json` |
 | [Install-NoAdmin](docs/install-noadmin.md) | Instalar software de terceros en modo portable |
-| [Runtime de Visual C++](docs/vcruntime.md) | Las DLL que pide un programa ajeno (`mfc110.dll`...), junto a el y sin admin |
+| [Runtime de Visual C++](docs/vcruntime.md) | Las DLL que pide un programa ajeno (2012, 2013 o 2015-2022), junto a el y sin admin; y por que no arranca un programa |
 | [Trabajar en el kit](docs/desarrollo.md) | Las pruebas, el CI y como anadir un runtime nuevo |
 | [Pendientes y decisiones](docs/pendientes.md) | Lo que falta comprobar en otra maquina, y lo que se decidio NO hacer |
 
 ## Por donde entrar: `Menu.bat`
 
-El kit tiene 31 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
+El kit tiene 34 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
 pantalla que ademas responde la pregunta con la que uno llega: **que hay instalado**.
 
 ```
   ============================================================
-   CriisDevKit v2.2.0   -   entornos de desarrollo sin admin
+   CriisDevKit v2.3.0   -   entornos de desarrollo sin admin
   ============================================================
 
    Instalado: python 3.12
@@ -57,6 +57,7 @@ pantalla que ademas responde la pregunta con la que uno llega: **que hay instala
     34  Desinstalar
     35  Verificar lo instalado
     36  Aplicar actualizaciones
+    37  Actualizar el propio kit
 
    ENTORNO
     40  Reproducir un devenv.json
@@ -64,11 +65,13 @@ pantalla que ademas responde la pregunta con la que uno llega: **que hay instala
     42  Fijar versiones (lock)
     43  Llevar a otra maquina
     44  Traer de otra maquina
+    45  Dejar listo un proyecto
 
    OTROS
     50  Instalar software sin admin
     51  Runtime de Visual C++
-    52  Pruebas del kit
+    52  Por que no arranca un programa
+    53  Pruebas del kit
 
     q  Salir
 ```
@@ -89,13 +92,13 @@ del trabajo, no la ventana**.
 CriisDevKitPs/
 ├── Empezar.bat               Empieza por aqui en un equipo nuevo
 ├── Menu.bat                  Todo lo que sabe hacer el kit
-├── bin/                      Los 31 comandos, agrupados igual que scripts/
+├── bin/                      Los 34 comandos, agrupados igual que scripts/
 │   ├── setup/                Setup-*.bat   instalar un runtime
 │   ├── start/                Start-*.bat   abrir su shell
-│   ├── env/                  Export, Import, Restore, Uninstall, Update,
-│   │                         Use-Env, Use-CorpCert, Use-VSCodeJava, Verify-Env
-│   └── kit/                  Doctor-Env, Install-NoAdmin, Install-VCRuntime,
-│                             Run-Tests
+│   ├── env/                  Export, Import, Restore, Setup-Project, Uninstall,
+│   │                         Update, Use-Env, Use-CorpCert, Use-VSCodeJava, Verify-Env
+│   └── kit/                  Doctor-Env, Doctor-App, Install-NoAdmin,
+│                             Install-VCRuntime, Run-Tests, Update-Kit
 ├── lib/                     La libreria, un archivo por responsabilidad
 │   ├── Common.ps1           Rutas base y carga de los demas (es el unico que
 │   │                        cargan los scripts; los otros salen de aqui)
@@ -112,16 +115,20 @@ CriisDevKitPs/
 │   ├── CorpNet.ps1          La CA de la empresa y el proxy por herramienta
 │   ├── VSCode.ps1           Ajustes, extensiones y los JDK que conoce
 │   ├── Catalog.ps1          Catalogo, devenv.json y lockfile
-│   └── UserPath.ps1         PATH de usuario
+│   ├── UserPath.ps1         PATH de usuario y politica de ejecucion
+│   ├── Doctor.ps1           Las comprobaciones de Doctor (solo lo carga Doctor)
+│   ├── Project.ps1          Que pide un proyecto (solo lo carga Setup-Project)
+│   └── KitUpdate.ps1        Actualizar el kit (solo lo carga Update-Kit)
 ├── sources.json.ejemplo         Espejo interno (opcional)
 ├── devenv.json.ejemplo          Manifiesto de entorno (para tus proyectos)
 ├── scripts/                  La implementacion, agrupada por lo que hace
 │   ├── setup/                Setup-*.ps1   instalar un runtime
 │   ├── start/                Start-*.ps1   abrir su shell
-│   ├── env/                  Export, Import, Restore, Uninstall, Update,
-│   │                         Use-Env, Use-CorpCert, Use-VSCodeJava, Verify-Env
-│   └── kit/                  Empezar, Menu, Doctor-Env, Install-NoAdmin,
-│                             Install-VCRuntime, Run-Tests
+│   ├── env/                  Export, Import, Restore, Setup-Project, Uninstall,
+│   │                         Update, Use-Env, Use-CorpCert, Use-VSCodeJava, Verify-Env
+│   └── kit/                  Empezar, Menu, Doctor-Env, Doctor-App,
+│                             Install-NoAdmin, Install-VCRuntime, Run-Tests,
+│                             Update-Kit
 ├── docs/                     La documentacion por temas (ver el indice arriba)
 └── tests/                       Suite de Pester
 ```
@@ -172,8 +179,8 @@ cuando esta forzada, para que nadie diagnostique a ciegas.
 
 **Cada fuente llama a las arquitecturas como le da la gana**, y equivocarse da un 404
 que no explica nada. Los nombres estan en un solo sitio (`lib\Arch.ps1`) y
-comprobados contra las APIs reales; los dos raros son `Adoptium: aarch64` (no
-`arm64`) y `python.org: amd64` (no `x64`).
+comprobados contra las APIs reales; los raros son `Adoptium: aarch64` (no `arm64`)
+y `python-build-standalone: x86_64` y `aarch64`.
 
 Los `.bat` de la raiz son la interfaz publica: siempre se ejecutan desde ahi.
 La logica vive en `scripts\`, y lo compartido en `lib\Common.ps1`.
@@ -213,9 +220,11 @@ Proyectos Individuales/
 │   ├── tools/               (7z e innoextract, si el kit los necesito)
 │   └── <nombre-app>/
 └── VCRuntime/               (DLL de Visual C++ para dejar junto a un programa)
-    └── vc-2012/
-        ├── x86/
-        └── x64/
+    ├── vc-2012/
+    │   ├── x86/
+    │   └── x64/
+    ├── vc-2013/
+    └── vc-2015-2022/
 ```
 
 Una carpeta por **linea**, no por version: `python-3.12`, `jdk-21`, `node-22`,

@@ -32,7 +32,7 @@
 #>
 
 param(
-    [ValidateSet('Python', 'Java', 'Node', 'Angular', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')]
+    [ValidateSet('Python', 'Java', 'Node', 'Angular', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode', 'VCRuntime', 'Apps')]
     [string]$Runtime,
 
     [string]$Version
@@ -143,6 +143,10 @@ function Test-RuntimeLinea {
                 Write-Verify "firma" "la pone $($f.Firmante), NO $($esperados -join ' ni ')" 'fail'
                 Write-VerifyDetail "Reinstala desde la fuente oficial:  .\bin\setup\Setup-$($Entrada.Carpeta)Env.bat -Force"
             }
+            elseif ($f.Estado -eq 'NotSigned' -and (Get-InstalledRuntimeOrigin -Entrada $Entrada -Linea $Linea) -like 'python-build-standalone*') {
+                Write-Verify "firma" "no aplica (python-build-standalone no firma sus binarios)" 'info'
+                Write-VerifyDetail "Lo que lo respalda es el SHA-256 comprobado al instalar, abajo."
+            }
             elseif ($f.Estado -eq 'NotSigned') {
                 Write-Verify "firma" "sin firma" 'warn'
                 Write-VerifyDetail "$($esperados -join ' o ') firma sus binarios; que este no lo este es raro."
@@ -198,6 +202,64 @@ function Test-RuntimeLinea {
     }
 }
 
+function Test-ExtraItem {
+    <#
+        Una pieza de VCRuntime\ o de Apps\. No hay version que leer ni shell,
+        asi que lo que se mira es la firma, que es lo que delata un binario
+        cambiado despues de dejarlo ahi.
+
+          VCRuntime  todas las DLL firmadas por Microsoft, y de la arquitectura
+                     de su carpeta: una de 64 bits en x86\ daria 0xc000007b al
+                     copiarla junto a un programa.
+          Apps       ningun .exe con la firma ROTA. Sin firma no es fallo: hay
+                     mucho software legitimo sin firmar. Solo los .exe: con las
+                     DLL, una app grande tardaba minutos.
+    #>
+    param([Parameter(Mandatory=$true)][PSCustomObject]$Pieza)
+
+    Write-Host ""
+    Write-Host "  $($Pieza.Carpeta)\$($Pieza.Item)" -ForegroundColor Cyan
+    Write-Host "  $($Pieza.Ruta)" -ForegroundColor DarkGray
+
+    if ($Pieza.Carpeta -eq 'VCRuntime') {
+        $arch = Split-Path -Leaf $Pieza.Ruta
+        $dlls = @(Get-ChildItem -LiteralPath $Pieza.Ruta -Filter *.dll -File -ErrorAction SilentlyContinue)
+        if ($dlls.Count -eq 0) { Write-Verify "dll" "ninguna" 'fail'; return }
+
+        $sinMs = @(); $otraArch = @()
+        foreach ($d in $dlls) {
+            $f = Get-FileSignerInfo -FilePath $d.FullName
+            if ($f.Estado -ne 'Valid' -or $f.Firmante -notlike '*Microsoft*') { $sinMs += $d.Name }
+            $pe = Get-PeInfo -FilePath $d.FullName
+            if (-not $pe -or $pe.Arquitectura -ne $arch) { $otraArch += $d.Name }
+        }
+
+        if ($sinMs.Count -eq 0) { Write-Verify "firma" "las $($dlls.Count) de Microsoft" 'ok' }
+        else {
+            Write-Verify "firma" "$($sinMs.Count) sin firma valida de Microsoft: $(($sinMs | Select-Object -First 4) -join ', ')" 'fail'
+            Write-VerifyDetail "Rehazlo:  .\bin\kit\Install-VCRuntime.bat -Version $((Split-Path -Leaf (Split-Path -Parent $Pieza.Ruta)) -replace '^vc-', '') -Arch $arch -Force"
+        }
+        if ($otraArch.Count -eq 0) { Write-Verify "arquitectura" "todas de $arch" 'ok' }
+        else { Write-Verify "arquitectura" "$($otraArch.Count) no son de ${arch}: $(($otraArch | Select-Object -First 4) -join ', ')" 'fail' }
+        return
+    }
+
+    $exes = @(Get-ChildItem -LiteralPath $Pieza.Ruta -Recurse -File -Filter *.exe -ErrorAction SilentlyContinue)
+    if ($exes.Count -eq 0) { Write-Verify "binarios" "ningun .exe" 'info'; return }
+
+    $rotas = @(); $firmadas = 0
+    foreach ($b in $exes) {
+        $f = Get-FileSignerInfo -FilePath $b.FullName
+        if ($f.Estado -eq 'Valid') { $firmadas++ }
+        elseif ($f.Estado -in @('HashMismatch', 'NotTrusted')) { $rotas += $b.Name }
+    }
+    Write-Verify "ejecutables" "$($exes.Count), $firmadas con firma valida" 'ok'
+    if ($rotas.Count -gt 0) {
+        Write-Verify "firma rota" "$($rotas.Count): $(($rotas | Select-Object -First 4) -join ', ')" 'fail'
+        Write-VerifyDetail "Estan firmados pero cambiaron despues de firmarse. Vuelve a instalar la app."
+    }
+}
+
 # --------------------------------------------------------------------------
 
 Write-Host ""
@@ -218,6 +280,17 @@ foreach ($e in $catalogo) {
     foreach ($l in ($lineas | Sort-Object)) {
         $vistos++
         Test-RuntimeLinea -Entrada $e -Linea $l
+    }
+}
+
+# -Version no aplica a estas: no tienen lineas.
+if (-not $Version) {
+    foreach ($c in $KitExtraFolders) {
+        if ($Runtime -and $Runtime -ne $c) { continue }
+        foreach ($p in (Get-KitExtraItems -Carpeta $c)) {
+            $vistos++
+            Test-ExtraItem -Pieza $p
+        }
     }
 }
 

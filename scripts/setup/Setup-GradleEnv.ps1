@@ -126,20 +126,7 @@ function Get-GradlePortable {
     }
 
     Write-Log "Extrayendo..."
-    $temp = Join-Path $GradleRoot "temp_gradle"
-    if (Test-Path $temp) { Remove-Item $temp -Recurse -Force }
-    Expand-Archive -Path $zipPath -DestinationPath $temp -Force
-
-    $inner = @(Get-ChildItem $temp -Directory)
-    if ($inner.Count -eq 1) {
-        Move-Item -LiteralPath $inner[0].FullName -Destination $gradlePath -Force
-    }
-    else {
-        New-Item -ItemType Directory -Path $gradlePath -Force | Out-Null
-        Move-Item -Path "$temp\*" -Destination $gradlePath -Force
-    }
-
-    Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
+    Expand-ZipArchive -Path $zipPath -Destino $gradlePath -QuitarEnvoltorio
     Remove-Item $zipPath -Force
 
     Write-Log "Gradle instalado en $gradlePath" "SUCCESS"

@@ -7,9 +7,9 @@
     en el runner del CI. Lo que se prueba es la TUBERIA: que las tres funciones
     de salida acumulen lo que reciben y que el volcado tenga la forma prometida.
 
-    Las funciones se sacan del propio Doctor-Env.ps1 con el analizador de
-    sintaxis, no se copian aqui: una copia se queda vieja y la prueba pasaria
-    verde comprobando codigo que ya no existe.
+    Las funciones son las de lib\Doctor.ps1, cargadas tal cual: una copia aqui
+    se quedaria vieja y la prueba pasaria verde comprobando codigo que ya no
+    existe.
 #>
 
 $KitRoot = Split-Path -Parent $PSScriptRoot
@@ -18,9 +18,7 @@ $KitRoot = Split-Path -Parent $PSScriptRoot
 
 # Al ambito del script, para que $script:JsonSections de las funciones y el de
 # las pruebas sean el mismo.
-. ([scriptblock]::Create((Get-TextoDeFunciones -Script "Doctor-Env.ps1" -Nombres @(
-    'Add-JsonSection', 'Write-Section', 'Write-Check', 'Write-Detail', 'Save-DoctorJson'
-))))
+. (Join-Path $KitRoot "lib\Doctor.ps1")
 
 function Reset-Doctor {
     $script:JsonSections = @()
@@ -151,4 +149,81 @@ Describe "Doctor -Json" {
     }
 
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+}
+
+Describe "Doctor mas rapido" {
+
+    # Se puede probar porque las comprobaciones viven en lib\Doctor.ps1: antes
+    # habia que sacarlas del script con el analizador de sintaxis.
+
+    Context "la version de ng y npm, sin ejecutarlos" {
+
+        $d = Join-Path ([IO.Path]::GetTempPath()) ("npmver-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path (Join-Path $d 'node_modules\@angular\cli'), (Join-Path $d 'node_modules\npm') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $d 'node_modules\@angular\cli\package.json') -Value '{ "name": "@angular/cli", "version": "20.2.0" }'
+        Set-Content -LiteralPath (Join-Path $d 'node_modules\npm\package.json') -Value '{ "name": "npm", "version": "11.5.2" }'
+
+        It "lee la de ng de su package.json" {
+            Get-NpmScriptVersion -Exe (Join-Path $d 'ng.cmd') | Should Be '20.2.0'
+        }
+
+        It "y la de npm" {
+            Get-NpmScriptVersion -Exe (Join-Path $d 'npm.cmd') | Should Be '11.5.2'
+        }
+
+        It "sin package.json devuelve nulo, y entonces se pregunta como siempre" {
+            Get-NpmScriptVersion -Exe (Join-Path $d 'sub\ng.cmd') | Should BeNullOrEmpty
+        }
+
+        It "de otros comandos no intenta nada" {
+            Get-NpmScriptVersion -Exe (Join-Path $d 'node.exe') | Should BeNullOrEmpty
+        }
+
+        Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    Context "las comprobaciones de red, a la vez" {
+
+        $datos = [Text.Encoding]::ASCII.GetBytes('ok')
+
+        function New-Peticion {
+            param($Servidor, [string]$Nombre)
+            [PSCustomObject]@{ Name = $Nombre; Params = @{ Uri = $Servidor.Url; UseBasicParsing = $true; TimeoutSec = 10; Method = 'Head' } }
+        }
+
+        # Tres servidores que tardan 1,2 s cada uno: en serie serian 3,6 s.
+        It "tardan lo que el mas lento, no la suma" {
+            $s = @(1..3 | ForEach-Object { Start-ServidorDePrueba -Contenido $datos -Retraso 1200 })
+            try {
+                $sw = [Diagnostics.Stopwatch]::StartNew()
+                $r = @(Invoke-ParallelProbes -Peticiones @($s | ForEach-Object { New-Peticion $_ "s$($s.IndexOf($_))" }))
+                $sw.Stop()
+                @($r | Where-Object { $_.Ok }).Count | Should Be 3
+                $sw.ElapsedMilliseconds | Should BeLessThan 3000
+            }
+            finally { foreach ($x in $s) { & $x.Parar } }
+        }
+
+        It "los resultados salen en el orden en que se pidieron" {
+            $lento = Start-ServidorDePrueba -Contenido $datos -Retraso 900
+            $rapido = Start-ServidorDePrueba -Contenido $datos
+            try {
+                $r = @(Invoke-ParallelProbes -Peticiones @((New-Peticion $lento 'primero'), (New-Peticion $rapido 'segundo')))
+                ($r | ForEach-Object { $_.Name }) -join ',' | Should Be 'primero,segundo'
+            }
+            finally { & $lento.Parar; & $rapido.Parar }
+        }
+
+        # El error cruza de hilo y se sigue pudiendo traducir: sin eso, Doctor
+        # diria "NO alcanzable" sin decir por que.
+        It "un fallo trae su error, y se traduce como antes" {
+            $s = Start-ServidorDePrueba -Contenido $datos -Estado 404
+            try {
+                $r = @(Invoke-ParallelProbes -Peticiones @(New-Peticion $s 'roto'))[0]
+                $r.Ok | Should Be $false
+                Get-DownloadErrorHint -ErrorRecord $r.Error | Should Match '404'
+            }
+            finally { & $s.Parar }
+        }
+    }
 }

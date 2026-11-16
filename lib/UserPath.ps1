@@ -410,6 +410,42 @@ function Remove-UserPathEntry {
     return $removed.Count
 }
 
+# --------------------------------------------------------------------------
+# Politica de ejecucion de PowerShell
+# --------------------------------------------------------------------------
+
+function Get-PersistedExecutionPolicy {
+    <#
+        La politica que vera una terminal NORMAL, no la de este proceso.
+
+        No vale Get-ExecutionPolicy a secas: los .bat del kit arrancan con
+        -ExecutionPolicy Bypass, y eso solo afecta a ESE proceso. Lo que decide
+        si el perfil de PowerShell se carga al abrir una terminal son los ambitos
+        guardados, y el de politica de grupo gana sobre los demas.
+
+        Devuelve Politica, Origen (el ambito, o 'por defecto'), BloqueaPerfil
+        (con Restricted o AllSigned el perfil no se ejecuta: el del kit no va
+        firmado) y DeGrupo (si viene de una GPO, que sin IT no se cambia).
+
+        -Ambitos sustituye la lectura real, para las pruebas.
+    #>
+    param([hashtable]$Ambitos)
+
+    $politica = 'Restricted'
+    $origen = 'por defecto'
+    foreach ($s in @('MachinePolicy', 'UserPolicy', 'CurrentUser', 'LocalMachine')) {
+        $v = if ($Ambitos) { $Ambitos[$s] } else { Get-ExecutionPolicy -Scope $s -ErrorAction SilentlyContinue }
+        if ($v -and "$v" -ne 'Undefined') { $politica = "$v"; $origen = $s; break }
+    }
+
+    return [PSCustomObject]@{
+        Politica      = $politica
+        Origen        = $origen
+        BloqueaPerfil = $politica -in @('Restricted', 'AllSigned')
+        DeGrupo       = $origen -in @('MachinePolicy', 'UserPolicy')
+    }
+}
+
 # El registro se abre al cargar la libreria, para que capture desde la primera
 # linea del script que la cargo. Silencioso y nunca fatal (ver Start-KitLog).
 Start-KitLog | Out-Null

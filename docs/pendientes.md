@@ -7,7 +7,7 @@ que se tomaron a proposito para no volver a discutirlas cada vez.
 
 ## Comprobaciones que necesitan otra maquina
 
-La suite cubre lo que se puede comprobar sin salir de un equipo. Estas cinco no:
+La suite cubre lo que se puede comprobar sin salir de un equipo. Estas seis no:
 necesitan hardware o una red que aqui no hay. Estan **sin verificar**, y eso no es
 lo mismo que estar mal.
 
@@ -92,6 +92,28 @@ Que comprobar: que el kit lo lee como de 32 bits, que DLL dice que necesita (si
 las opciones del menu abren sin el error de `mfc110.dll`, y que en ese equipo la
 lectura de los MSI por COM no la bloquea ninguna directiva.
 
+Antes de copiar nada, `Doctor-App` deberia decir lo mismo que Windows, pero entero:
+
+```powershell
+.\bin\kit\Doctor-App.bat -Path "C:\SYS\BR\UTILERIAPUENTEBR.EXE"
+```
+
+### 6. Lo nuevo de la 2.3.0, en la red del trabajo
+
+Todo esta probado aqui contra servidores de verdad y contra uno local que se porta
+mal a proposito (cortes, proxy con clave, archivos que cambian). Lo que solo se ve
+detras del proxy de la empresa:
+
+- **Las descargas con el motor nuevo.** Pasaron de `Invoke-WebRequest` a
+  `HttpWebRequest` para poder reanudar. El proxy con usuario y clave esta probado;
+  el de **autenticacion integrada** (sin escribir la clave) usa el mismo
+  `UseDefaultCredentials` que antes, pero no se ha visto pasar por un proxy NTLM.
+- **Python de python-build-standalone.** Se descarga de GitHub, y el archivo lo
+  sirve `release-assets.githubusercontent.com`, otro dominio: si el cortafuegos solo
+  deja `github.com`, la descarga falla. `Doctor` prueba `github.com`, no ese.
+- **`Update-Kit`**, la primera vez que haya una release publicada. Este equipo de
+  trabajo tiene la 2.2: la 2.3.0 hay que llevarla a mano una ultima vez.
+
 ## Decisiones tomadas
 
 ### No hay manifiesto de hashes de lo instalado
@@ -166,7 +188,7 @@ contra el manifiesto viejo, que es el fallo que se queria evitar.
    que corrompe la descarga. `Verify-Env` ya lo caza, y los checksums lo cazan antes.
 3. **Va contra la disciplina del kit.** Casi cada prueba de aqui cubre un fallo que
    existio de verdad. Esta seria la primera escrita contra una hipotesis, teniendo
-   sin verificar las cinco cosas de arriba, donde el kit podria estar roto ahora.
+   sin verificar las seis cosas de arriba, donde el kit podria estar roto ahora.
 
 **Cuando rehacer esta decision**, sin volver a investigar nada: si alguien pide
 demostrar que un entorno no se ha tocado (auditoria, seguridad corporativa), o si

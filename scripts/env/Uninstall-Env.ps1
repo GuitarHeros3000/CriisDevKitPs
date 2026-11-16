@@ -12,9 +12,11 @@
 
     Siempre pide confirmacion y siempre deja una copia del PATH previo.
 .PARAMETER Runtime
-    Angular o Python.
+    Cualquiera del catalogo, o VCRuntime (las DLL de Visual C++ que guarda el
+    kit) o Apps (lo que Install-NoAdmin dejo en modo portable).
 .PARAMETER Version
-    Version a retirar (ej: 20 para Angular, 3.12 para Python).
+    Version a retirar (ej: 20 para Angular, 3.12 para Python, 2012 para
+    VCRuntime). Con Apps, el nombre de la carpeta de la app.
 .PARAMETER Node
     Solo Angular: retira ademas una version concreta de Node (ej: 24.19.0).
 .PARAMETER All
@@ -35,7 +37,7 @@
 #>
 
 param(
-    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode')]
+    [ValidateSet('Angular', 'Python', 'Java', 'Node', 'Git', 'Maven', 'Gradle', 'Dotnet', 'VSCode', 'VCRuntime', 'Apps')]
     [string]$Runtime,
 
     [string]$Version,
@@ -81,6 +83,14 @@ function Get-ItemsDe {
 
     $RuntimeRoot = Join-Path $WorkspaceRoot $Runtime
     if (-not (Test-Path $RuntimeRoot)) { return @() }
+
+    # VCRuntime\ y Apps\ no siguen el patron de los runtimes: sus piezas las
+    # dice Get-KitExtraItems, el mismo que usan Export y Verify.
+    if ($KitExtraFolders -contains $Runtime) {
+        return @(Get-KitExtraItems -Carpeta $Runtime | ForEach-Object {
+            [PSCustomObject]@{ Kind = $Runtime; Version = $_.Item; Path = $_.Ruta; Name = $_.Item }
+        })
+    }
 
     $items = @()
     foreach ($dir in (Get-ChildItem $RuntimeRoot -Directory -ErrorAction SilentlyContinue)) {
@@ -133,9 +143,20 @@ function Remove-CarpetasMadreVacias {
         catastrofico, y que hoy nunca lo este es suerte, no diseno.
     #>
     $madres = if ($Everything) {
-        @((Get-RuntimeCatalog).Carpeta | ForEach-Object { Join-Path $WorkspaceRoot $_ })
+        @(@((Get-RuntimeCatalog).Carpeta) + $KitExtraFolders | ForEach-Object { Join-Path $WorkspaceRoot $_ })
     } else {
         @($RuntimeRoot)
+    }
+
+    # En VCRuntime\ hay un nivel mas (vc-2012\x86): al quitar las dos
+    # arquitecturas, vc-2012 se queda vacia y tambien sobra.
+    $vc = Join-Path $WorkspaceRoot 'VCRuntime'
+    if ($madres -contains $vc -and (Test-Path -LiteralPath $vc)) {
+        foreach ($v in (Get-ChildItem -LiteralPath $vc -Directory -Filter 'vc-*' -ErrorAction SilentlyContinue)) {
+            if (@(Get-ChildItem -LiteralPath $v.FullName -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+                Remove-Item -LiteralPath $v.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     foreach ($m in $madres) {
@@ -163,6 +184,9 @@ function Get-InstalledItems {
     $todos = @()
     foreach ($e in (Get-RuntimeCatalog)) {
         $todos += @(Get-ItemsDe -Runtime $e.Carpeta)
+    }
+    foreach ($c in $KitExtraFolders) {
+        $todos += @(Get-ItemsDe -Runtime $c)
     }
     # Angular guarda ademas su propia Node y la cache de npm dentro de Angular\,
     # que no son entradas del catalogo pero si las creo el kit.
@@ -230,7 +254,11 @@ if ($Everything -or $All) {
 }
 else {
     if (-not [string]::IsNullOrWhiteSpace($Version)) {
-        $match = @($installed | Where-Object { $_.Kind -eq $Runtime -and $_.Version -eq $Version })
+        # En VCRuntime, "2012" son sus dos arquitecturas (vc-2012\x86 y x64).
+        $match = @($installed | Where-Object {
+            $_.Kind -eq $Runtime -and ($_.Version -eq $Version -or
+                ($Runtime -eq 'VCRuntime' -and $_.Version -like "vc-$Version\*"))
+        })
         if ($match.Count -eq 0) {
             $have = @($installed | Where-Object { $_.Kind -eq $Runtime } | ForEach-Object { $_.Version })
             Write-Log "$Runtime v$Version no esta instalado." "ERROR"
@@ -297,6 +325,18 @@ foreach ($t in @($targets | Where-Object { $_.Kind -eq 'VSCode' })) {
     Write-Host "            $data" -ForegroundColor Red
     if ($ext.Count -gt 0) { Write-Host "            $($ext.Count) extension(es) instalada(s)" -ForegroundColor Red }
     Write-Host "            Copia esa carpeta antes si quieres conservarla." -ForegroundColor Yellow
+    Write-Host ""
+}
+
+# Lo que esto NO deshace, dicho antes de confirmar.
+if (@($targets | Where-Object { $_.Kind -eq 'VCRuntime' }).Count -gt 0) {
+    Write-Host "  Las DLL que Install-VCRuntime copio JUNTO A TUS PROGRAMAS no se tocan:" -ForegroundColor Yellow
+    Write-Host "  esos programas siguen funcionando. Esto solo quita la copia del kit." -ForegroundColor Yellow
+    Write-Host ""
+}
+if (@($targets | Where-Object { $_.Kind -eq 'Apps' }).Count -gt 0) {
+    Write-Host "  Solo se quitan las apps PORTABLES de Apps\. Lo que Install-NoAdmin instalo" -ForegroundColor Yellow
+    Write-Host "  por usuario se quita desde Configuracion > Aplicaciones, como cualquier otra." -ForegroundColor Yellow
     Write-Host ""
 }
 

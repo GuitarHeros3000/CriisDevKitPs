@@ -177,6 +177,146 @@ function New-PeDePrueba {
     return $total
 }
 
+function New-ZipDePrueba {
+    <#
+        Un .zip con las entradas que se pidan, en ese orden: nombre -> contenido,
+        y $null para una entrada de carpeta. Se escribe con la API de .NET y no
+        con Compress-Archive porque hacen falta nombres que esa no deja crear,
+        como "..\fuera.txt".
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Ruta,
+        [Parameter(Mandatory=$true)][System.Collections.Specialized.OrderedDictionary]$Entradas
+    )
+
+    Add-Type -AssemblyName System.IO.Compression -ErrorAction SilentlyContinue
+    $fs = [IO.File]::Open($Ruta, 'Create')
+    try {
+        $zip = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach ($k in $Entradas.Keys) {
+                $e = $zip.CreateEntry($k)
+                if ($null -eq $Entradas[$k]) { continue }
+                $w = New-Object IO.StreamWriter($e.Open())
+                try { $w.Write([string]$Entradas[$k]) } finally { $w.Dispose() }
+            }
+        }
+        finally { $zip.Dispose() }
+    }
+    finally { $fs.Dispose() }
+    return $Ruta
+}
+
+function Start-ServidorDePrueba {
+    <#
+        Un servidor HTTP minimo en 127.0.0.1, sobre TcpListener: al reves que
+        HttpListener, no necesita admin ni reservar la URL. Sirve -Contenido en
+        cualquier ruta, entiende Range e If-Range, y se porta mal a proposito:
+
+          -Cortes N      las N primeras respuestas se cortan tras -CortarTras bytes
+          -CierreLimpio  el corte es un cierre ordenado, sin error: el cliente
+                         solo ve que el flujo se acaba antes de tiempo
+          -Estado 404    responde siempre ese codigo
+          -SinRange      ignora Range y manda siempre el archivo entero
+          -ETag          el validador que anuncia ('' = ninguno)
+          -Retraso ms    espera eso antes de contestar, como un servidor lento
+          -ProxyBasic    hace de proxy con autenticacion Basic: sin la cabecera
+                         Proxy-Authorization que corresponde a ese "usuario:clave",
+                         responde 407 como un proxy corporativo
+
+        Devuelve Url, Control (Peticiones recibidas, Cortes que quedan, ETag; se
+        puede cambiar en marcha) y Parar, un scriptblock.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][byte[]]$Contenido,
+        [int]$CortarTras = 0,
+        [int]$Cortes = 0,
+        [int]$Estado = 0,
+        [switch]$SinRange,
+        [switch]$CierreLimpio,
+        [string]$ETag = '"v1"',
+        [string]$ProxyBasic,
+        [int]$Retraso = 0
+    )
+
+    $credencial = if ($ProxyBasic) { 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($ProxyBasic)) } else { $null }
+
+    $control = [hashtable]::Synchronized(@{
+        Peticiones = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+        Cortes = $Cortes; ETag = $ETag; Parar = $false
+    })
+    $escucha = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 0)
+    $escucha.Start()
+    $puerto = $escucha.LocalEndpoint.Port
+
+    $ps = [PowerShell]::Create()
+    [void]$ps.AddScript({
+        param($escucha, $control, $datos, $cortarTras, $codigo, $sinRange, $cierreLimpio, $credencial, $retraso)
+        while (-not $control.Parar) {
+            if (-not $escucha.Pending()) { Start-Sleep -Milliseconds 15; continue }
+            $c = $escucha.AcceptTcpClient()
+            try {
+                $s = $c.GetStream()
+                $lector = New-Object System.IO.StreamReader($s, [Text.Encoding]::ASCII, $false, 4096, $true)
+                $lineas = @()
+                while ($x = $lector.ReadLine()) { $lineas += $x }
+                [void]$control.Peticiones.Add(($lineas -join "`n"))
+                if ($retraso -gt 0) { Start-Sleep -Milliseconds $retraso }
+
+                $etag = $control.ETag
+                $desde = 0; $ifRange = $null
+                foreach ($l in $lineas) {
+                    if ($l -match '^Range:\s*bytes=(\d+)-') { $desde = [long]$Matches[1] }
+                    if ($l -match '^If-Range:\s*(.+)$') { $ifRange = $Matches[1].Trim() }
+                }
+
+                if ($credencial -and -not ($lineas -contains "Proxy-Authorization: $credencial")) {
+                    $b = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 407 Proxy Authentication Required`r`nProxy-Authenticate: Basic realm=`"prueba`"`r`nContent-Length: 0`r`nConnection: close`r`n`r`n")
+                    $s.Write($b, 0, $b.Length); continue
+                }
+
+                if ($codigo) { $cab = "HTTP/1.1 $codigo X`r`nContent-Length: 0`r`nConnection: close`r`n`r`n"; $b = [Text.Encoding]::ASCII.GetBytes($cab); $s.Write($b, 0, $b.Length); continue }
+
+                $parcial = $desde -gt 0 -and -not $sinRange -and (-not $ifRange -or $ifRange -eq $etag)
+                if ($parcial -and $desde -ge $datos.Length) {
+                    $b = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 416 Range Not Satisfiable`r`nContent-Length: 0`r`nConnection: close`r`n`r`n")
+                    $s.Write($b, 0, $b.Length); continue
+                }
+                $ini = if ($parcial) { $desde } else { 0 }
+                $largo = $datos.Length - $ini
+                $cab = if ($parcial) { "HTTP/1.1 206 Partial Content`r`nContent-Range: bytes $ini-$($datos.Length - 1)/$($datos.Length)`r`n" } else { "HTTP/1.1 200 OK`r`n" }
+                $cab += "Content-Length: $largo`r`nAccept-Ranges: bytes`r`nConnection: close`r`n"
+                if ($etag) { $cab += "ETag: $etag`r`n" }
+                $cab += "`r`n"
+                $b = [Text.Encoding]::ASCII.GetBytes($cab)
+                $s.Write($b, 0, $b.Length)
+
+                $enviar = $largo
+                if ($control.Cortes -gt 0) {
+                    $control.Cortes--
+                    $enviar = [Math]::Min($cortarTras, $largo)
+                    # RST en vez de un cierre ordenado: es lo que hace un proxy que se cae.
+                    if (-not $cierreLimpio) { $c.Client.LingerState = New-Object System.Net.Sockets.LingerOption($true, 0) }
+                }
+                if ($enviar -gt 0) { $s.Write($datos, [int]$ini, [int]$enviar) }
+                $s.Flush()
+            }
+            catch { }
+            finally { $c.Close() }
+        }
+        $escucha.Stop()
+    })
+    [void]$ps.AddArgument($escucha).AddArgument($control).AddArgument($Contenido).AddArgument($CortarTras).AddArgument($Estado).AddArgument([bool]$SinRange).AddArgument([bool]$CierreLimpio).AddArgument($credencial).AddArgument($Retraso)
+    $async = $ps.BeginInvoke()
+
+    return [PSCustomObject]@{
+        Url     = "http://127.0.0.1:$puerto/descarga/archivo.zip"
+        Proxy   = "127.0.0.1:$puerto"
+        Control = $control
+        Parar   = { $control.Parar = $true; [void]$async.AsyncWaitHandle.WaitOne(3000); $ps.Dispose() }.GetNewClosure()
+    }
+}
+
 function New-CabDePrueba {
     <#
         Un .cab de verdad, con makecab.exe (viene con Windows), que lleva un

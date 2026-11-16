@@ -499,8 +499,10 @@ Describe "Cobertura del catalogo" {
         It "$nombre admite los $($catalogo.Count) runtimes del catalogo" {
             $txt = Get-Content (Resolve-KitScript -Nombre "$nombre.ps1") -Raw
 
-            # Doctor no tiene -Runtime; se comprueba que nombre cada carpeta.
+            # Doctor no tiene -Runtime; se comprueba que nombre cada carpeta. Sus
+            # comprobaciones viven en lib\Doctor.ps1.
             if ($nombre -eq 'Doctor-Env') {
+                $txt += Get-Content (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib\Doctor.ps1') -Raw
                 foreach ($e in $catalogo) {
                     $txt | Should Match ([regex]::Escape($e.Carpeta))
                 }
@@ -512,6 +514,18 @@ Describe "Cobertura del catalogo" {
             foreach ($e in $catalogo) {
                 $m.Groups[1].Value | Should Match ([regex]::Escape("'$($e.Carpeta)'"))
             }
+        }
+    }
+
+    # VCRuntime\ y Apps\ los deja el kit igual que un runtime. Se quedaron fuera
+    # de exportar, verificar y desinstalar justo por no estar en el catalogo.
+    foreach ($nombre in @('Export-Env', 'Import-Env', 'Uninstall-Env', 'Verify-Env')) {
+        It "$nombre admite tambien VCRuntime y Apps" {
+            $txt = Get-Content (Resolve-KitScript -Nombre "$nombre.ps1") -Raw
+            $m = [regex]::Match($txt, "ValidateSet\(([^)]*)\)")
+            $m.Success | Should Be $true
+            $KitExtraFolders.Count | Should Not Be 0
+            foreach ($c in $KitExtraFolders) { $m.Groups[1].Value | Should Match ([regex]::Escape("'$c'")) }
         }
     }
 
@@ -708,4 +722,56 @@ Describe "Get-RuntimeCatalog" {
             $e.ExeFirma | Should Not Match '\.\.'
         }
     }
+}
+
+Describe "VCRuntime\ y Apps\ (Get-KitExtraItems y el manifiesto de archivos)" {
+
+    $raiz = Join-Path ([IO.Path]::GetTempPath()) ("extras-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+    foreach ($d in @('VCRuntime\vc-2012\x86', 'VCRuntime\vc-2012\x64', 'VCRuntime\vc-2013\x86', 'VCRuntime\vc-2013\arm64', 'VCRuntime\suelta', 'Apps\tools', 'Apps\MiApp\bin')) {
+        New-Item -ItemType Directory -Path (Join-Path $raiz $d) -Force | Out-Null
+    }
+    Set-Content -LiteralPath (Join-Path $raiz 'Apps\MiApp\bin\app.exe') -Value 'exe' -NoNewline
+    Set-Content -LiteralPath (Join-Path $raiz 'Apps\MiApp\leeme.txt') -Value 'hola' -NoNewline
+
+    # La pieza de VCRuntime es cada arquitectura de cada version: es lo que se
+    # descarga junto y lo que tiene sentido llevar o quitar.
+    It "en VCRuntime, una pieza por version y arquitectura" {
+        (@(Get-KitExtraItems -Carpeta VCRuntime -Raiz $raiz) | ForEach-Object { $_.Item } | Sort-Object) -join ',' |
+            Should Be 'vc-2012\x64,vc-2012\x86,vc-2013\x86'
+    }
+
+    It "no cuenta lo que no es de una arquitectura conocida, ni carpetas sueltas" {
+        @(Get-KitExtraItems -Carpeta VCRuntime -Raiz $raiz | ForEach-Object { $_.Item }) -contains 'vc-2013\arm64' | Should Be $false
+    }
+
+    It "en Apps, una pieza por app" {
+        (@(Get-KitExtraItems -Carpeta Apps -Raiz $raiz) | ForEach-Object { $_.Item } | Sort-Object) -join ',' | Should Be 'MiApp,tools'
+    }
+
+    It "sin la carpeta, nada" {
+        @(Get-KitExtraItems -Carpeta Apps -Raiz (Join-Path $raiz 'no-existe')).Count | Should Be 0
+    }
+
+    It "el manifiesto lleva cada archivo con su SHA-256 y ruta relativa" {
+        $m = @(Get-FolderManifest -Ruta (Join-Path $raiz 'Apps\MiApp'))
+        ($m.ruta | Sort-Object) -join ',' | Should Be 'bin\app.exe,leeme.txt'
+        @($m | Where-Object { $_.ruta -eq 'leeme.txt' })[0].sha256 | Should Match '^[0-9a-f]{64}$'
+    }
+
+    It "Test-FolderManifest no ve nada raro en la misma carpeta" {
+        $app = Join-Path $raiz 'Apps\MiApp'
+        @(Test-FolderManifest -Ruta $app -Archivos @(Get-FolderManifest -Ruta $app)).Count | Should Be 0
+    }
+
+    # Lo que justifica llevar los hashes: un USB que corrompe un archivo.
+    It "Test-FolderManifest senala el archivo cambiado y el que falta" {
+        $app = Join-Path $raiz 'Apps\MiApp'
+        $m = @(Get-FolderManifest -Ruta $app)
+        Set-Content -LiteralPath (Join-Path $app 'leeme.txt') -Value 'otra cosa' -NoNewline
+        Remove-Item -LiteralPath (Join-Path $app 'bin\app.exe')
+        $malos = @(Test-FolderManifest -Ruta $app -Archivos $m)
+        ($malos | Sort-Object) -join ' | ' | Should Be 'bin\app.exe: falta | leeme.txt: no coincide'
+    }
+
+    Remove-Item -LiteralPath $raiz -Recurse -Force -ErrorAction SilentlyContinue
 }
