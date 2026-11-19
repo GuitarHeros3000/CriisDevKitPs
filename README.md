@@ -29,7 +29,7 @@ pantalla que ademas responde la pregunta con la que uno llega: **que hay instala
 
 ```
   ============================================================
-   CriisDevKit v2.3.0   -   entornos de desarrollo sin admin
+   CriisDevKit v2.4.0   -   entornos de desarrollo sin admin
   ============================================================
 
    Instalado: python 3.12
@@ -137,6 +137,7 @@ CriisDevKitPs/
 │                             Install-NoAdmin, Install-VCRuntime, Run-Tests,
 │                             Update-Kit
 ├── docs/                     La documentacion por temas (ver el indice arriba)
+├── tools/                    Para quien mantiene el kit: el paquete de Android para repartir
 └── tests/                       Suite de Pester
 ```
 

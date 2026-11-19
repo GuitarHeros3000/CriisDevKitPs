@@ -86,8 +86,20 @@ if (-not $Avd -or $avds -notcontains $Avd) {
 }
 
 function Get-EmuladorEnMarcha {
+    <#
+        El emulador abierto que es ESTE telefono, o $null. Antes valia el
+        primero que hubiera: con el de Android 8 abierto y pidiendo el de 14,
+        instalaba en el de 8. Cada emulador dice que carpeta de telefono esta
+        usando (emu avd path), y esa es la que se compara.
+    #>
     $l = (Invoke-NativeCommand -FilePath $adb -Arguments @('devices') -Quiet).Output
-    return @([regex]::Matches($l, '(?m)^(emulator-\d+)\s+device') | ForEach-Object { $_.Groups[1].Value })[0]
+    $quiero = (Join-Path $AndroidAvdHome "$Avd.avd").TrimEnd('\')
+    foreach ($s in @([regex]::Matches($l, '(?m)^(emulator-\d+)\s+device') | ForEach-Object { $_.Groups[1].Value })) {
+        $r = Invoke-NativeCommand -FilePath $adb -Arguments @('-s', $s, 'emu', 'avd', 'path') -Quiet
+        $ruta = @(($r.Output -split "`r?`n") | Where-Object { $_.Trim() -and $_.Trim() -ne 'OK' })[0]
+        if ($ruta -and $ruta.Trim().TrimEnd('\') -eq $quiero) { return $s }
+    }
+    return $null
 }
 
 $serie = Get-EmuladorEnMarcha
@@ -97,7 +109,7 @@ if ($serie -and ($EnFrio -or $Borrar)) {
 }
 
 if ($serie) {
-    Write-Log "Ya estaba abierto: $serie" "SUCCESS"
+    Write-Log "Ya estaba abierto: $Avd ($serie)" "SUCCESS"
 }
 else {
     $args_ = @('-avd', $Avd, '-no-boot-anim', '-no-audio', '-netdelay', 'none', '-netspeed', 'full')

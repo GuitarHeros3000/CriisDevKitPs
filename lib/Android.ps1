@@ -665,6 +665,7 @@ function Get-AndroidAppPlan {
     if ($bt) { $a['BuildTools'] = $bt }
     if ($jdkMayor -lt 17) { $a['Jdk'] = $jdkMayor }
     if (-not $SoloCompilar) { $a['Emulador'] = $true; $a['Api'] = $Api }
+    $a['SinResumen'] = $true
     return [PSCustomObject]@{ JdkMayor = $jdkMayor; Jdk = $jdk; BuildTools = $bt; Faltan = $faltan; SetupArgs = $a }
 }
 

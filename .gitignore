@@ -25,6 +25,9 @@ softwares_locked/
 # lleva URLs internas, y puede que credenciales. El que se sube es el .ejemplo.
 sources.json
 
+# Lo que genera tools\Build-PaqueteAndroid.ps1 para repartir.
+/dist/
+
 # Bundles de Export-Env y su manifiesto.
 *.zip
 env.json

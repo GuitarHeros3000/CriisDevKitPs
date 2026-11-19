@@ -209,6 +209,32 @@ El kit deja tambien `ANDROID_HOME` de usuario, para que Gradle encuentre el SDK 
 cualquier terminal o desde VS Code. Si ya apuntaba a otro SDK (el de un Android
 Studio, por ejemplo) no lo cambia; con `-Force` si.
 
+## Repartirlo a tu equipo, sin el resto del kit
+
+```powershell
+.\tools\Build-PaqueteAndroid.ps1
+```
+
+Deja `dist\CriisDevKit Android <version>.zip` con lo justo para lo de esta pagina:
+un menu (`Android.bat`) con tres opciones (compilar y probar una app, abrir el
+telefono, y quitar todo, Java incluido), un `LEEME.md` para quien lo recibe, y los
+comandos de Android.
+
+De la libreria va **solo lo que esos comandos usan**: el generador sigue las llamadas
+desde los scripts que van dentro, con el analizador de PowerShell, y copia unas 107
+funciones de las 265 del kit (unas 4.000 lineas de 25.000). Los demas runtimes,
+Doctor, Use-Env, Export e Import, Visual C++, Update-Kit, las pruebas y esta
+documentacion no van. Se recalcula cada vez: si el kit cambia, el paquete sigue
+llevando justo lo necesario.
+
+Antes de dar el zip por bueno lo comprueba: que se lee, que no le falta ninguna
+funcion, que no manda a ningun comando que no lleve, y que arranca. Y la suite lo
+vigila (`PaqueteAndroid.Tests.ps1`).
+
+Lo que va es legible: PowerShell no se compila. Una version nueva es un zip nuevo
+(el paquete no trae `Update-Kit`), y si algo falla, quien lo usa no tiene `Doctor`:
+que mande el mensaje de error.
+
 ## La licencia
 
 Instalar el SDK supone aceptar la licencia de Google. El kit la pregunta (o

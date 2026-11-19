@@ -44,6 +44,12 @@
     Dice que instalaria, y cuanto pesa, sin tocar nada.
 .PARAMETER Quitar
     Quita el SDK, los telefonos virtuales, ANDROID_HOME y sus rutas del PATH.
+.PARAMETER SinResumen
+    Sin el resumen final. Para cuando lo llama Start-AndroidApp, que sigue.
+.PARAMETER ConJava
+    Con -Quitar, tambien los JDK del kit (la carpeta Java) y sus rutas del
+    PATH. Para quien instalo Java solo para Android, como con el paquete de
+    Android: sin esto, quitar Android dejaba el JDK 8 puesto.
 .EXAMPLE
     .\Setup-AndroidEnv.ps1
 .EXAMPLE
@@ -72,7 +78,11 @@ param(
 
     [switch]$WhatIf,
 
-    [switch]$Quitar
+    [switch]$Quitar,
+
+    [switch]$ConJava,
+
+    [switch]$SinResumen
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,9 +103,12 @@ Write-Log ""
 
 if ($Quitar) {
     $avds = @(Get-AndroidAvds)
+    $javaRoot = Join-Path $WorkspaceRoot 'Java'
+    $jdks = if ($ConJava) { @(Get-ChildItem -LiteralPath $javaRoot -Directory -Filter 'jdk-*' -ErrorAction SilentlyContinue | ForEach-Object Name) } else { @() }
     Write-Host "Se va a quitar:" -ForegroundColor Yellow
     Write-Host "  $AndroidRoot"
     if ($avds.Count) { Write-Host "  los telefonos virtuales: $($avds -join ', ')  ($AndroidAvdHome)" }
+    if ($jdks.Count) { Write-Host "  los JDK del kit: $($jdks -join ', ')  ($javaRoot)" }
     Write-Host "  ANDROID_HOME de usuario, si apunta aqui, y sus rutas del PATH"
     Write-Host ""
     if (-not $Force) {
@@ -106,7 +119,12 @@ if ($Quitar) {
         [Environment]::SetEnvironmentVariable('ANDROID_HOME', $null, 'User')
         Write-Log "ANDROID_HOME de usuario retirado" "SUCCESS"
     }
-    foreach ($d in @($AndroidRoot, $AndroidAvdHome)) {
+    $borrar = @($AndroidRoot, $AndroidAvdHome)
+    if ($ConJava) {
+        Remove-UserPathEntry -UnderFolder $javaRoot | Out-Null
+        $borrar += $javaRoot
+    }
+    foreach ($d in $borrar) {
         if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force; Write-Log "Borrado: $d" "SUCCESS" }
     }
     exit 0
@@ -301,6 +319,13 @@ else {
     Write-Log "ANDROID_HOME ya apunta a otro SDK ($($env2.Habia)); se deja. Para cambiarlo: -Force" "WARN"
 }
 Add-UserPathEntry -Path @((Join-Path $AndroidSdk 'platform-tools'), (Join-Path $AndroidSdk 'emulator'))
+
+# Start-AndroidApp sigue (compila y abre la app): un "ANDROID LISTO" con
+# instrucciones a medio camino hacia creer que habia terminado.
+if ($SinResumen) {
+    if ($fallos.Count -gt 0) { Write-Log "Fallo al instalar: $($fallos -join ', ')" "ERROR"; exit 1 }
+    exit 0
+}
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
