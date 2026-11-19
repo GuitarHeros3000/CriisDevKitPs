@@ -74,6 +74,8 @@ $ProgressPreference = "SilentlyContinue"
 
 # Las comprobaciones y la salida viven en lib\Doctor.ps1 (ver su cabecera).
 . (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "lib\Doctor.ps1")
+# El SDK de Android, para su seccion (tampoco lo carga Common).
+. (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "lib\Android.ps1")
 
 # --------------------------------------------------------------------------
 
@@ -99,6 +101,7 @@ Test-BuildToolInstall -Titulo "Gradle" -Root $GradleRoot -Prefijo 'gradle' `
                       -JarGlob 'lib\gradle-launcher-*.jar' -JarRegex 'gradle-launcher-([\d.]+)\.jar' `
                       -SetupBat '.\bin\setup\Setup-GradleEnv.bat'
 Test-DotnetInstall
+Test-AndroidInstall
 Test-VSCodeInstall
 Test-VSCodeJavaRuntimes
 Test-CorpNet

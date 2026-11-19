@@ -19,6 +19,11 @@ softwares_locked/
 /VSCode/
 /Apps/
 /VCRuntime/
+/Android/
+
+# El espejo interno de la empresa (lib\Proxy.ps1 lo lee de la raiz del kit):
+# lleva URLs internas, y puede que credenciales. El que se sube es el .ejemplo.
+sources.json
 
 # Bundles de Export-Env y su manifiesto.
 *.zip

@@ -120,6 +120,16 @@ function Get-FileSha512 {
     return (Get-FileHash -LiteralPath $FilePath -Algorithm SHA512).Hash.ToLowerInvariant()
 }
 
+function Get-FileSha1 {
+    <#
+        Solo porque Google publica SHA-1 para el SDK de Android y no otra cosa.
+        SHA-1 ya no vale para firmar, pero si para lo que se usa aqui: saber
+        que el archivo llego entero.
+    #>
+    param([Parameter(Mandatory=$true)][string]$FilePath)
+    return (Get-FileHash -LiteralPath $FilePath -Algorithm SHA1).Hash.ToLowerInvariant()
+}
+
 function Get-FileSignerInfo {
     <#
     .SYNOPSIS
@@ -443,7 +453,11 @@ function Get-CachedDownload {
     $f = @(Get-ChildItem -LiteralPath $KitDownloadCache -Filter "$h-*" -File -ErrorAction SilentlyContinue)[0]
     if (-not $f) { return $null }
 
-    $real = if ($h.Length -eq 128) { Get-FileSha512 -FilePath $f.FullName } else { Get-FileSha256 -FilePath $f.FullName }
+    $real = switch ($h.Length) {
+        128     { Get-FileSha512 -FilePath $f.FullName }
+        40      { Get-FileSha1 -FilePath $f.FullName }
+        default { Get-FileSha256 -FilePath $f.FullName }
+    }
     if ($real -ne $h) {
         Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
         return $null
@@ -531,6 +545,8 @@ function Invoke-Download {
         [string]$Sha256,
         # Apache publica SHA-512 en vez de SHA-256, asi que no basta con uno.
         [string]$Sha512,
+        # Y Google, para el SDK de Android, SHA-1.
+        [string]$Sha1,
         # Quien deberia firmar esto. Solo para avisar si firma otro; nunca
         # bloquea, ni siquiera si no hay firma ninguna.
         [string]$FirmanteEsperado,
@@ -554,6 +570,9 @@ function Invoke-Download {
     }
     elseif (-not [string]::IsNullOrWhiteSpace($Sha512)) {
         $esperado = $Sha512.Trim().ToLowerInvariant(); $algoritmo = 'SHA-512'
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($Sha1)) {
+        $esperado = $Sha1.Trim().ToLowerInvariant(); $algoritmo = 'SHA-1'
     }
 
     # Lo que ya se bajo una vez y cuadra con su hash no se vuelve a bajar:
@@ -654,7 +673,11 @@ function Invoke-Download {
     Write-Log ("  {0:N1} MB en {1:N1} s" -f ($r.Bytes / 1MB), $r.Segundos)
 
     if ($esperado) {
-        $obtenido = if ($algoritmo -eq 'SHA-256') { Get-FileSha256 -FilePath $temp } else { Get-FileSha512 -FilePath $temp }
+        $obtenido = switch ($algoritmo) {
+            'SHA-256' { Get-FileSha256 -FilePath $temp }
+            'SHA-512' { Get-FileSha512 -FilePath $temp }
+            default   { Get-FileSha1 -FilePath $temp }
+        }
         if ($obtenido -ne $esperado) {
             Write-Log "El archivo descargado no coincide con el hash oficial." "ERROR"
             Write-Log "  esperado: $esperado" "ERROR"

@@ -7,7 +7,7 @@ que se tomaron a proposito para no volver a discutirlas cada vez.
 
 ## Comprobaciones que necesitan otra maquina
 
-La suite cubre lo que se puede comprobar sin salir de un equipo. Estas seis no:
+La suite cubre lo que se puede comprobar sin salir de un equipo. Estas siete no:
 necesitan hardware o una red que aqui no hay. Estan **sin verificar**, y eso no es
 lo mismo que estar mal.
 
@@ -114,6 +114,34 @@ detras del proxy de la empresa:
 - **`Update-Kit`**, la primera vez que haya una release publicada. Este equipo de
   trabajo tiene la 2.2: la 2.3.0 hay que llevarla a mano una ultima vez.
 
+### 7. Android en el equipo del trabajo
+
+Probado aqui de punta a punta: el SDK y el emulador sin admin, una app en Java
+compilada con Gradle y AGP desde `android-shell.bat`, y arrancada en Android 14 y en
+Android 8 (ver [Android](android.md)). La casilla del hipervisor ya esta comprobada
+alli: da `1` en el equipo del trabajo y en el de un companero. Lo que falta:
+
+- **Las descargas del SDK** desde `dl.google.com`, por el proxy de la empresa. Van por
+  el mismo motor que el resto del kit, asi que deberian pasar igual.
+- **Lo que baja Gradle**: el plugin de Android y sus dependencias del Maven de Google,
+  y las build-tools si el proyecto pide otras. El proxy le llega (comprobado), pero
+  no esta visto que la descarga de build-tools de AGP sepa usar un proxy **con
+  usuario y clave**. Si falla ahi, `-BuildTools <la que pida>` lo resuelve por el kit.
+- **El emulador con los recursos de ese equipo**, y con su antivirus: lo que tarda
+  en arrancar, si el telefono de 1,5 GB es llevadero mientras compila Gradle, y si
+  conviene el de Android 8, que es mas ligero.
+- **Que no salga ningun aviso del firewall.** Aqui ya no sale: el daemon de Gradle y
+  el mDNS de adb eran lo que abria puertos hacia fuera, y el kit va ahora sin los
+  dos (ver [Android](android.md#sin-avisos-del-firewall)). Alli puede haber otra
+  directiva; si sale alguno, anotar de que programa es.
+- **El proyecto de 2019** (AGP 3.4.2, Gradle 5.1.1): aqui compila con el JDK 8
+  bajando de `jcenter()` y del Maven de Google. Alli, ademas, tiene en su lista un
+  repositorio Maven interno; lo que no encuentre en los dos primeros lo buscara ahi.
+
+```powershell
+.\bin\start\Start-AndroidApp.bat -Path C:\ruta\del\proyecto
+```
+
 ## Decisiones tomadas
 
 ### No hay manifiesto de hashes de lo instalado
@@ -188,7 +216,7 @@ contra el manifiesto viejo, que es el fallo que se queria evitar.
    que corrompe la descarga. `Verify-Env` ya lo caza, y los checksums lo cazan antes.
 3. **Va contra la disciplina del kit.** Casi cada prueba de aqui cubre un fallo que
    existio de verdad. Esta seria la primera escrita contra una hipotesis, teniendo
-   sin verificar las seis cosas de arriba, donde el kit podria estar roto ahora.
+   sin verificar las comprobaciones de arriba, donde el kit podria estar roto ahora.
 
 **Cuando rehacer esta decision**, sin volver a investigar nada: si alguien pide
 demostrar que un entorno no se ha tocado (auditoria, seguridad corporativa), o si

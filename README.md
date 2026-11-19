@@ -17,13 +17,14 @@ lo encontraba nadie -y se desfasaba sin que se notara.
 | [Redes corporativas](docs/red-corporativa.md) | Proxy, NTLM, la CA que intercepta TLS, el espejo interno y las firmas Authenticode |
 | [Llevarse el entorno](docs/portabilidad.md) | El bundle para una maquina sin internet, y reproducir un entorno con `devenv.json` |
 | [Install-NoAdmin](docs/install-noadmin.md) | Instalar software de terceros en modo portable |
+| [Android](docs/android.md) | Compilar una app y abrirla en un telefono virtual ligero, de una vez: sin admin, sin Android Studio y sin avisos del firewall |
 | [Runtime de Visual C++](docs/vcruntime.md) | Las DLL que pide un programa ajeno (2012, 2013 o 2015-2022), junto a el y sin admin; y por que no arranca un programa |
 | [Trabajar en el kit](docs/desarrollo.md) | Las pruebas, el CI y como anadir un runtime nuevo |
 | [Pendientes y decisiones](docs/pendientes.md) | Lo que falta comprobar en otra maquina, y lo que se decidio NO hacer |
 
 ## Por donde entrar: `Menu.bat`
 
-El kit tiene 34 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
+El kit tiene 37 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
 pantalla que ademas responde la pregunta con la que uno llega: **que hay instalado**.
 
 ```
@@ -73,6 +74,10 @@ pantalla que ademas responde la pregunta con la que uno llega: **que hay instala
     52  Por que no arranca un programa
     53  Pruebas del kit
 
+   ANDROID
+    60  Compilar y probar una app
+    61  Abrir el telefono
+
     q  Salir
 ```
 
@@ -92,9 +97,9 @@ del trabajo, no la ventana**.
 CriisDevKitPs/
 ├── Empezar.bat               Empieza por aqui en un equipo nuevo
 ├── Menu.bat                  Todo lo que sabe hacer el kit
-├── bin/                      Los 34 comandos, agrupados igual que scripts/
-│   ├── setup/                Setup-*.bat   instalar un runtime
-│   ├── start/                Start-*.bat   abrir su shell
+├── bin/                      Los 37 comandos, agrupados igual que scripts/
+│   ├── setup/                Setup-*.bat   instalar un runtime (y el SDK de Android)
+│   ├── start/                Start-*.bat   abrir su shell (y el emulador, y una app de Android)
 │   ├── env/                  Export, Import, Restore, Setup-Project, Uninstall,
 │   │                         Update, Use-Env, Use-CorpCert, Use-VSCodeJava, Verify-Env
 │   └── kit/                  Doctor-Env, Doctor-App, Install-NoAdmin,
@@ -118,7 +123,9 @@ CriisDevKitPs/
 │   ├── UserPath.ps1         PATH de usuario y politica de ejecucion
 │   ├── Doctor.ps1           Las comprobaciones de Doctor (solo lo carga Doctor)
 │   ├── Project.ps1          Que pide un proyecto (solo lo carga Setup-Project)
-│   └── KitUpdate.ps1        Actualizar el kit (solo lo carga Update-Kit)
+│   ├── KitUpdate.ps1        Actualizar el kit (solo lo carga Update-Kit)
+│   └── Android.ps1          El SDK de Android sin sdkmanager (lo cargan los
+│                            comandos de Android y Doctor)
 ├── sources.json.ejemplo         Espejo interno (opcional)
 ├── devenv.json.ejemplo          Manifiesto de entorno (para tus proyectos)
 ├── scripts/                  La implementacion, agrupada por lo que hace
@@ -216,6 +223,10 @@ Proyectos Individuales/
 ├── VSCode/
 │   └── vscode-1.135/
 │       └── data/            (tus ajustes y extensiones: esto lo hace portable)
+├── Android/
+│   ├── sdk/                 (platform-tools, build-tools, plataformas, emulador)
+│   └── android-shell.bat
+│                            (los telefonos virtuales van en %LOCALAPPDATA%)
 ├── Apps/                    (software instalado en modo portable)
 │   ├── tools/               (7z e innoextract, si el kit los necesito)
 │   └── <nombre-app>/

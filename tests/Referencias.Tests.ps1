@@ -73,9 +73,10 @@ function Get-TextoNormalizado {
 Describe "Referencias a comandos del kit" {
 
     # Los .bat que el kit genera dentro de las carpetas de los runtimes
-    # -java25-shell.bat, post-install.bat- no son comandos del kit y no tienen
-    # por que existir en el repositorio.
-    $ajenos = @('post-install.bat')
+    # -java25-shell.bat, post-install.bat, ..\Android\android-shell.bat- no son
+    # comandos del kit y no tienen por que existir en el repositorio. Los que
+    # llevan numeros ya no los coge el patron; los que no, van aqui.
+    $ajenos = @('post-install.bat', 'android-shell.bat')
 
     It "toda mencion del tipo .\algo.bat apunta a un archivo que existe" {
         $rotas = @()

@@ -225,4 +225,84 @@ Describe "Get-ProjectNeeds" {
     }
 }
 
+Describe "Get-AndroidProjectInfo" {
+
+    # La raiz declara el plugin con "apply false"; el modulo es el que lo usa.
+    $raizGroovy = "plugins { id 'com.android.application' version '8.5.0' apply false }"
+
+    It "un proyecto de los de antes: Groovy, compileSdkVersion y buildToolsVersion" {
+        $p = New-Proyecto @{
+            'build.gradle' = $raizGroovy
+            'app\build.gradle' = "apply plugin: 'com.android.application'`nandroid {`n    compileSdkVersion 33`n    buildToolsVersion `"33.0.2`"`n    defaultConfig { minSdkVersion 26 }`n}"
+        }
+        $a = Get-AndroidProjectInfo -Ruta $p
+        $a.CompileSdk | Should Be '33'
+        $a.MinSdk | Should Be '26'
+        $a.BuildTools | Should Be '33.0.2'
+        $a.Fuente | Should Be 'app\build.gradle'
+        $a.Agp | Should Be '8.5.0'
+    }
+
+    # Como un proyecto real de 2019: AGP en el classpath del buildscript, sin
+    # bloque plugins. De la version sale el JDK (8) con que corre su Gradle.
+    It "uno de 2019: el AGP del classpath del buildscript" {
+        $p = New-Proyecto @{
+            'build.gradle' = "buildscript {`n    repositories { google() }`n    dependencies {`n        classpath 'com.android.tools.build:gradle:3.4.2'`n    }`n}"
+            'app\build.gradle' = "apply plugin: 'com.android.application'`nandroid {`n    compileSdkVersion 28`n    defaultConfig { minSdkVersion 21 }`n}"
+        }
+        $a = Get-AndroidProjectInfo -Ruta $p
+        $a.Agp | Should Be '3.4.2'
+        $a.CompileSdk | Should Be '28'
+        $a.MinSdk | Should Be '21'
+    }
+
+    It "el AGP del bloque plugins de settings.gradle.kts" {
+        $p = New-Proyecto @{
+            'settings.gradle.kts' = "pluginManagement {`n    plugins { id(`"com.android.application`") version `"8.7.3`" }`n}"
+            'app\build.gradle.kts' = "plugins { id(`"com.android.application`") }`nandroid { compileSdk = 35 }"
+        }
+        (Get-AndroidProjectInfo -Ruta $p).Agp | Should Be '8.7.3'
+    }
+
+    # Lo que genera Android Studio hoy: el plugin y los numeros por el catalogo.
+    It "uno de ahora: Kotlin, alias del catalogo y los numeros en libs.versions.toml" {
+        $p = New-Proyecto @{
+            'build.gradle.kts' = 'plugins { alias(libs.plugins.android.application) apply false }'
+            'app\build.gradle.kts' = "plugins { alias(libs.plugins.android.application) }`nandroid {`n    namespace = `"com.empresa.app`"`n    compileSdk = libs.versions.compileSdk.get().toInt()`n    defaultConfig { minSdk = 26 }`n}"
+            'gradle\libs.versions.toml' = "[versions]`nagp = `"9.5.1`"`ncompileSdk = `"36`"`n[plugins]`nandroid-application = { id = `"com.android.application`", version.ref = `"agp`" }"
+        }
+        $a = Get-AndroidProjectInfo -Ruta $p
+        $a.CompileSdk | Should Be '36'
+        $a.MinSdk | Should Be '26'
+        $a.BuildTools | Should BeNullOrEmpty
+        $a.Fuente | Should Be 'app\build.gradle.kts'
+        $a.Agp | Should Be '9.5.1'
+    }
+
+    It "AGP 9: compileSdk { version = release(36) }" {
+        $p = New-Proyecto @{
+            'app\build.gradle.kts' = "plugins { id(`"com.android.library`") }`nandroid {`n    compileSdk {`n        version = release(36)`n    }`n    defaultConfig { minSdk { version = release(26) } }`n}"
+        }
+        $a = Get-AndroidProjectInfo -Ruta $p
+        $a.CompileSdk | Should Be '36'
+        $a.MinSdk | Should Be '26'
+    }
+
+    It "un proyecto Gradle que no es de Android no lo es" {
+        $p = New-Proyecto @{ 'build.gradle' = "plugins { id 'java' }`njava { toolchain { languageVersion = JavaLanguageVersion.of(21) } }" }
+        Get-AndroidProjectInfo -Ruta $p | Should BeNullOrEmpty
+        (Get-ProjectNeeds -Ruta $p).Android | Should BeNullOrEmpty
+    }
+
+    It "Get-ProjectNeeds lo trae junto al Java del proyecto" {
+        $p = New-Proyecto @{
+            'build.gradle' = $raizGroovy; 'gradlew.bat' = ''
+            'app\build.gradle' = "plugins { id 'com.android.application' }`nandroid { compileSdk 34 }"
+        }
+        $n = Get-ProjectNeeds -Ruta $p
+        $n.Android.CompileSdk | Should Be '34'
+        $n.Java.Gradle | Should Be $false
+    }
+}
+
 Remove-Item -LiteralPath $RaizTmp -Recurse -Force -ErrorAction SilentlyContinue

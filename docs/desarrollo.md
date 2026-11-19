@@ -26,6 +26,7 @@ porque la sintaxis de asercion cambio (`Should Be` paso a `Should -Be`).
 
 | Archivo | Que prueba |
 |---|---|
+| `Android.Tests.ps1` | Leer el indice del SDK de Google (y descartar lo de desarrollo, las `-rc`, las `-ext` y las beta), dejar el `package.xml` que dejaria `sdkmanager`, la aceptacion de la licencia solo si su texto es el fijado, el telefono virtual ligero, y la seccion de Android de `Doctor` |
 | `Arch.Tests.ps1` | x64 y arm64: como llama cada fuente a cada arquitectura, y que ningun patron se quede en x64 |
 | `Catalog.Tests.ps1` | El catalogo, `devenv.json` y el lockfile, y que ningun comando se quede sin un runtime |
 | `CorpNet.Tests.ps1` | Lo que se escribe en la configuracion del usuario: el `settings.xml` de Maven, el `pip.ini`, el PEM de la CA |

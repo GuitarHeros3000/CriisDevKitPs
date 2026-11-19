@@ -12,6 +12,8 @@
       Node    instala la Node que pide y ejecuta npm ci (o npm install)
       Java    instala el JDK que pide, y Maven o Gradle si el proyecto no
               trae su propio lanzador (mvnw, gradlew). No compila nada.
+      Android el SDK con la plataforma de su compileSdk (sin el emulador,
+              que es mas de 1 GB: se dice como ponerlo).
 
     Es lo que faltaba despues de "ya instale Python": saber cual pedia el
     proyecto y montar su entorno con el.
@@ -50,6 +52,8 @@ $ProgressPreference = "SilentlyContinue"
 . (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "lib\Common.ps1")
 # Lo que lee los archivos del proyecto (ver su cabecera: no lo carga Common).
 . (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "lib\Project.ps1")
+# Lo que pide cada version del plugin de Android (tampoco lo carga Common).
+. (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "lib\Android.ps1")
 
 if ([string]::IsNullOrWhiteSpace($Path)) { $Path = (Get-Location).Path }
 $Path = $Path.Trim().Trim('"')
@@ -73,7 +77,7 @@ $n = Get-ProjectNeeds -Ruta $Path -PythonInstaladas $pyInstaladas
 
 if (-not $n.Python -and -not $n.Node -and -not $n.Java) {
     Write-Log "No reconozco nada que preparar aqui." "WARN"
-    Write-Log "  Busco pyproject.toml, requirements.txt, .python-version, package.json, pom.xml o build.gradle." "WARN"
+    Write-Log "  Busco pyproject.toml, requirements.txt, .python-version, package.json, pom.xml o build.gradle (tambien de Android)." "WARN"
     exit 0
 }
 
@@ -142,11 +146,26 @@ if ($nodo) {
 }
 
 $java = $n.Java
+$android = $n.Android
+
+# En un proyecto Android, el JDK con que corre Gradle lo decide la version de
+# su plugin (AGP), no el sourceCompatibility, que es el del bytecode; y sus
+# build-tools, las que use ese AGP si el proyecto no dice otras.
+$agpReq = if ($android) { Get-AgpRequirements -Agp $android.Agp } else { $null }
+$jdkAndroid = if ($agpReq) { $agpReq.Jdk } else { $null }
+$btAndroid = if ($android -and $android.BuildTools) { $android.BuildTools } elseif ($agpReq) { $agpReq.BuildTools } else { $null }
+
 if ($java) {
-    $j = if ($java.Mayor) { "Java $($java.Mayor)   ($($java.Fuente))" } else { "Java   ($($java.Fuente) no dice que version)" }
+    $j = if ($android) { "Java $(if ($jdkAndroid) { "$jdkAndroid   (el que pide AGP $($android.Agp))" } else { "17 o mas   (no se ve que AGP usa)" })" }
+         elseif ($java.Mayor) { "Java $($java.Mayor)   ($($java.Fuente))" } else { "Java   ($($java.Fuente) no dice que version)" }
     Write-Host "  $j"
     if ($java.Maven)  { Write-Host "    y Maven: no trae mvnw" }
     if ($java.Gradle) { Write-Host "    y Gradle: no trae gradlew" }
+}
+if ($android) {
+    Write-Host "  Android: plataforma $(if ($android.CompileSdk) { "android-$($android.CompileSdk)" } else { '(no la dice; la mas reciente)' })   ($($android.Fuente))"
+    if ($btAndroid) { Write-Host "    build-tools $btAndroid$(if (-not $android.BuildTools) { "   (las de AGP $($android.Agp))" })" }
+    if ($android.MinSdk) { Write-Host "    minimo Android API $($android.MinSdk)" }
 }
 Write-Host ""
 
@@ -312,7 +331,8 @@ if ($nodo) {
 if ($java) {
     Write-Host ""
     Write-Host "--- Java ---" -ForegroundColor Cyan
-    if ($java.Mayor) {
+    if ($android) { Write-Log "El JDK lo pone el SDK de Android$(if ($jdkAndroid) { ": el $jdkAndroid, el que pide AGP $($android.Agp)" } else { " (17 o mas)" })." }
+    elseif ($java.Mayor) {
         if (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "Java\jdk-$($java.Mayor)\bin\java.exe")) {
             Write-Log "Java $($java.Mayor) ya esta instalado" "SUCCESS"
         }
@@ -324,13 +344,35 @@ if ($java) {
         Write-Log "  La que quieras:  .\bin\setup\Setup-JavaEnv.bat -JavaVersion 21" "WARN"
     }
 
-    $conJava = if ($java.Mayor) { @{ JavaVersion = $java.Mayor } } else { @{} }
+    $conJava = if ($jdkAndroid) { @{ JavaVersion = $jdkAndroid } } elseif ($java.Mayor -and -not $android) { @{ JavaVersion = $java.Mayor } } else { @{} }
     if ($java.Maven -and -not (Get-ChildItem -LiteralPath (Join-Path $WorkspaceRoot 'Maven') -Directory -Filter 'maven-*' -ErrorAction SilentlyContinue)) {
         if (-not (Invoke-KitSetup -Script 'Setup-MavenEnv.ps1' -Argumentos $conJava)) { $fallos += 'Maven' }
     }
     if ($java.Gradle -and -not (Get-ChildItem -LiteralPath (Join-Path $WorkspaceRoot 'Gradle') -Directory -Filter 'gradle-*' -ErrorAction SilentlyContinue)) {
         if (-not (Invoke-KitSetup -Script 'Setup-GradleEnv.ps1' -Argumentos $conJava)) { $fallos += 'Gradle' }
     }
+}
+
+# --------------------------------------------------------------------------
+# Android
+# --------------------------------------------------------------------------
+
+if ($android) {
+    Write-Host ""
+    Write-Host "--- Android ---" -ForegroundColor Cyan
+    # Sin -AceptarLicencias: la licencia de Google la acepta quien la lee.
+    $a = @{}
+    if ($android.CompileSdk) { $a['Plataforma'] = $android.CompileSdk }
+    if ($btAndroid) { $a['BuildTools'] = $btAndroid }
+    # Solo si es de antes de 17: uno de 17 o mas ya lo pone Setup-AndroidEnv.
+    $conOtroJdk = ($jdkAndroid -and $jdkAndroid -lt 17)
+    if ($conOtroJdk) { $a['Jdk'] = $jdkAndroid }
+    if (Invoke-KitSetup -Script 'Setup-AndroidEnv.ps1' -Argumentos $a) {
+        $uso += "Android: compilarla y abrirla en el telefono, de una vez:  Menu.bat, opcion 60"
+        $uso += "         (o .\bin\start\Start-AndroidApp.bat -Path `"$Path`")"
+        $uso += "         a mano:  ..\Android\android-$(if ($conOtroJdk) { "java$jdkAndroid-" })shell.bat   y despues  gradlew assembleDebug"
+    }
+    else { $fallos += 'Android' }
 }
 
 # --------------------------------------------------------------------------

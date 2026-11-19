@@ -116,8 +116,19 @@ function Get-GradleProxyLine {
         propias propiedades de sistema. El TLS no se toca aqui porque Gradle
         corre sobre el JDK y ya va por el cacerts.
     #>
+    $props = Get-GradleProxyProps
+    if (-not $props) { return @() }
+    return @("set `"GRADLE_OPTS=$props %GRADLE_OPTS%`"")
+}
+
+function Get-GradleProxyProps {
+    <#
+        Las mismas propiedades del proxy, como texto, para quien lanza Gradle
+        desde PowerShell y no desde un .bat (Start-AndroidApp). Vacio si no hay
+        proxy.
+    #>
     $proxy = Resolve-DownloadProxy -Uri ([Uri]"https://services.gradle.org")
-    if (-not $proxy) { return @() }
+    if (-not $proxy) { return '' }
 
     $u = [Uri]$proxy
     $props = "-Dhttp.proxyHost=$($u.Host) -Dhttp.proxyPort=$($u.Port) " +
@@ -131,7 +142,7 @@ function Get-GradleProxyLine {
         $props += " -Dhttps.proxyUser=$usuario -Dhttps.proxyPassword=$clave"
     }
 
-    return @("set `"GRADLE_OPTS=$props %GRADLE_OPTS%`"")
+    return $props
 }
 
 function Get-NodeCaLine {

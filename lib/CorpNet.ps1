@@ -519,6 +519,16 @@ function Get-CorpNetStatus {
                 Ok = ((Get-Content -LiteralPath $sh[0].FullName -Raw) -match 'GRADLE_OPTS')
             }
         }
+
+        # GRADLE_OPTS lo lleva siempre, por el tope de memoria: lo que dice si
+        # tiene el proxy es la propiedad del proxy.
+        $androidShell = Join-Path $WorkspaceRoot 'Android\android-shell.bat'
+        if (Test-Path -LiteralPath $androidShell) {
+            $filas += [PSCustomObject]@{
+                Nombre = 'Android'; Que = 'proxy'; Donde = 'android-shell.bat'
+                Ok = ((Get-Content -LiteralPath $androidShell -Raw) -match 'https\.proxyHost')
+            }
+        }
     }
 
     return @($filas | ForEach-Object {
@@ -582,6 +592,18 @@ function Update-GeneratedShells {
         Write-BuildToolShell -Tool Gradle -ToolPath $d.FullName -Version $v -JavaHome $jh | Out-Null
         Write-BuildToolShellsPorJdk -Tool Gradle -ToolPath $d.FullName -Version $v | Out-Null
         $resumen += "Shell rehecho: $($d.Name)"
+    }
+
+    # El de Android lleva el mismo GRADLE_OPTS con el proxy. Sin rehacerlo, un
+    # cambio de clave dejaria a Gradle con la vieja (un 407) solo ahi. Su
+    # libreria no la carga Common: se trae aqui, y solo si hay algo que rehacer.
+    # Las android-javaN-shell.bat no se tocan: solo llaman a esta.
+    $androidShell = Join-Path $WorkspaceRoot 'Android\android-shell.bat'
+    if (Test-Path -LiteralPath $androidShell) {
+        . (Join-Path $DevKitRoot 'lib\Android.ps1')
+        $jh = ConvertFrom-CmdLiteral (Get-ShellJavaHome -ShellBat $androidShell)
+        Write-AndroidShell -Sdk $AndroidSdk -Jdk $jh | Out-Null
+        $resumen += "Shell rehecho: Android"
     }
 
     return $resumen

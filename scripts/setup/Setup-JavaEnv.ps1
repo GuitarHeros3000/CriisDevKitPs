@@ -18,6 +18,9 @@
 .PARAMETER Force
     Reinstala aunque ya exista esa version mayor. Necesario para actualizar el
     patch, porque la carpeta se llama solo jdk-<mayor>.
+.PARAMETER SinResumen
+    Sin el resumen final ("Usa el shell..."). Para cuando lo llama otro
+    comando del kit que no va por ahi, como el de Android.
 .EXAMPLE
     .\Setup-JavaEnv.ps1
 .EXAMPLE
@@ -36,7 +39,9 @@ param(
 
     [switch]$Force,
 
-    [switch]$WhatIf
+    [switch]$WhatIf,
+
+    [switch]$SinResumen
 )
 
 $ErrorActionPreference = "Stop"
@@ -373,6 +378,9 @@ foreach ($linea in @(Sync-VSCodeJavaRuntimes)) { Write-Log "VS Code al dia: $lin
 # Un JDK recien instalado nace sin la CA de la empresa, y sus descargas fallan
 # con un error de certificado que no menciona nada de esto.
 foreach ($linea in @(Sync-JdkCertificates)) { Write-Log $linea "SUCCESS" }
+
+# Un script con return al nivel de arriba termina ahi, y quien lo llamo sigue.
+if ($SinResumen) { return }
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan

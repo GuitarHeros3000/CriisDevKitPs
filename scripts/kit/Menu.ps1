@@ -3,7 +3,7 @@
 .SYNOPSIS
     Menu.ps1 - Menu de consola del kit.
 .DESCRIPTION
-    El kit tiene 34 comandos y nadie se los sabe de memoria. Esto los reune en
+    El kit tiene 37 comandos y nadie se los sabe de memoria. Esto los reune en
     una pantalla que ademas dice QUE HAY INSTALADO, que es la pregunta con la
     que uno llega.
 
@@ -100,6 +100,17 @@ function Get-Opciones {
     $ops += [PSCustomObject]@{ Num = 52; Grupo = 'OTROS';     Texto = 'Por que no arranca un programa'; Bat = 'Doctor-App.bat'; Clave = $null; Pide = 'app' }
     $ops += [PSCustomObject]@{ Num = 53; Grupo = 'OTROS';     Texto = 'Pruebas del kit';           Bat = 'Run-Tests.bat';       Clave = $null; Pide = $null }
 
+    # Grupo propio y no INSTALAR: aquel sale del catalogo de runtimes, y el SDK
+    # de Android no es un runtime con versiones que elegir. Ni OTROS, que es
+    # donde nadie lo buscaria.
+    #
+    # Dos opciones y no tres: habia una para instalar, otra para el proyecto y
+    # otra para el telefono, y no se sabia por cual empezar. Ahora la 60 hace
+    # todo (instala lo que falte la primera vez, compila y abre la app), y la
+    # 61 es solo el telefono. Setup-AndroidEnv sigue para quien lo quiera a mano.
+    $ops += [PSCustomObject]@{ Num = 60; Grupo = 'ANDROID';   Texto = 'Compilar y probar una app'; Bat = 'Start-AndroidApp.bat'; Clave = $null; Pide = 'android-app' }
+    $ops += [PSCustomObject]@{ Num = 61; Grupo = 'ANDROID';   Texto = 'Abrir el telefono';         Bat = 'Start-AndroidEmulator.bat'; Clave = $null; Pide = $null }
+
     return $ops
 }
 
@@ -149,7 +160,7 @@ function Show-Menu {
         Write-Host $linea
     }
 
-    foreach ($g in @('ABRIR', 'MANTENER', 'ENTORNO', 'OTROS')) {
+    foreach ($g in @('ABRIR', 'MANTENER', 'ENTORNO', 'OTROS', 'ANDROID')) {
         Write-Host ""
         Write-Host "   $g" -ForegroundColor Yellow
         foreach ($o in ($Opciones | Where-Object { $_.Grupo -eq $g })) {
@@ -270,6 +281,17 @@ function Invoke-Opcion {
                 }
                 $argumentos = @('-Version', $vc.Version)
             }
+        }
+        'android-app'  {
+            # La del proyecto de la ultima vez, por defecto: el ciclo de trabajo
+            # es volver a esta opcion y darle a Intro.
+            . (Join-Path $DevKitRoot 'lib\Android.ps1')
+            Write-Host ""
+            Write-Host "   La carpeta del proyecto: la que tiene gradlew.bat." -ForegroundColor DarkGray
+            Write-Host "   La primera vez instala lo que falte (puede ser 1 GB); despues, solo compila y abre." -ForegroundColor DarkGray
+            $r = Read-Texto -Prompt "   Carpeta del proyecto" -PorDefecto (Get-AndroidLastProject)
+            if (-not $r) { return }
+            $argumentos = @('-Path', $r.Trim('"'))
         }
         'desinstalar'  {
             Write-Host ""

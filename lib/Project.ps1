@@ -171,6 +171,83 @@ function Get-JavaMajorFromBuild {
     return $null
 }
 
+function Get-AndroidProjectInfo {
+    <#
+        Si es un proyecto Android, y con que compila: Agp (la version del
+        plugin), CompileSdk, MinSdk, BuildTools (solo si lo dice) y Fuente.
+        $null si no es Android.
+
+        El plugin se aplica en el modulo (app\build.gradle), no en el de la
+        raiz, y en las plantillas de ahora va por el catalogo de versiones:
+        alias(libs.plugins.android.application). Los numeros se buscan en el
+        modulo y, si alli van por variable, en gradle\libs.versions.toml.
+        compileSdk se escribe de cuatro maneras segun la epoca del proyecto:
+        compileSdkVersion 34, compileSdk 34, compileSdk = 34 y, desde AGP 9,
+        compileSdk { version = release(36) }.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Ruta)
+
+    $candidatos = @()
+    foreach ($d in @(@(Get-Item -LiteralPath $Ruta) + @(Get-ChildItem -LiteralPath $Ruta -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '^(\.|build$|gradle$|node_modules$)' }))) {
+        foreach ($n in @('build.gradle', 'build.gradle.kts')) {
+            $f = Join-Path $d.FullName $n
+            if (Test-Path -LiteralPath $f) { $candidatos += $f }
+        }
+    }
+    $plugin = 'com\.android\.(application|library)|libs\.plugins\.android\.(application|library)\b'
+    $modulo = $null; $texto = $null
+    foreach ($f in $candidatos) {
+        $t = Get-Content -LiteralPath $f -Raw
+        # El de la raiz suele declararlo con "apply false": ese no es el modulo.
+        if ($t -match $plugin -and $t -match '(?m)^\s*android\s*\{') { $modulo = $f; $texto = $t; break }
+    }
+    if (-not $modulo) { return $null }
+
+    $toml = Join-Path $Ruta 'gradle\libs.versions.toml'
+    $cat = if (Test-Path -LiteralPath $toml) { Get-Content -LiteralPath $toml -Raw } else { '' }
+
+    $num = {
+        param([string[]]$Patrones, [string]$Clave)
+        foreach ($pt in $Patrones) { $m = [regex]::Match($texto, $pt); if ($m.Success) { return $m.Groups[1].Value } }
+        if ($cat -and $Clave) {
+            $m = [regex]::Match($cat, "(?m)^\s*$Clave\s*=\s*[`"']([\d.]+)[`"']")
+            if ($m.Success) { return $m.Groups[1].Value }
+        }
+        return $null
+    }
+
+    # La version de AGP, que decide con que JDK corre Gradle y que build-tools
+    # usa: en el classpath de la raiz (los de antes), en el bloque plugins de la
+    # raiz o de settings.gradle, o en el catalogo, por version.ref.
+    $agp = $null
+    $textos = @($candidatos + @('settings.gradle', 'settings.gradle.kts' | ForEach-Object { Join-Path $Ruta $_ }) |
+        Where-Object { Test-Path -LiteralPath $_ } | Select-Object -Unique | ForEach-Object { Get-Content -LiteralPath $_ -Raw })
+    foreach ($t in $textos) {
+        $m = [regex]::Match($t, 'com\.android\.tools\.build:gradle:(\d+\.\d+[\w.-]*)')
+        if (-not $m.Success) { $m = [regex]::Match($t, 'id\s*\(?\s*[''"]com\.android\.(?:application|library)[''"]\s*\)?\s*version\s*[''"](\d+\.\d+[\w.-]*)[''"]') }
+        if ($m.Success) { $agp = $m.Groups[1].Value; break }
+    }
+    if (-not $agp -and $cat) {
+        $linea = [regex]::Match($cat, '(?m)^.*(?:com\.android\.(?:application|library)|com\.android\.tools\.build:gradle).*$').Value
+        $directa = [regex]::Match($linea, '\bversion\s*=\s*"(\d+\.\d+[\w.-]*)"')
+        $ref = [regex]::Match($linea, 'version\.ref\s*=\s*"([^"]+)"')
+        if ($directa.Success) { $agp = $directa.Groups[1].Value }
+        elseif ($ref.Success) {
+            $m = [regex]::Match($cat, "(?m)^\s*$([regex]::Escape($ref.Groups[1].Value))\s*=\s*`"(\d+\.\d+[\w.-]*)`"")
+            if ($m.Success) { $agp = $m.Groups[1].Value }
+        }
+    }
+
+    $rel = $modulo.Substring($Ruta.TrimEnd('\').Length).TrimStart('\')
+    return [PSCustomObject]@{
+        Agp        = $agp
+        CompileSdk = (& $num @('compileSdk\s*\{[^}]*?release\(\s*(\d+)', '\bcompileSdk(?:Version)?\s*(?:=\s*)?[''"]?(?:android-)?(\d+)\b') 'compileSdk')
+        MinSdk     = (& $num @('minSdk\s*\{[^}]*?release\(\s*(\d+)', '\bminSdk(?:Version)?\s*(?:=\s*)?(\d+)\b') 'minSdk')
+        BuildTools = (& $num @('\bbuildToolsVersion\s*(?:=\s*)?[''"](\d+\.\d+\.\d+)[''"]') 'buildTools')
+        Fuente     = $rel
+    }
+}
+
 function Get-NodeVersionHint {
     <#
         La Node que pide un proyecto: .nvmrc o .node-version (una version o una
@@ -238,13 +315,14 @@ function Get-ProjectNeeds {
           Node    Pista (Get-NodeVersionHint) y Lock (package-lock.json)
           Java    Mayor, Fuente, Maven/Gradle si hay que instalarlos (sin su
                   propio lanzador mvnw/gradlew)
+          Android CompileSdk, MinSdk, BuildTools y Fuente (Get-AndroidProjectInfo)
     #>
     param(
         [Parameter(Mandatory=$true)][string]$Ruta,
         [AllowEmptyCollection()][string[]]$PythonInstaladas = @()
     )
 
-    $r = [PSCustomObject]@{ Python = $null; Node = $null; Java = $null; DevEnv = $null; Avisos = @() }
+    $r = [PSCustomObject]@{ Python = $null; Node = $null; Java = $null; Android = $null; DevEnv = $null; Avisos = @() }
     $en = { param($n) Join-Path $Ruta $n }
 
     $devenv = $null
@@ -318,6 +396,7 @@ function Get-ProjectNeeds {
             $j.Gradle = -not (Test-Path -LiteralPath (& $en 'gradlew.bat'))
         }
         $r.Java = $j
+        $r.Android = Get-AndroidProjectInfo -Ruta $Ruta
     }
 
     return $r

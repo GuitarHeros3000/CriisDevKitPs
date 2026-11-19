@@ -1188,6 +1188,131 @@ function Test-DotnetInstall {
     }
 }
 
+function Test-AndroidInstall {
+    <#
+        El SDK de Android del kit y su emulador. Necesita lib\Android.ps1, que
+        carga Doctor-Env; sin el no dice nada (las pruebas que no lo cargan).
+
+        La aceleracion la juzga el propio emulador (-accel-check), que es local
+        y tarda un segundo. Sin el emulador instalado se dice igual si Windows
+        dejaria acelerarlo, como dato: saberlo antes de bajar mas de 1 GB es lo
+        que ahorra la descarga, pero no es un aviso para quien no lo quiere.
+    #>
+    if (-not (Get-Command Get-InstalledAndroidPackages -ErrorAction SilentlyContinue)) { return }
+    Write-Section "Android"
+
+    $hv = Get-HypervisorPlatformState
+    $hvOk = ($hv.Activada -and $hv.Hipervisor)
+
+    if (-not (Test-Path -LiteralPath $AndroidSdk)) {
+        Write-Check "Instalado" "no ($AndroidSdk no existe)" 'info'
+        Write-Detail "Instala con:  .\bin\setup\Setup-AndroidEnv.bat   (con el emulador: -Emulador)"
+        Write-Check "Emulador posible" $(if ($hvOk) { "si: la plataforma del hipervisor esta activada" } else { "no: falta la 'Plataforma del hipervisor de Windows' (pide admin)" }) 'info'
+        return
+    }
+
+    $inst = @(Get-InstalledAndroidPackages -Sdk $AndroidSdk)
+    $de = { param($Patron) @($inst | Where-Object { $_.Path -match $Patron }) }
+
+    $pt = @(& $de '^platform-tools$')
+    if ($pt.Count) { Write-Check "platform-tools (adb)" $pt[0].Version 'ok' }
+    else {
+        Write-Check "platform-tools (adb)" "falta" 'fail'
+        Write-Detail "Sin adb no se instala nada en el telefono. Reinstala:  .\bin\setup\Setup-AndroidEnv.bat"
+    }
+
+    $bt = @(& $de '^build-tools;')
+    if ($bt.Count) { Write-Check "build-tools" (($bt | ForEach-Object { $_.Path -replace '^build-tools;', '' } | Sort-Object) -join ', ') 'ok' }
+    else { Write-Check "build-tools" "ninguna (Gradle bajara las suyas)" 'warn' }
+
+    $pl = @(& $de '^platforms;')
+    if ($pl.Count) { Write-Check "Plataformas" (($pl | ForEach-Object { $_.Path -replace '^platforms;', '' } | Sort-Object) -join ', ') 'ok' }
+    else {
+        Write-Check "Plataformas" "ninguna" 'fail'
+        Write-Detail "Sin plataforma no se compila. Instala la del compileSdk:  .\bin\setup\Setup-AndroidEnv.bat -Plataforma 34"
+    }
+
+    # Sin esto Gradle se niega a compilar con "licences not accepted".
+    if (Test-Path -LiteralPath (Join-Path $AndroidSdk 'licenses\android-sdk-license')) { Write-Check "Licencia del SDK" "aceptada" 'ok' }
+    else {
+        Write-Check "Licencia del SDK" "sin aceptar" 'fail'
+        Write-Detail "Gradle no compila sin ella. Reejecuta:  .\bin\setup\Setup-AndroidEnv.bat"
+    }
+
+    $jdk = Get-KitJdkForAndroid
+    if ($jdk) { Write-Check "JDK para Gradle" (Split-Path -Leaf $jdk) 'ok' }
+    else {
+        Write-Check "JDK para Gradle" "no hay un JDK 17 o superior del kit" 'warn'
+        Write-Detail "El plugin de Android para Gradle lo pide:  .\bin\setup\Setup-JavaEnv.bat -JavaVersion 21"
+    }
+
+    # ANDROID_HOME apuntando a OTRO SDK que existe es una eleccion (el de un
+    # Android Studio, por ejemplo): se dice, no se repara.
+    $ah = Get-AndroidUserHome
+    if ($ah -and $ah.TrimEnd('\') -eq $AndroidSdk.TrimEnd('\')) { Write-Check "ANDROID_HOME" "el del kit" 'ok' }
+    elseif ($ah -and (Test-Path -LiteralPath $ah)) {
+        Write-Check "ANDROID_HOME" "otro SDK: $ah" 'info'
+        Write-Detail "Gradle usara ese. Para el del kit:  .\bin\setup\Setup-AndroidEnv.bat -Force"
+    }
+    else {
+        Write-Check "ANDROID_HOME" $(if ($ah) { "apunta a una carpeta que no existe: $ah" } else { "sin poner" }) 'warn'
+        Write-Detail "Gradle no encuentra el SDK fuera de la consola del kit."
+        Add-Fix -Description "poner ANDROID_HOME de usuario al SDK del kit" `
+                -Arguments @{ Sdk = $AndroidSdk } `
+                -Action { param($Sdk) Set-AndroidUserEnv -Sdk $Sdk -Force | Out-Null }
+    }
+
+    $shell = Join-Path $AndroidRoot 'android-shell.bat'
+    if (Test-Path -LiteralPath $shell) { Write-Check "android-shell.bat" "presente" 'ok' }
+    else {
+        Write-Check "android-shell.bat" "falta" 'warn'
+        Add-Fix -Description "regenerar Android\android-shell.bat" `
+                -Arguments @{ Sdk = $AndroidSdk; Jdk = $jdk } `
+                -Action { param($Sdk, $Jdk) Write-AndroidShell -Sdk $Sdk -Jdk $Jdk | Out-Null }
+    }
+
+    $emu = @(& $de '^emulator$')
+    if (-not $emu.Count) {
+        Write-Check "Emulador" "no instalado" 'info'
+        Write-Detail $(if ($hvOk) { "Este equipo lo puede acelerar:  .\bin\setup\Setup-AndroidEnv.bat -Emulador" } else { "No arrancaria: falta la 'Plataforma del hipervisor de Windows' (pide admin)." })
+        return
+    }
+    Write-Check "Emulador" $emu[0].Version 'ok'
+
+    if (-not $hv.Activada) {
+        Write-Check "  hipervisor" "la 'Plataforma del hipervisor de Windows' esta desactivada" 'fail'
+        Write-Detail "Sin ella el emulador no arranca. Activarla pide admin: 'Caracteristicas de Windows' y reiniciar."
+    }
+    elseif (-not $hv.Hipervisor) {
+        Write-Check "  hipervisor" "activada, pero el hipervisor no esta en marcha" 'fail'
+        Write-Detail "Suele faltar reiniciar, o la virtualizacion esta apagada en la BIOS."
+    }
+    $acc = Test-AndroidEmulatorAccel -Sdk $AndroidSdk
+    Write-Check "  aceleracion" $acc.Texto $(if ($acc.Ok) { 'ok' } else { 'fail' })
+
+    $avds = @(Get-AndroidAvds)
+    if (-not $avds.Count) {
+        Write-Check "  telefonos virtuales" "ninguno" 'warn'
+        Write-Detail "Crea uno:  .\bin\setup\Setup-AndroidEnv.bat -Emulador"
+    }
+    foreach ($a in $avds) {
+        # Un telefono cuya imagen ya no esta no arranca, y el emulador lo dice
+        # con un error que no menciona la imagen. El kit escribe "clave=valor",
+        # pero el emulador reescribe el archivo al arrancar como "clave = valor".
+        $cfg = Join-Path $AndroidAvdHome "$a.avd\config.ini"
+        $img = $null
+        if (Test-Path -LiteralPath $cfg) {
+            $m = [regex]::Match([IO.File]::ReadAllText($cfg), '(?m)^\s*image\.sysdir\.1\s*=\s*(.+?)\s*$')
+            if ($m.Success) { $img = $m.Groups[1].Value }
+        }
+        if ($img -and (Test-Path -LiteralPath (Join-Path $AndroidSdk $img))) { Write-Check "  $a" ($img.TrimEnd('\') -replace '^system-images\\', '') 'ok' }
+        else {
+            Write-Check "  $a" "falta su imagen ($img)" 'fail'
+            Write-Detail "Reinstalala:  .\bin\setup\Setup-AndroidEnv.bat -Emulador -Api $(if ($a -match 'api(\d+)') { $Matches[1] } else { '34' })"
+        }
+    }
+}
+
 function Test-VSCodeInstall {
     Write-Section "VS Code (portable)"
 
@@ -1845,6 +1970,13 @@ function Test-KitIntegrity {
         "lib\KitUpdate.ps1",
         "scripts\kit\Update-Kit.ps1",
         "bin\kit\Update-Kit.bat",
+        "lib\Android.ps1",
+        "scripts\setup\Setup-AndroidEnv.ps1",
+        "bin\setup\Setup-AndroidEnv.bat",
+        "scripts\start\Start-AndroidEmulator.ps1",
+        "bin\start\Start-AndroidEmulator.bat",
+        "scripts\start\Start-AndroidApp.ps1",
+        "bin\start\Start-AndroidApp.bat",
         "bin\kit\Doctor-Env.bat",
         "bin\env\Uninstall-Env.bat",
         "bin\kit\Run-Tests.bat",
