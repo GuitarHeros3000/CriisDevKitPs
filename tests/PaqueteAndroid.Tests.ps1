@@ -75,6 +75,74 @@ Describe "El paquete de Android" {
         try { @($z.Entries | Where-Object { $_.FullName -notlike 'CriisDevKit-Android/*' }).Count | Should Be 0 }
         finally { $z.Dispose() }
     }
+
+    # Lo pidio el usuario: que quien reciba el paquete no tenga las
+    # explicaciones. El codigo si va entero -o no arrancaria-, pero sin un solo
+    # comentario (el #Requires es una directiva, no un comentario).
+    It "los .ps1 no llevan ningun comentario, pero si siguen leyendose" {
+        foreach ($f in Get-ChildItem -LiteralPath $p -Recurse -Filter '*.ps1' -File) {
+            $tokens = $null; $errores = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errores)
+            $errores | Should BeNullOrEmpty
+            $coment = @($tokens | Where-Object { $_.Kind -eq [System.Management.Automation.Language.TokenKind]::Comment -and $_.Text -notmatch '(?i)^#requires\b' })
+            "$($f.Name): $($coment.Count)" | Should Be "$($f.Name): 0"
+        }
+    }
+}
+
+Describe "Remove-PsComments" {
+
+    # Se saca del propio generador (vive en tools\, que Resolve-KitScript no
+    # mira): asi se prueba la de verdad, no una copia que se quedaria vieja.
+    $ruta = Join-Path $KitRoot 'tools\Build-PaqueteAndroid.ps1'
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($ruta, [ref]$null, [ref]$null)
+    $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Remove-PsComments' }, $true)
+    . ([scriptblock]::Create($fn.Extent.Text))
+
+    function SinComentarios($Texto) {
+        $tk = $null
+        [void][System.Management.Automation.Language.Parser]::ParseInput($Texto, [ref]$tk, [ref]$null)
+        @($tk | Where-Object { $_.Kind -eq [System.Management.Automation.Language.TokenKind]::Comment -and $_.Text -notmatch '(?i)^#requires\b' }).Count -eq 0
+    }
+
+    It "quita un comentario de linea entera, con su salto" {
+        Remove-PsComments -Texto "# hola`r`n`$x = 1`r`n" | Should Be "`$x = 1`r`n"
+    }
+
+    It "quita un comentario al final de una linea y deja el codigo" {
+        Remove-PsComments -Texto "`$x = 1   # nota`r`n" | Should Be "`$x = 1`r`n"
+    }
+
+    It "quita un bloque <# ... #> de varias lineas" {
+        $r = Remove-PsComments -Texto "<#`r`n  ayuda`r`n#>`r`nfunction F {}`r`n"
+        $r | Should Be "function F {}`r`n"
+    }
+
+    # Lo importante: un '#' dentro de una cadena NO es un comentario.
+    It "no toca un # dentro de una cadena" {
+        $t = "`$u = 'http://host/#ancla'`r`n`$h = `"color #fff`"`r`n"
+        Remove-PsComments -Texto $t | Should Be $t
+    }
+
+    # Ni dentro de un here-string: es el caso del script de Gradle que lleva
+    # Android.ps1, con comentarios en Groovy (//) que son codigo, no comentarios.
+    It "no toca lo que hay dentro de un here-string" {
+        $t = "`$g = @'`r`n// esto es Groovy, no un comentario de PowerShell`r`nprintln 'x'  # tampoco esto`r`n'@`r`n"
+        Remove-PsComments -Texto $t | Should Be $t
+    }
+
+    It "deja el #Requires, que es una directiva" {
+        Remove-PsComments -Texto "#Requires -Version 5.1`r`n# fuera`r`n`$x = 1`r`n" | Should Be "#Requires -Version 5.1`r`n`$x = 1`r`n"
+    }
+
+    It "lo que devuelve ya no tiene comentarios y se sigue leyendo" {
+        $t = "function F {`r`n    <# ayuda #>`r`n    `$x = 1  # uno`r`n    return `$x`r`n}`r`n# final`r`n"
+        $r = Remove-PsComments -Texto $t
+        SinComentarios $r | Should Be $true
+        $e = $null
+        [void][System.Management.Automation.Language.Parser]::ParseInput($r, [ref]$null, [ref]$e)
+        $e | Should BeNullOrEmpty
+    }
 }
 
 Remove-Item -LiteralPath $RaizTmp -Recurse -Force -ErrorAction SilentlyContinue
