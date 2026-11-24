@@ -20,6 +20,7 @@
 
 $KitRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $KitRoot "lib\Common.ps1")
+. (Join-Path $PSScriptRoot "Helpers.ps1")
 
 # Un certificado autofirmado de verdad, generado una vez y fijado aqui. Hace
 # falta uno real porque Write-CorpCaPem lo carga con X509Certificate2 y lee su
@@ -157,24 +158,144 @@ Describe "Write-CorpCaPem" {
 
 }
 
-Describe "Get-CertSha256" {
+Describe "La cadena de un sitio y su CA" {
 
+    # Paso en el primer equipo del trabajo: la cadena se rehacia solo con el
+    # certificado del sitio, el intermedio del proxy no estaba en Windows, y se
+    # puso como "la CA de la empresa" el del sitio (CN=gradle.org). No sirvio.
+    $c = New-CadenaDePrueba
+
+    It "solo con el del sitio, la cadena se queda en el" {
+        $cadena = @(Get-CertChain -Cert $c.Sitio)
+        $cadena.Count | Should Be 1
+        $cadena[0].Thumbprint | Should Be $c.Sitio.Thumbprint
+    }
+
+    It "con los que manda el servidor, llega hasta la raiz" {
+        $cadena = @(Get-CertChain -Cert $c.Sitio -Extra @($c.Intermedia, $c.Raiz))
+        @($cadena | ForEach-Object { $_.Thumbprint }) -join ',' |
+            Should Be (@($c.Sitio, $c.Intermedia, $c.Raiz | ForEach-Object { $_.Thumbprint }) -join ',')
+    }
+
+    It "el del sitio no es de una CA; la intermedia y la raiz si" {
+        Test-CertEsAutoridad -Cert $c.Sitio | Should Be $false
+        Test-CertEsAutoridad -Cert $c.Intermedia | Should Be $true
+        Test-CertEsAutoridad -Cert $c.Raiz | Should Be $true
+    }
+
+    It "una raiz antigua sin Basic Constraints cuenta como CA por ser autofirmada" {
+        $antigua = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(, [Convert]::FromBase64String($CertB64))
+        @($antigua.Extensions | Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension] }).Count | Should Be 0
+        Test-CertEsAutoridad -Cert $antigua | Should Be $true
+    }
+
+    # Por eso se compara por clave: Java la acepta de ancla con cualquiera de
+    # sus versiones.
+    It "Get-CertKeyId: igual para dos versiones de la misma CA, distinto entre CA" {
+        $c.Cruzada.Thumbprint | Should Not Be $c.Intermedia.Thumbprint
+        Get-CertKeyId -Cert $c.Cruzada | Should Be (Get-CertKeyId -Cert $c.Intermedia)
+        Get-CertKeyId -Cert $c.Raiz | Should Not Be (Get-CertKeyId -Cert $c.Intermedia)
+    }
+}
+
+Describe "Get-PemCertificates" {
+
+    # Lo que escribe keytool -list -rfc, en espanol, con dos entradas.
+    $c = New-CadenaDePrueba
+    function Pem($Cert) {
+        $b64 = [Convert]::ToBase64String($Cert.RawData)
+        "-----BEGIN CERTIFICATE-----`n" + (($b64 -split '(.{64})' | Where-Object { $_ }) -join "`n") + "`n-----END CERTIFICATE-----"
+    }
+    $salida = "Tipo de Almacen de Claves: JKS`nSu almacen de claves contiene 2 entradas`n`n" +
+              "Nombre de Alias: uno`nFecha de Creacion: 19/11/2026`nTipo de Entrada: trustedCertEntry`n`n$(Pem $c.Raiz)`n`n`n" +
+              "Nombre de Alias: dos`nTipo de Entrada: trustedCertEntry`n`n$(Pem $c.Intermedia)`n"
+
+    It "saca cada certificado, sin lo que hay alrededor" {
+        $certs = @(Get-PemCertificates -Texto $salida)
+        $certs.Count | Should Be 2
+        $certs[0].Thumbprint | Should Be $c.Raiz.Thumbprint
+        $certs[1].Thumbprint | Should Be $c.Intermedia.Thumbprint
+    }
+
+    It "se salta un bloque roto y sigue con los demas" {
+        $roto = "-----BEGIN CERTIFICATE-----`nMIIBroto==`n-----END CERTIFICATE-----`n" + $salida
+        @(Get-PemCertificates -Texto $roto).Count | Should Be 2
+    }
+
+    It "sin bloques, una lista vacia" {
+        @(Get-PemCertificates -Texto 'keytool error: java.io.IOException').Count | Should Be 0
+        @(Get-PemCertificates -Texto '').Count | Should Be 0
+    }
+}
+
+Describe "Find-CorpCa" {
+
+    $c = New-CadenaDePrueba
+    $cadena = @($c.Sitio, $c.Intermedia, $c.Raiz)
+    $hosts = @('uno.prueba', 'dos.prueba')
+    function Raiz($Cadena) { [PSCustomObject]@{ Subject = $Cadena[-1].Subject; Thumbprint = $Cadena[-1].Thumbprint; Cert = $Cadena[-1]; EsAutoridad = (Test-CertEsAutoridad -Cert $Cadena[-1]); Cadena = $Cadena } }
+
+    # Paso en casa, con un JDK 8: Windows llega hasta GlobalSign Root CA, que
+    # ese JDK no trae, pero Java valida por GTS Root R4, el eslabon de antes.
+    It "una red normal: Java conoce la clave de uno de los que firman, aunque no la de la cima" {
+        Mock Get-JdkTrustedKeys { @('otra', (Get-CertKeyId -Cert $c.Cruzada)) }
+        Mock Get-TlsChainRoot { Raiz $cadena }
+        (Find-CorpCa -Hosts $hosts -JdkPath 'C:\jdk').Interceptado | Should Be $false
+    }
+
+    It "interceptado: devuelve la cima de la cadena, que es la CA" {
+        Mock Get-JdkTrustedKeys { @('otra') }
+        Mock Get-TlsChainRoot { Raiz $cadena }
+        $r = Find-CorpCa -Hosts $hosts -JdkPath 'C:\jdk'
+        $r.Interceptado | Should Be $true
+        $r.Cert.Thumbprint | Should Be $c.Raiz.Thumbprint
+    }
+
+    # Un proxy puede usar la misma clave en todos los sitios: con la del sitio
+    # puesta por error, se daba por arreglado y no se arreglaba nunca.
+    It "el del sitio no cuenta aunque Java tenga su clave" {
+        Mock Get-JdkTrustedKeys { @(Get-CertKeyId -Cert $c.Sitio) }
+        Mock Get-TlsChainRoot { Raiz $cadena }
+        (Find-CorpCa -Hosts $hosts -JdkPath 'C:\jdk').Interceptado | Should Be $true
+    }
+
+    It "si solo se ve el del sitio, interceptado pero sin nada que poner" {
+        Mock Get-JdkTrustedKeys { @('otra') }
+        Mock Get-TlsChainRoot { Raiz @($c.Sitio) }
+        $r = Find-CorpCa -Hosts $hosts -JdkPath 'C:\jdk'
+        $r.Interceptado | Should Be $true
+        $r.Cert | Should BeNullOrEmpty
+        $r.Motivo | Should Match 'no se ve la CA'
+    }
+
+    It "si un sitio solo ensena el suyo y otro la cadena entera, se queda con la CA" {
+        Mock Get-JdkTrustedKeys { @('otra') }
+        Mock Get-TlsChainRoot { Raiz @($c.Sitio) } -ParameterFilter { $HostName -eq 'uno.prueba' }
+        Mock Get-TlsChainRoot { Raiz $cadena } -ParameterFilter { $HostName -eq 'dos.prueba' }
+        (Find-CorpCa -Hosts $hosts -JdkPath 'C:\jdk').Cert.Thumbprint | Should Be $c.Raiz.Thumbprint
+    }
+}
+
+Describe "Get-JdkCacertsPath" {
+
+    # Paso: solo se miraba lib\security\cacerts, y en el JDK 8 esta en
+    # jre\lib\security\cacerts. Con el JDK 8 de un proyecto de Android de 2019,
+    # la CA de la empresa no se podia poner ("no hay cacerts").
     $tmp = New-CarpetaTemporal
-    $cer = New-CertificadoDePrueba -Carpeta $tmp
-    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($cer)
 
-    # El formato con dos puntos no es cosmetico: es el que imprime keytool, y se
-    # compara directamente contra su salida en Get-JdkTrustedFingerprints.
-    It "devuelve la huella en el formato de keytool" {
-        $h = Get-CertSha256 -Cert $cert
-        $h | Should Match '^[0-9A-F]{2}(:[0-9A-F]{2}){31}$'
-        $h.Length | Should Be 95
+    It "el de un JDK de ahora: lib\security\cacerts" {
+        $j = Join-Path $tmp 'jdk-21'
+        New-Item -ItemType Directory -Path (Join-Path $j 'lib\security') -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $j 'lib\security\cacerts'), 'x')
+        Get-JdkCacertsPath -JdkPath $j | Should Be (Join-Path $j 'lib\security\cacerts')
     }
 
-    It "es estable entre llamadas" {
-        (Get-CertSha256 -Cert $cert) | Should Be (Get-CertSha256 -Cert $cert)
+    It "el del JDK 8: jre\lib\security\cacerts" {
+        $j = Join-Path $tmp 'jdk-8'
+        New-Item -ItemType Directory -Path (Join-Path $j 'jre\lib\security') -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $j 'jre\lib\security\cacerts'), 'x')
+        Get-JdkCacertsPath -JdkPath $j | Should Be (Join-Path $j 'jre\lib\security\cacerts')
     }
-
 }
 
 Describe "Set-MavenCorpProxy y Get-MavenCorpProxy" {
@@ -393,8 +514,8 @@ Describe "Se niegan a actuar cuando falta la herramienta" {
         @(Get-JdkTrustedAliases -JdkPath $vacio).Count | Should Be 0
     }
 
-    It "Get-JdkTrustedFingerprints devuelve una lista vacia, no nulo" {
-        @(Get-JdkTrustedFingerprints -JdkPath $vacio).Count | Should Be 0
+    It "Get-JdkTrustedKeys devuelve una lista vacia, no nulo" {
+        @(Get-JdkTrustedKeys -JdkPath $vacio).Count | Should Be 0
     }
 
     It "Set-GitCorpCa devuelve falso sin git.exe" {

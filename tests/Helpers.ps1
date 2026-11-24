@@ -317,6 +317,55 @@ function Start-ServidorDePrueba {
     }
 }
 
+function New-CertDePrueba {
+    <#
+        Un certificado firmado por -Emisor, o autofirmado sin el. -Ca marca su
+        Basic Constraints; -Clave, para que dos certificados compartan clave.
+
+        -Dias tiene que ser menor que el del emisor: .NET no deja que un
+        certificado caduque despues que quien lo firma, y "ahora + 30 dias"
+        calculado dos veces seguidas a veces cae un segundo despues. Con los
+        mismos dias, una de cada ocho cadenas fallaba.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Sujeto, $Emisor, [bool]$Ca, $Clave, [int]$Dias = 30)
+
+    if (-not $Clave) { $Clave = [System.Security.Cryptography.RSA]::Create(2048) }
+    $req = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($Sujeto, $Clave,
+               [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension($Ca, $false, 0, $true)))
+    $desde = [DateTimeOffset]::Now.AddDays(-1)
+    $hasta = [DateTimeOffset]::Now.AddDays($Dias)
+    if (-not $Emisor) { return $req.CreateSelfSigned($desde, $hasta) }
+
+    $serie = [Guid]::NewGuid().ToByteArray()
+    $serie[0] = $serie[0] -band 0x7F
+    $c = $req.Create($Emisor, $desde, $hasta, $serie)
+    # Con su clave privada, para poder firmar a su vez.
+    return [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::CopyWithPrivateKey($c, $Clave)
+}
+
+function New-CadenaDePrueba {
+    <#
+        Una cadena de certificados de verdad, hecha en memoria: Raiz, Intermedia
+        y Sitio, como la que ensena un proxy que abre el HTTPS. Y Cruzada: otra
+        version de la intermedia, con su misma clave y otra huella, como las
+        raices con firma cruzada.
+
+        No toca ningun almacen de certificados. Los nombres llevan un sufijo
+        al azar para que dos cadenas no se confundan entre si.
+    #>
+    $id = [Guid]::NewGuid().ToString('N').Substring(0, 6)
+    $claveInter = [System.Security.Cryptography.RSA]::Create(2048)
+    $raiz  = New-CertDePrueba -Sujeto "CN=Raiz de prueba $id" -Ca $true -Dias 90
+    $inter = New-CertDePrueba -Sujeto "CN=Intermedia de prueba $id" -Emisor $raiz -Ca $true -Clave $claveInter -Dias 60
+    return [PSCustomObject]@{
+        Raiz       = $raiz
+        Intermedia = $inter
+        Sitio      = New-CertDePrueba -Sujeto "CN=sitio-$id.prueba" -Emisor $inter -Ca $false -Dias 30
+        Cruzada    = New-CertDePrueba -Sujeto "CN=Intermedia de prueba $id" -Ca $true -Clave $claveInter -Dias 60
+    }
+}
+
 function New-CabDePrueba {
     <#
         Un .cab de verdad, con makecab.exe (viene con Windows), que lleva un

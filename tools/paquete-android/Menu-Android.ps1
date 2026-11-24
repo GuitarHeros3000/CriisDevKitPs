@@ -3,9 +3,10 @@
 .SYNOPSIS
     Menu-Android.ps1 - El menu del paquete de Android de CriisDevKit.
 .DESCRIPTION
-    Tres opciones y nada mas: compilar una app y abrirla en el telefono
-    virtual, abrir solo el telefono, y quitar todo lo que el paquete instalo
-    (Android y el Java que trajo para compilar).
+    Lo de Android y nada mas: compilar una app y abrirla en el telefono
+    virtual, abrir solo el telefono, ver lo que escribe la app, depurarla en
+    VS Code, y quitar todo lo que el paquete instalo (Android y el Java que
+    trajo para compilar).
 
     Cada opcion llama al mismo script que el kit completo, en su propio
     proceso: lo que ese script cambie de su entorno no se queda en el menu.
@@ -44,7 +45,10 @@ while ($true) {
     Write-Host ""
     Write-Host "    1  Compilar y probar una app"
     Write-Host "    2  Abrir el telefono"
-    Write-Host "    3  Quitar Android (y el Java que instalo)"
+    Write-Host "    3  Ver el registro de la app"
+    Write-Host "    4  Depurar la app en VS Code"
+    Write-Host ""
+    Write-Host "    5  Quitar Android (y el Java que instalo)"
     Write-Host ""
     Write-Host "    q  Salir" -ForegroundColor DarkGray
     Write-Host ""
@@ -53,16 +57,24 @@ while ($true) {
     if ($op -in @('q', 'Q', 'salir', 'exit')) { break }
 
     switch ($op) {
-        '1' {
+        { $_ -in '1', '4' } {
             Write-Host ""
             Write-Host "   La carpeta del proyecto: la que tiene gradlew.bat." -ForegroundColor DarkGray
             Write-Host "   La primera vez instala lo que falte (puede ser 1 GB); despues, solo compila y abre." -ForegroundColor DarkGray
             $p = if ($ultimo) { Read-Host "   Carpeta del proyecto [$ultimo]" } else { Read-Host "   Carpeta del proyecto" }
             if ([string]::IsNullOrWhiteSpace($p)) { $p = $ultimo }
-            if ($p) { Invoke-PaqueteScript -Nombre 'Start-AndroidApp.ps1' -Argumentos @('-Path', $p.Trim().Trim('"')) }
+            if ($p) {
+                $a = @('-Path', $p.Trim().Trim('"'))
+                if ($op -eq '4') { $a += '-Depurar' }
+                Invoke-PaqueteScript -Nombre 'Start-AndroidApp.ps1' -Argumentos $a
+            }
         }
         '2' { Invoke-PaqueteScript -Nombre 'Start-AndroidEmulator.ps1' }
-        '3' { Invoke-PaqueteScript -Nombre 'Setup-AndroidEnv.ps1' -Argumentos @('-Quitar', '-ConJava') }
+        '3' {
+            Write-Host "   Ctrl+C para volver al menu." -ForegroundColor DarkGray
+            Invoke-PaqueteScript -Nombre 'Start-AndroidLog.ps1'
+        }
+        '5' { Invoke-PaqueteScript -Nombre 'Setup-AndroidEnv.ps1' -Argumentos @('-Quitar', '-ConJava') }
         default { Write-Host "   '$op' no es una opcion." -ForegroundColor Yellow }
     }
 

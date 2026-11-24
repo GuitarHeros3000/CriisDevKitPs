@@ -12,6 +12,7 @@
 $KitRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $KitRoot "lib\Common.ps1")
 . (Join-Path $KitRoot "lib\Android.ps1")
+. (Join-Path $PSScriptRoot "Helpers.ps1")
 
 $RaizTmp = Join-Path ([IO.Path]::GetTempPath()) ("android-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $RaizTmp -Force | Out-Null
@@ -173,6 +174,47 @@ Describe "El package.xml, como lo deja sdkmanager" {
         [IO.File]::WriteAllText((Join-Path $c 'package.xml'), $texto)
         $i = @(Get-InstalledAndroidPackages -Sdk $sdk | Where-Object { $_.Path -eq 'platforms;android-36' })[0]
         $i.Version | Should Be '1'
+    }
+
+    # Un AGP de antes de 2021 no conoce base-extension y suelta una traza de cien
+    # lineas por paquete (comprobado con el 3.4.2: 360 lineas; sin el campo,
+    # ninguna). true es lo que se supone cuando falta; false si dice algo.
+    $conBase = [xml]@"
+<sdk:sdk-repository xmlns:sdk="http://schemas.android.com/sdk/android/repo/repository2/03" xmlns:common="http://schemas.android.com/repository/android/common/02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<channel id="channel-0">stable</channel>
+<remotePackage path="platforms;android-28"><type-details xsi:type="sdk:platformDetailsType"><api-level>28</api-level><codename/><base-extension>true</base-extension><layoutlib api="15"/></type-details><revision><major>6</major></revision><display-name>p28</display-name><channelRef ref="channel-0"/><archives>$(Archivo 'p28.zip')</archives></remotePackage>
+<remotePackage path="platforms;android-35-ext14"><type-details xsi:type="sdk:platformDetailsType"><api-level>35</api-level><base-extension>false</base-extension><extension-level>14</extension-level></type-details><revision><major>1</major></revision><display-name>p35e</display-name><channelRef ref="channel-0"/><archives>$(Archivo 'p35e.zip')</archives></remotePackage>
+</sdk:sdk-repository>
+"@
+    $pb = @(ConvertFrom-AndroidIndex -Xml $conBase)
+
+    It "sin base-extension cuando vale true, y lo demas de su tipo igual" {
+        $t = ConvertTo-AndroidPackageXml -Paquete @($pb | Where-Object { $_.Path -eq 'platforms;android-28' })[0]
+        $t | Should Not Match 'base-extension'
+        $t | Should Match '<api-level>28</api-level>'
+        $t | Should Match '<layoutlib api="15"'
+    }
+
+    It "con false se queda: es una plataforma de extension" {
+        $t = ConvertTo-AndroidPackageXml -Paquete @($pb | Where-Object { $_.Path -eq 'platforms;android-35-ext14' })[0]
+        $t | Should Match '<base-extension>false</base-extension>'
+        $t | Should Match '<extension-level>14</extension-level>'
+    }
+
+    # Los que dejo un kit de antes, como los del equipo del trabajo.
+    It "Repair-AndroidPackageXml lo quita de los ya escritos y no toca lo demas" {
+        $sdk = Join-Path $RaizTmp 'sdk-reparar'
+        $img = Join-Path $sdk 'system-images\android-26\default\x86_64'
+        $bt = Join-Path $sdk 'build-tools\28.0.3'
+        New-Item -ItemType Directory -Path $img, $bt -Force | Out-Null
+        $viejo = "<ns2:repository><localPackage path=`"system-images;android-26;default;x86_64`"><type-details>`r`n  <api-level>26</api-level>`r`n  <base-extension>true</base-extension>`r`n  <abi>x86_64</abi>`r`n</type-details></localPackage></ns2:repository>"
+        $otro = '<ns2:repository><localPackage path="build-tools;28.0.3"/></ns2:repository>'
+        [IO.File]::WriteAllText((Join-Path $img 'package.xml'), $viejo)
+        [IO.File]::WriteAllText((Join-Path $bt 'package.xml'), $otro)
+        Repair-AndroidPackageXml -Sdk $sdk | Should Be 1
+        [IO.File]::ReadAllText((Join-Path $img 'package.xml')) | Should Be ($viejo -replace "`r`n  <base-extension>true</base-extension>", '')
+        [IO.File]::ReadAllText((Join-Path $bt 'package.xml')) | Should Be $otro
+        Repair-AndroidPackageXml -Sdk $sdk | Should Be 0
     }
 }
 
@@ -448,6 +490,128 @@ Describe "La salida de Gradle, sin el ruido de los proyectos antiguos" {
     }
 }
 
+Describe "La red de la empresa abre el HTTPS" {
+
+    # Tal cual salio en el primer equipo del trabajo: el wrapper de Gradle,
+    # con el JDK 8 del kit, no podia ni bajar Gradle.
+    $pkix = @(
+        'Downloading https://services.gradle.org/distributions/gradle-5.1.1-all.zip'
+        'Exception in thread "main" javax.net.ssl.SSLHandshakeException: PKIX path building failed: sun.security.provider.certpath.SunCertPathBuilderException: unable to find valid certification path to requested target'
+        '        at sun.security.ssl.Alert.createSSLException(Alert.java:131)'
+        '        at org.gradle.wrapper.GradleWrapperMain.main(GradleWrapperMain.java:61)'
+        'Caused by: sun.security.validator.ValidatorException: PKIX path building failed: sun.security.provider.certpath.SunCertPathBuilderException: unable to find valid certification path to requested target'
+        '        at sun.security.validator.PKIXValidator.doBuild(PKIXValidator.java:456)'
+        '        ... 23 more'
+        'Caused by: sun.security.provider.certpath.SunCertPathBuilderException: unable to find valid certification path to requested target'
+        '        ... 29 more'
+    )
+
+    It "se reconoce, y la traza se queda en una linea" {
+        $e = @{ EnTraza = $false; Avisado = $false; Certificado = $false }
+        $v = @($pkix | ForEach-Object { Select-GradleLine -Linea $_ -Estado $e } | Where-Object { $null -ne $_ })
+        $e.Certificado | Should Be $true
+        $v.Count | Should Be 2
+        $v[0] | Should Match 'Downloading'
+        $v[1] | Should Match 'certificado de la empresa'
+    }
+
+    It "Invoke-AndroidBuild lo devuelve, para que Start-AndroidApp lo arregle y reintente" {
+        $p = Join-Path $RaizTmp 'pkix-proy'
+        New-Item -ItemType Directory -Path $p -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $p 'gradlew.bat'), "@echo off`r`necho $($pkix[1])`r`nexit /b 1`r`n")
+        Mock Write-Host { }
+        $r = Invoke-AndroidBuild -Proyecto $p -Jdk 'C:\no-hace-falta' -Sdk 'C:\no-hace-falta'
+        $r.Ok | Should Be $false
+        $r.Certificado | Should Be $true
+    }
+
+    Context "poner la CA de la empresa en el JDK" {
+
+        $CorpCaFile = Join-Path $RaizTmp 'ca\corp-ca.cer'
+        $CorpCaPem = Join-Path $RaizTmp 'ca\corp-ca.pem'
+        $raiz = @(Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.RawData.Length -gt 0 })[0]
+        Mock Import-JdkCertificate { [PSCustomObject]@{ Ok = $true; Salida = @() } }
+        Mock Sync-JdkCertificates { @() }
+
+        It "sin interceptacion no toca nada" {
+            Mock Find-CorpCa { [PSCustomObject]@{ Interceptado = $false; Motivo = 'las raices son publicas'; Cert = $null } }
+            (Sync-AndroidCorpCa -Jdk 'C:\jdk').Estado | Should Be 'sin-interceptacion'
+            Test-Path -LiteralPath $CorpCaFile | Should Be $false
+            Assert-MockCalled Import-JdkCertificate -Times 0 -Scope It
+        }
+
+        # Los sitios de Gradle y no otros: la empresa puede no abrir algunos.
+        It "con interceptacion la guarda, la pone en el JDK, mirando los sitios de Gradle" {
+            Mock Find-CorpCa { [PSCustomObject]@{ Interceptado = $true; Motivo = 'llega firmado por una raiz que Java no conoce'; Cert = $raiz; Subject = $raiz.Subject } }
+            (Sync-AndroidCorpCa -Jdk 'C:\jdk').Estado | Should Be 'puesta'
+            Test-Path -LiteralPath $CorpCaFile | Should Be $true
+            Assert-MockCalled Find-CorpCa -Times 1 -Scope It -ParameterFilter { $Hosts -contains 'services.gradle.org' }
+            Assert-MockCalled Import-JdkCertificate -Times 1 -Scope It -ParameterFilter { $JdkPath -eq 'C:\jdk' }
+        }
+
+        # Contra el JDK que falla, no contra el mas nuevo del kit: el del
+        # proyecto puede ser un 8 que ya no trae raices que los nuevos si.
+        It "compara con el JDK del proyecto" {
+            Remove-Item -LiteralPath $CorpCaFile -Force -ErrorAction SilentlyContinue
+            Mock Find-CorpCa { [PSCustomObject]@{ Interceptado = $false; Motivo = 'x'; Cert = $null } }
+            Sync-AndroidCorpCa -Jdk 'C:\jdk8' | Out-Null
+            Assert-MockCalled Find-CorpCa -Times 1 -Scope It -ParameterFilter { $JdkPath -eq 'C:\jdk8' }
+        }
+
+        # Paso en el primer equipo del trabajo: se puso el certificado del
+        # sitio (CN=gradle.org) y se volvio a compilar para nada.
+        $cadena = New-CadenaDePrueba
+
+        It "si solo se ve el certificado del sitio, no pone nada" {
+            Remove-Item -LiteralPath $CorpCaFile -Force -ErrorAction SilentlyContinue
+            Mock Find-CorpCa { [PSCustomObject]@{ Interceptado = $true; Motivo = 'no se ve la CA que lo firma'; Cert = $null } }
+            $r = Sync-AndroidCorpCa -Jdk 'C:\jdk'
+            $r.Estado | Should Be 'no-se-pudo'
+            $r.Detalle | Should Match 'no se ve la CA'
+            Test-Path -LiteralPath $CorpCaFile | Should Be $false
+            Assert-MockCalled Import-JdkCertificate -Times 0 -Scope It
+        }
+
+        It "con -Certificado de un sitio, se niega: hace falta el raiz" {
+            $f = Join-Path $RaizTmp 'sitio.cer'
+            [IO.File]::WriteAllBytes($f, $cadena.Sitio.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+            Mock Find-CorpCa { throw 'no deberia buscar' }
+            $r = Sync-AndroidCorpCa -Jdk 'C:\jdk' -Certificado $f
+            $r.Estado | Should Be 'no-se-pudo'
+            $r.Detalle | Should Match 'RAIZ'
+            Assert-MockCalled Import-JdkCertificate -Times 0 -Scope It
+        }
+
+        # Es lo que quedo guardado en ese equipo: la siguiente vez tiene que
+        # buscar la buena, no reponer la mala en cada JDK.
+        It "una guardada que no es de una CA se ignora y se busca otra vez" {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $CorpCaFile) -Force | Out-Null
+            [IO.File]::WriteAllBytes($CorpCaFile, $cadena.Sitio.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+            Mock Get-JdkTrustedAliases { @('otra') }
+            Mock Find-CorpCa { [PSCustomObject]@{ Interceptado = $true; Motivo = 'raiz que Java no conoce'; Cert = $cadena.Raiz; Subject = $cadena.Raiz.Subject } }
+            (Sync-AndroidCorpCa -Jdk 'C:\jdk').Estado | Should Be 'puesta'
+            Assert-MockCalled Find-CorpCa -Times 1 -Scope It
+            (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CorpCaFile)).Thumbprint | Should Be $cadena.Raiz.Thumbprint
+        }
+
+        It "si ya hay una guardada y este JDK no la tiene, la pone sin volver a buscar" {
+            Mock Get-JdkTrustedAliases { @('otra') }
+            Mock Find-CorpCa { throw 'no deberia buscar' }
+            (Sync-AndroidCorpCa -Jdk 'C:\jdk8').Estado | Should Be 'puesta'
+            Assert-MockCalled Find-CorpCa -Times 0 -Scope It
+        }
+
+        It "con -Certificado, el que se le da" {
+            $f = Join-Path $RaizTmp 'empresa.cer'
+            [IO.File]::WriteAllBytes($f, $raiz.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+            Mock Find-CorpCa { throw 'no deberia buscar' }
+            $r = Sync-AndroidCorpCa -Jdk 'C:\jdk' -Certificado $f
+            $r.Estado | Should Be 'puesta'
+            $r.Detalle | Should Match 'se indico'
+        }
+    }
+}
+
 Describe "Start-AndroidApp: que falta y donde quedo la app" {
 
     $AndroidRoot = Join-Path $RaizTmp 'app-plan'
@@ -503,6 +667,196 @@ Describe "Start-AndroidApp: que falta y donde quedo la app" {
         Get-AndroidLastProject -Archivo $f | Should Be $RaizTmp
         Set-AndroidLastProject -Ruta (Join-Path $RaizTmp 'no-existe') -Archivo $f
         Get-AndroidLastProject -Archivo $f | Should BeNullOrEmpty
+    }
+}
+
+Describe "El registro de la app" {
+
+    # Tal cual las escribe "adb logcat -v threadtime" en Android 8.
+    It "una linea del registro, por partes" {
+        $l = ConvertFrom-LogcatLine -Linea '11-19 05:05:17.532  1976  1976 E AndroidRuntime: FATAL EXCEPTION: main'
+        "$($l.Hora)|$($l.Pid)|$($l.Nivel)|$($l.Etiqueta)|$($l.Mensaje)" | Should Be '05:05:17|1976|E|AndroidRuntime|FATAL EXCEPTION: main'
+    }
+
+    It "con etiquetas raras y dos puntos en el mensaje" {
+        $l = ConvertFrom-LogcatLine -Linea '11-19 06:36:01.004  3263  3290 D Mi App : url: http://servidor:8080/x'
+        $l.Etiqueta | Should Be 'Mi App'
+        $l.Mensaje | Should Be 'url: http://servidor:8080/x'
+    }
+
+    It "lo que no es una linea de registro se descarta" {
+        ConvertFrom-LogcatLine -Linea '--------- beginning of main' | Should BeNullOrEmpty
+        ConvertFrom-LogcatLine -Linea '' | Should BeNullOrEmpty
+    }
+
+    # Asi la sigue aunque se cierre y se abra: cambia de proceso, y logcat
+    # --pid solo sirve para uno.
+    It "se entera de cuando la app arranca y muere, en Android 8 y en los de ahora" {
+        $a = Get-LogcatAppProcess -Mensaje 'Start proc 3263:com.empresa.app/u0a80 for activity com.empresa.app/.Main' -Paquete 'com.empresa.app'
+        "$($a.Evento) $($a.Pid)" | Should Be 'arranca 3263'
+        $b = Get-LogcatAppProcess -Mensaje 'Start proc 4410:com.empresa.app/u0a80 for pre-top-activity {com.empresa.app/com.empresa.app.Main}' -Paquete 'com.empresa.app'
+        "$($b.Evento) $($b.Pid)" | Should Be 'arranca 4410'
+        $c = Get-LogcatAppProcess -Mensaje 'Process com.empresa.app (pid 3263) has died: fore TOP' -Paquete 'com.empresa.app'
+        "$($c.Evento) $($c.Pid)" | Should Be 'muere 3263'
+    }
+
+    # Paso: al forzar el cierre, Android 8 no dice "has died" sino esto, y el
+    # registro no avisaba de que la app se habia cerrado.
+    It "tambien cuando la cierran (Forzar detencion o el sistema)" {
+        $d = Get-LogcatAppProcess -Mensaje 'Killing 3404:com.empresa.app/u0a65 (adj 0): stop com.empresa.app' -Paquete 'com.empresa.app'
+        "$($d.Evento) $($d.Pid)" | Should Be 'muere 3404'
+    }
+
+    It "cuentan sus subprocesos, pero no otra app que empiece igual" {
+        (Get-LogcatAppProcess -Mensaje 'Start proc 5000:com.empresa.app:sync/u0a80 for service' -Paquete 'com.empresa.app').Pid | Should Be 5000
+        Get-LogcatAppProcess -Mensaje 'Start proc 5001:com.empresa.appotra/u0a81 for activity' -Paquete 'com.empresa.app' | Should BeNullOrEmpty
+        Get-LogcatAppProcess -Mensaje 'Displayed com.empresa.app/.Main: +480ms' -Paquete 'com.empresa.app' | Should BeNullOrEmpty
+    }
+}
+
+Describe "VS Code: que entienda el proyecto y lo depure" {
+
+    # La lista de lo que usa el plugin de Android, como la escribe la tarea del
+    # script de inicio. Solo cuenta lo que existe: el proyecto de 2019 no tiene
+    # carpetas de aidl ni de renderscript, y enlazarlas daria error.
+    $cpDir = Join-Path $RaizTmp 'clases'
+    $srcDir = Join-Path $cpDir 'app\src\main\java'
+    $genDir = Join-Path $cpDir 'app\build\generated\source\r'
+    $jar1 = Join-Path $cpDir 'android.jar'
+    $jar2 = Join-Path $cpDir 'classes.jar'
+    New-Item -ItemType Directory -Path $srcDir, $genDir -Force | Out-Null
+    foreach ($j in $jar1, $jar2) { [IO.File]::WriteAllText($j, 'x') }
+
+    It "ConvertFrom-AndroidClasspath: lo que existe, sin repetir y en orden" {
+        $r = ConvertFrom-AndroidClasspath -Lineas @(
+            'Mapping new ns http://schemas.android.com/sdk/android/repo/repository2/03 to old ns 01',
+            "KIT-JAR $jar1", "KIT-JAR $jar2", "KIT-JAR $jar1", "KIT-JAR $(Join-Path $cpDir 'no-existe.jar')",
+            "KIT-SRC $srcDir", "KIT-SRC $(Join-Path $cpDir 'aidl')", "KIT-SRC $genDir",
+            'KIT-JAVA 1.8')
+        $r.Jars -join '|' | Should Be "$jar1|$jar2"
+        $r.Fuentes -join '|' | Should Be "$srcDir|$genDir"
+        $r.Java | Should Be '1.8'
+        $r.Error | Should BeNullOrEmpty
+    }
+
+    # Un gradlew.bat de mentira que escribe lo que escribiria la tarea, y guarda
+    # con que argumentos se le llamo.
+    $proy = Join-Path $RaizTmp 'cp-proy'
+    New-Item -ItemType Directory -Path $proy -Force | Out-Null
+    $args_ = Join-Path $RaizTmp 'cp-args.txt'
+
+    It "Get-AndroidClasspath: le pasa a Gradle su script de inicio y la tarea del modulo, y lee la respuesta" {
+        [IO.File]::WriteAllText((Join-Path $proy 'gradlew.bat'), "@echo off`r`necho %*> `"$args_`"`r`nif exist `"%3`" echo init-existe>> `"$args_`"`r`necho KIT-JAR $jar1`r`necho KIT-SRC $srcDir`r`necho KIT-JAVA 1.8`r`nexit /b 0`r`n")
+        $r = Get-AndroidClasspath -Proyecto $proy -Jdk 'C:\no-hace-falta' -Sdk 'C:\no-hace-falta' -Modulo 'app'
+        $r.Ok | Should Be $true
+        $r.Jars | Should Be $jar1
+        $r.Fuentes | Should Be $srcDir
+        $r.Java | Should Be '1.8'
+        $llamada = [IO.File]::ReadAllText($args_)
+        $llamada | Should Match '^-q -I \S+\.gradle :app:criisdevkitClasspath'
+        $llamada | Should Match 'init-existe'
+        # Y no se deja el script de inicio por ahi.
+        $init = [regex]::Match($llamada, '-I (\S+\.gradle)').Groups[1].Value
+        Test-Path -LiteralPath $init | Should Be $false
+    }
+
+    # Con un AGP sin la API de variantes de siempre, o un proyecto raro: Gradle
+    # dice que no hay tal tarea. Se cuenta por que y no se rompe nada.
+    It "Get-AndroidClasspath: si Gradle falla, Ok en falso y el motivo" {
+        [IO.File]::WriteAllText((Join-Path $proy 'gradlew.bat'), "@echo off`r`necho Task 'criisdevkitClasspath' not found in project ':app'.`r`nexit /b 1`r`n")
+        $r = Get-AndroidClasspath -Proyecto $proy -Jdk 'C:\no-hace-falta' -Sdk 'C:\no-hace-falta'
+        $r.Ok | Should Be $false
+        $r.Detalle | Should Match 'not found'
+    }
+
+    It "el script de inicio es Groovy que cualquier Gradle lee, y ASCII como el resto" {
+        $AndroidClasspathScript | Should Match "tasks\.create\('criisdevkitClasspath'\)"
+        $AndroidClasspathScript | Should Match 'applicationVariants'
+        $AndroidClasspathScript | Should Not Match '[^\x00-\x7F]'
+    }
+
+    # Un proyecto con & en la ruta: va a XML y tiene que ir escapado.
+    $raizP = Join-Path $RaizTmp 'P&R'
+    $p1 = Join-Path $raizP 'mi-app'
+    $ws = Join-Path $RaizTmp 'vscode'
+    New-Item -ItemType Directory -Path (Join-Path $p1 'app\src\main\java'), (Join-Path $p1 'app\build\gen') -Force | Out-Null
+    $fuentes = @((Join-Path $p1 'app\src\main\java'), (Join-Path $p1 'app\build\gen'))
+
+    It "deja el proyecto sombra: enlaza cada carpeta de codigo y declara cada jar" {
+        $r = Write-AndroidVsCodeWorkspace -Proyecto $p1 -Jdk 'C:\jdk-8' -Fuentes $fuentes -Jars @($jar1, $jar2) -Java '1.8' -Destino $ws
+        $r.Fuentes | Should Be 2
+        $r.Jars | Should Be 2
+        $proj = [xml](Get-Content -LiteralPath (Join-Path $r.Sombra '.project') -Raw)
+        $proj.projectDescription.name | Should Be 'mi-app (kit)'
+        $proj.projectDescription.natures.nature | Should Be 'org.eclipse.jdt.core.javanature'
+        $links = @($proj.projectDescription.linkedResources.link)
+        @($links | ForEach-Object { $_.name }) -join '|' | Should Be 'app_src_main_java|app_build_gen'
+        $links[0].location | Should Be (($fuentes[0]) -replace '\\', '/')
+        $cp = [xml](Get-Content -LiteralPath (Join-Path $r.Sombra '.classpath') -Raw)
+        @($cp.classpath.classpathentry | Where-Object { $_.kind -eq 'src' } | ForEach-Object { $_.path }) -join '|' | Should Be 'app_src_main_java|app_build_gen'
+        @($cp.classpath.classpathentry | Where-Object { $_.kind -eq 'lib' }).Count | Should Be 2
+        @($cp.classpath.classpathentry | Where-Object { $_.kind -eq 'con' }).path | Should Be 'org.eclipse.jdt.launching.JRE_CONTAINER'
+        @(Get-Content -LiteralPath (Join-Path $r.Sombra '.settings\org.eclipse.jdt.core.prefs')) -contains 'org.eclipse.jdt.core.compiler.source=1.8' | Should Be $true
+    }
+
+    It "y el espacio de trabajo: las dos carpetas, sin importar por Gradle, y como depurar" {
+        $r = Write-AndroidVsCodeWorkspace -Proyecto $p1 -Jdk 'C:\jdk-8' -Puerto 5006 -Fuentes $fuentes -Jars @($jar1) -Destino $ws
+        $r.Archivo | Should Be (Join-Path $ws 'mi-app.code-workspace')
+        $j = Get-Content -LiteralPath $r.Archivo -Raw | ConvertFrom-Json
+        @($j.folders)[0].path | Should Be ($p1 -replace '\\', '/')
+        @($j.folders)[1].path | Should Be ($r.Sombra -replace '\\', '/')
+        $j.settings.'java.import.gradle.enabled' | Should Be $false
+        $j.settings.'java.gradle.buildServer.enabled' | Should Be 'off'
+        $c = @($j.launch.configurations)[0]
+        "$($c.type) $($c.request) $($c.hostName) $($c.port)" | Should Be 'java attach localhost 5006'
+        $c.name | Should Be $AndroidDepurarNombre
+        $c.projectName | Should Be 'mi-app (kit)'
+    }
+
+    # Lo que pidio el usuario: nada del kit dentro de su repositorio.
+    It "no escribe nada dentro del proyecto" {
+        $antes = @(Get-ChildItem -LiteralPath $p1 -Recurse -Force | ForEach-Object { $_.FullName })
+        Write-AndroidVsCodeWorkspace -Proyecto $p1 -Jdk 'C:\jdk-8' -Fuentes $fuentes -Jars @($jar1) -Destino $ws | Out-Null
+        @(Get-ChildItem -LiteralPath $p1 -Recurse -Force | ForEach-Object { $_.FullName }) -join '|' | Should Be ($antes -join '|')
+    }
+
+    It "otro proyecto con el mismo nombre de carpeta no pisa el espacio de trabajo del primero" {
+        $p2 = Join-Path $RaizTmp 'otra\mi-app'
+        New-Item -ItemType Directory -Path $p2 -Force | Out-Null
+        $r2 = Write-AndroidVsCodeWorkspace -Proyecto $p2 -Jdk 'C:\jdk-8' -Destino $ws
+        $r2.Archivo | Should Match 'mi-app-[0-9a-f]{6}\.code-workspace$'
+        $r2.Sombra | Should Not Be (Write-AndroidVsCodeWorkspace -Proyecto $p1 -Jdk 'C:\jdk-8' -Destino $ws).Sombra
+        (Write-AndroidVsCodeWorkspace -Proyecto $p1 -Jdk 'C:\jdk-8' -Destino $ws).Archivo | Should Be (Join-Path $ws 'mi-app.code-workspace')
+    }
+
+    It "la version de Java del codigo: la que dice Gradle, y 1.8 si no dice" {
+        $r = Write-AndroidVsCodeWorkspace -Proyecto $p1 -Jdk 'C:\jdk-17' -Java '17' -Destino $ws
+        @(Get-Content -LiteralPath (Join-Path $r.Sombra '.settings\org.eclipse.jdt.core.prefs')) -contains 'org.eclipse.jdt.core.compiler.compliance=17' | Should Be $true
+        $r = Write-AndroidVsCodeWorkspace -Proyecto $p1 -Jdk 'C:\jdk-8' -Destino $ws
+        @(Get-Content -LiteralPath (Join-Path $r.Sombra '.settings\org.eclipse.jdt.core.prefs')) -contains 'org.eclipse.jdt.core.compiler.compliance=1.8' | Should Be $true
+    }
+
+    # En Pester 3.4 un Mock dentro de un It dura hasta el final de su bloque:
+    # cada caso en su Context, o el Test-Path falso de uno tapa el otro.
+    Context "Open-AndroidVsCodeWorkspace sin VS Code" {
+        It "dice que no y no lanza nada" {
+            Mock Get-Command { $null }
+            Mock Test-Path { $false } -ParameterFilter { $LiteralPath -match 'code\.cmd$' }
+            Mock Start-Process { }
+            Open-AndroidVsCodeWorkspace -Archivo 'C:\x.code-workspace' | Should Be $false
+            Assert-MockCalled Start-Process -Times 0 -Scope It
+        }
+    }
+
+    Context "Open-AndroidVsCodeWorkspace con VS Code" {
+        $code = Join-Path $RaizTmp 'code.cmd'
+        [IO.File]::WriteAllText($code, '@echo off')
+        It "le pasa el espacio de trabajo entre comillas" {
+            Mock Get-Command { [PSCustomObject]@{ Source = $code } }
+            Mock Start-Process { }
+            Open-AndroidVsCodeWorkspace -Archivo 'C:\con espacio\x.code-workspace' | Should Be $true
+            Assert-MockCalled Start-Process -Times 1 -Scope It -ParameterFilter { $FilePath -eq $code -and "$ArgumentList" -eq '"C:\con espacio\x.code-workspace"' }
+        }
     }
 }
 
@@ -620,6 +974,42 @@ Describe "Doctor: la seccion de Android" {
         Test-AndroidInstall
         (Check 'Licencia del SDK').estado | Should Be 'fail'
     }
+}
+
+Describe "Quitar: cerrar lo que corre desde las carpetas" {
+
+    # Paso en el equipo del trabajo: adb seguia de servidor tras cerrar el
+    # telefono, y borrar el SDK se paro en adb.exe a medias. Aqui hace de adb
+    # un ping copiado dentro: un .exe en marcha, que es lo que bloquea.
+    $sdk = Join-Path $RaizTmp 'quitar\Android\sdk'
+    $pt = Join-Path $sdk 'platform-tools'
+    New-Item -ItemType Directory -Path $pt -Force | Out-Null
+    Copy-Item (Join-Path $env:SystemRoot 'System32\PING.EXE') (Join-Path $pt 'ping.exe')
+    $p = Start-Process -FilePath (Join-Path $pt 'ping.exe') -ArgumentList '-n', '60', '127.0.0.1' -WindowStyle Hidden -PassThru
+
+    try {
+        It "lo encuentra por la ruta de su .exe" {
+            @(Get-ProcessUnder -Carpetas @($sdk) | ForEach-Object { $_.Id }) -contains $p.Id | Should Be $true
+        }
+
+        # "...\Android\sd" no es la carpeta de "...\Android\sdk\platform-tools".
+        It "no confunde una carpeta con otra que empieza igual" {
+            @(Get-ProcessUnder -Carpetas @($sdk.Substring(0, $sdk.Length - 1)) | ForEach-Object { $_.Id }) -contains $p.Id | Should Be $false
+        }
+
+        It "con el en marcha no se puede borrar; cerrado, si" {
+            { Remove-Item -LiteralPath $sdk -Recurse -Force -ErrorAction Stop } | Should Throw
+            Stop-ProcessUnder -Carpetas @(Join-Path $RaizTmp 'no-existe'), $sdk | Should Be 'ping.exe'
+            $p.HasExited | Should Be $true
+            Remove-Item -LiteralPath $sdk -Recurse -Force -ErrorAction Stop
+            Test-Path -LiteralPath $sdk | Should Be $false
+        }
+
+        It "sin nada en marcha no cierra nada" {
+            @(Stop-ProcessUnder -Carpetas @($RaizTmp)).Count | Should Be 0
+        }
+    }
+    finally { if (-not $p.HasExited) { $p.Kill() } }
 }
 
 Remove-Item -LiteralPath $RaizTmp -Recurse -Force -ErrorAction SilentlyContinue

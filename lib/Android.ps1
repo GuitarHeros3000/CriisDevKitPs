@@ -260,7 +260,16 @@ function ConvertTo-AndroidPackageXml {
     $lp.SetAttribute('obsolete', 'false')
     foreach ($hijo in @($Paquete.Nodo.ChildNodes)) {
         if ($hijo.NodeType -ne 'Element' -or $hijo.LocalName -in @('channelRef', 'archives')) { continue }
-        [void]$lp.AppendChild($doc.ImportNode($hijo, $true))
+        $copia = $doc.ImportNode($hijo, $true)
+        # Sin <base-extension>true</base-extension>: true es lo que se supone
+        # cuando falta (los SDK de antes no lo llevaban, y se leen bien), y un
+        # AGP de antes de 2021 no conoce ese campo y suelta una traza de cien
+        # lineas por cada paquete que lo lleva, en su compilacion y al abrir el
+        # proyecto en VS Code. Con false si dice algo, y se queda.
+        if ($copia.LocalName -eq 'type-details') {
+            foreach ($b in @($copia.ChildNodes | Where-Object { $_.LocalName -eq 'base-extension' -and $_.InnerText.Trim() -eq 'true' })) { [void]$copia.RemoveChild($b) }
+        }
+        [void]$lp.AppendChild($copia)
     }
     [void]$raiz.AppendChild($lp)
 
@@ -308,6 +317,27 @@ function Install-AndroidPackage {
     finally {
         Remove-Item -LiteralPath $trabajo -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Repair-AndroidPackageXml {
+    <#
+        Quita <base-extension>true</base-extension> de los package.xml que ya
+        estaban escritos, como hace ahora ConvertTo-AndroidPackageXml: los del
+        kit de antes lo llevaban, copiado del indice. Comprobado con un AGP
+        3.4.2: con el campo, cuatro trazas y 360 lineas al configurar; sin el,
+        ninguna, y compila igual. Devuelve cuantos arreglo.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Sdk)
+
+    $n = 0
+    foreach ($f in @(Get-ChildItem -LiteralPath $Sdk -Filter 'package.xml' -Recurse -Depth 4 -File -ErrorAction SilentlyContinue)) {
+        $t = [IO.File]::ReadAllText($f.FullName)
+        $nuevo = [regex]::Replace($t, '\s*<base-extension>\s*true\s*</base-extension>', '')
+        if ($nuevo -eq $t) { continue }
+        [IO.File]::WriteAllText($f.FullName, $nuevo, (New-Object System.Text.UTF8Encoding($false)))
+        $n++
+    }
+    return $n
 }
 
 function Get-InstalledAndroidPackages {
@@ -683,13 +713,31 @@ function Select-GradleLine {
     #>
     param([AllowEmptyString()][string]$Linea, [Parameter(Mandatory=$true)][hashtable]$Estado)
 
+    # La red de la empresa abre el HTTPS con su propio certificado y el Java
+    # del proyecto no lo conoce: el wrapper de Gradle suelta una traza de
+    # treinta lineas. Se marca, para que Start-AndroidApp lo arregle y vuelva a
+    # intentarlo, y se resume en una linea.
+    if ($Linea -match 'PKIX path building failed|SunCertPathBuilderException|unable to find valid certification path') {
+        $Estado.EnTraza = $true
+        $Estado.Traza = 'certificado'
+        if (-not $Estado.Certificado) {
+            $Estado.Certificado = $true
+            return '  (La red abre el HTTPS con un certificado de la empresa que el Java del proyecto no conoce: se arregla abajo.)'
+        }
+        return $null
+    }
+
     $campo = '(base-extension|extension-level)'
     $ruido = ($Linea -match '^Mapping new ns http://schemas\.android\.com/') -or
              ($Linea -match "cvc-complex-type\.2\.4\.a.*$campo") -or
              ($Linea -match "(elemento inesperado|unexpected element) \(URI:`"`", local:`"$campo`"\)")
-    if ($Linea -match "SAXParseException.*$campo") { $ruido = $true; $Estado.EnTraza = $true }
+    if ($Linea -match "SAXParseException.*$campo") { $ruido = $true; $Estado.EnTraza = $true; $Estado.Traza = 'sdk' }
     elseif ($Estado.EnTraza) {
-        if ($Linea -match '^\s+at |^\s*\.\.\. \d+ more|^\s*$') { $ruido = $true }
+        if ($Linea -match '^\s+at |^\s*\.\.\. \d+ more|^\s*$|^Caused by: .*(Validator|CertPath|SSLHandshake)') {
+            # La del certificado ya se aviso con lo suyo: sin el otro aviso.
+            if ($Estado.Traza -eq 'certificado') { return $null }
+            $ruido = $true
+        }
         else { $Estado.EnTraza = $false }
     }
     if (-not $ruido) { return $Linea }
@@ -700,33 +748,33 @@ function Select-GradleLine {
     return $null
 }
 
-function Invoke-AndroidBuild {
+function Invoke-AndroidGradle {
     <#
-        Compila con el gradlew del proyecto, el JDK que se le diga y el mismo
-        entorno que android-shell.bat (sin daemon: sin avisos del firewall),
-        ensenando la salida segun sale pero sin el ruido de Select-GradleLine.
-        Deja las variables del proceso como estaban. Devuelve Ok y Codigo, o
-        $null si el proyecto no trae gradlew.bat.
+        El gradlew del proyecto con el JDK que se le diga y el mismo entorno
+        que android-shell.bat: sin daemon (sin avisos del firewall) y con el
+        proxy del kit. Cada linea de la salida va a -Linea. Deja las variables
+        del proceso como estaban. Devuelve el codigo de salida, o $null si el
+        proyecto no trae gradlew.bat.
     #>
     param(
         [Parameter(Mandatory=$true)][string]$Proyecto,
         [Parameter(Mandatory=$true)][string]$Jdk,
         [string]$Sdk = $AndroidSdk,
-        [string]$Tarea = 'assembleDebug'
+        [Parameter(Mandatory=$true)][string[]]$Argumentos,
+        [Parameter(Mandatory=$true)][scriptblock]$Linea
     )
 
     $gw = Join-Path $Proyecto 'gradlew.bat'
     if (-not (Test-Path -LiteralPath $gw)) { return $null }
 
-    $e = Get-AndroidEnvironment -Sdk $Sdk -Jdk $Jdk
-    $nombres = @($e.Variables.Keys) + @('GRADLE_OPTS', 'PATH')
+    $entorno = Get-AndroidEnvironment -Sdk $Sdk -Jdk $Jdk
+    $nombres = @($entorno.Variables.Keys) + @('GRADLE_OPTS', 'PATH')
     $previo = @{}
     foreach ($k in $nombres) { $previo[$k] = [Environment]::GetEnvironmentVariable($k, 'Process') }
-    $estado = @{ EnTraza = $false; Avisado = $false }
-    $codigo = 1
+    $salida = 1
     try {
-        foreach ($k in $e.Variables.Keys) { Set-Item -LiteralPath "Env:\$k" -Value $e.Variables[$k] }
-        $env:PATH = (@($e.Rutas) -join ';') + ';' + $env:PATH
+        foreach ($k in $entorno.Variables.Keys) { Set-Item -LiteralPath "Env:\$k" -Value $entorno.Variables[$k] }
+        $env:PATH = (@($entorno.Rutas) -join ';') + ';' + $env:PATH
         $env:GRADLE_OPTS = ("$AndroidGradleOpts $(Get-GradleProxyProps)").Trim()
 
         # Continue y no Stop: la salida de error de Gradle llega como registros
@@ -735,18 +783,192 @@ function Invoke-AndroidBuild {
         $ErrorActionPreference = 'Continue'
         Push-Location -LiteralPath $Proyecto
         try {
-            & $gw $Tarea '--console=plain' 2>&1 | ForEach-Object {
-                $l = Select-GradleLine -Linea "$_" -Estado $estado
-                if ($null -ne $l) { Write-Host $l }
-            }
-            $codigo = $LASTEXITCODE
+            & $gw @Argumentos 2>&1 | ForEach-Object { & $Linea "$_" } | Out-Null
+            $salida = $LASTEXITCODE
         }
         finally { Pop-Location; $ErrorActionPreference = $eap }
     }
     finally {
         foreach ($k in $nombres) { [Environment]::SetEnvironmentVariable($k, $previo[$k], 'Process') }
     }
-    return [PSCustomObject]@{ Ok = ($codigo -eq 0); Codigo = $codigo }
+    return $salida
+}
+
+function Invoke-AndroidBuild {
+    <#
+        Compila con Invoke-AndroidGradle, ensenando la salida segun sale pero
+        sin el ruido de Select-GradleLine. Devuelve Ok, Codigo y Certificado
+        (si fallo por el certificado de la red de la empresa), o $null si el
+        proyecto no trae gradlew.bat.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Proyecto,
+        [Parameter(Mandatory=$true)][string]$Jdk,
+        [string]$Sdk = $AndroidSdk,
+        [string]$Tarea = 'assembleDebug'
+    )
+
+    $estado = @{ EnTraza = $false; Avisado = $false; Certificado = $false }
+    $codigo = Invoke-AndroidGradle -Proyecto $Proyecto -Jdk $Jdk -Sdk $Sdk -Argumentos @($Tarea, '--console=plain') -Linea {
+        param($l)
+        $v = Select-GradleLine -Linea $l -Estado $estado
+        if ($null -ne $v) { Write-Host $v }
+    }
+    if ($null -eq $codigo) { return $null }
+    return [PSCustomObject]@{ Ok = ($codigo -eq 0); Codigo = $codigo; Certificado = $estado.Certificado }
+}
+
+# La tarea que Get-AndroidClasspath le anade a Gradle solo para esa ejecucion
+# (con -I, un script de inicio: el proyecto no se toca). En Groovy, que es lo
+# que lee cualquier Gradle. Las clases del plugin de Android no se ven por su
+# nombre desde un script de inicio: se cogen del cargador del propio plugin.
+$AndroidClasspathScript = @'
+// CriisDevKit: lo que usa el plugin de Android para compilar la variante debug,
+// para que VS Code entienda el proyecto. Se pasa con -I: no toca el proyecto.
+allprojects {
+    afterEvaluate { p ->
+        def android = p.extensions.findByName('android')
+        if (android == null || !android.hasProperty('applicationVariants')) return
+        p.tasks.create('criisdevkitClasspath') {
+            doLast {
+                def v = android.applicationVariants.find { it.name == 'debug' }
+                if (v == null) { println 'KIT-ERROR no hay variante debug'; return }
+                def jc = v.hasProperty('javaCompileProvider') ? v.javaCompileProvider.get() : v.javaCompile
+                android.bootClasspath.each { println "KIT-JAR ${it}" }
+                jc.classpath.files.each { println "KIT-JAR ${it}" }
+                def kind = Enum.valueOf(v.class.classLoader.loadClass('com.android.build.gradle.api.SourceKind'), 'JAVA')
+                v.getSourceFolders(kind).each { println "KIT-SRC ${it.dir}" }
+                try { def apt = jc.options.annotationProcessorGeneratedSourcesDirectory; if (apt != null) println "KIT-SRC ${apt}" } catch (e) { }
+                try { println "KIT-JAVA ${android.compileOptions.sourceCompatibility}" } catch (e) { }
+            }
+        }
+    }
+}
+'@
+
+function ConvertFrom-AndroidClasspath {
+    <#
+        Las lineas KIT- que escribe la tarea de $AndroidClasspathScript:
+        Fuentes, Jars, Java (la version del codigo) y Error. Solo lo que existe:
+        una carpeta generada que el proyecto no usa (la de aidl, por ejemplo) no
+        se enlaza, y una repetida tampoco.
+    #>
+    param([AllowEmptyCollection()][string[]]$Lineas = @())
+
+    $fuentes = New-Object System.Collections.Generic.List[string]
+    $jars = New-Object System.Collections.Generic.List[string]
+    $java = $null; $error_ = $null
+    foreach ($l in $Lineas) {
+        if ($l -match '^KIT-SRC (.+)$') {
+            $x = $Matches[1].Trim()
+            if ((Test-Path -LiteralPath $x -PathType Container) -and -not $fuentes.Contains($x)) { $fuentes.Add($x) }
+        }
+        elseif ($l -match '^KIT-JAR (.+)$') {
+            $x = $Matches[1].Trim()
+            if ((Test-Path -LiteralPath $x) -and -not $jars.Contains($x)) { $jars.Add($x) }
+        }
+        elseif ($l -match '^KIT-JAVA (.+)$') { $java = $Matches[1].Trim() }
+        elseif ($l -match '^KIT-ERROR (.+)$') { $error_ = $Matches[1].Trim() }
+    }
+    return [PSCustomObject]@{ Fuentes = $fuentes.ToArray(); Jars = $jars.ToArray(); Java = $java; Error = $error_ }
+}
+
+function Get-AndroidClasspath {
+    <#
+        Lo que usa el plugin de Android para compilar la variante debug: las
+        carpetas de codigo (las del proyecto y las que genera la compilacion: R,
+        BuildConfig, las de los procesadores de anotaciones como ButterKnife) y
+        los jar (android.jar y las librerias, ya sacadas de sus .aar). Es lo
+        que le falta a VS Code: su extension de Java no sabe leer el plugin de
+        Android, pero si un proyecto con esa lista.
+
+        Se lo pregunta al propio Gradle con $AndroidClasspathScript. Hace falta
+        haber compilado antes, que es cuando existen las carpetas generadas. Con
+        el proyecto de 2019 (AGP 3.4.2): 4 carpetas y 46 jar en unos 10 s.
+
+        Devuelve Ok, Fuentes, Jars, Java y Detalle (por que no, si no).
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Proyecto,
+        [Parameter(Mandatory=$true)][string]$Jdk,
+        [string]$Modulo = 'app',
+        [string]$Sdk = $AndroidSdk
+    )
+
+    $init = Join-Path ([IO.Path]::GetTempPath()) ("criisdevkit-clases-{0}.gradle" -f [guid]::NewGuid().ToString('N').Substring(0, 8))
+    [IO.File]::WriteAllText($init, $AndroidClasspathScript, (New-Object System.Text.UTF8Encoding($false)))
+    $tarea = if ($Modulo) { ':' + (($Modulo.Trim('\', '/')) -replace '[\\/]+', ':') + ':criisdevkitClasspath' } else { ':criisdevkitClasspath' }
+    $lineas = New-Object System.Collections.Generic.List[string]
+    try {
+        $codigo = Invoke-AndroidGradle -Proyecto $Proyecto -Jdk $Jdk -Sdk $Sdk -Argumentos @('-q', '-I', $init, $tarea, '--console=plain') -Linea { param($l) $lineas.Add($l) }
+    }
+    finally { Remove-Item -LiteralPath $init -Force -ErrorAction SilentlyContinue }
+
+    if ($null -eq $codigo) { return [PSCustomObject]@{ Ok = $false; Fuentes = @(); Jars = @(); Java = $null; Detalle = 'el proyecto no trae gradlew.bat' } }
+    $r = ConvertFrom-AndroidClasspath -Lineas $lineas.ToArray()
+    if ($codigo -ne 0 -or $r.Jars.Count -eq 0) {
+        $motivo = if ($r.Error) { $r.Error } else { @($lineas | Where-Object { $_ -match '\S' -and $_ -notmatch '^Mapping new ns' } | Select-Object -Last 1)[0] }
+        return [PSCustomObject]@{ Ok = $false; Fuentes = @(); Jars = @(); Java = $null; Detalle = "Gradle: $motivo" }
+    }
+    return [PSCustomObject]@{ Ok = $true; Fuentes = $r.Fuentes; Jars = $r.Jars; Java = $r.Java; Detalle = $null }
+}
+
+function Sync-AndroidCorpCa {
+    <#
+        Que el JDK con el que compila el proyecto conozca la CA de la empresa,
+        si la red abre el HTTPS con ella. Windows ya la conoce (por eso las
+        descargas del kit funcionan); el JDK trae su propio almacen y no.
+
+        Por orden: con -Certificado, ese (el que da IT); si ya se guardo una
+        (con Use-CorpCert o una vez anterior), esa; y si no, se busca mirando
+        quien firma los sitios de los que baja Gradle, y si Java no conoce esa
+        raiz, es la de la empresa. Se guarda donde la busca el resto del kit,
+        asi que los JDK que se instalen despues la llevan ya.
+
+        Nunca pone un certificado que no sea de una CA (Test-CertEsAutoridad):
+        el de un sitio no arregla nada. Paso en el primer equipo del trabajo, y
+        por eso una guardada que no lo sea se ignora y se vuelve a buscar.
+
+        Devuelve Estado (puesta | sin-interceptacion | no-se-pudo) y Detalle.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Jdk, [string]$Certificado)
+
+    $alias = 'criisdevkit-corp'
+    $guardada = $null
+    if (Test-Path -LiteralPath $CorpCaFile) {
+        try { $guardada = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CorpCaFile) } catch { }
+        if ($guardada -and -not (Test-CertEsAutoridad -Cert $guardada)) { $guardada = $null }
+    }
+    if ($Certificado) {
+        if (-not (Test-Path -LiteralPath $Certificado)) { return [PSCustomObject]@{ Estado = 'no-se-pudo'; Detalle = "no existe $Certificado" } }
+        try { $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2((Resolve-Path -LiteralPath $Certificado).ProviderPath) }
+        catch { return [PSCustomObject]@{ Estado = 'no-se-pudo'; Detalle = "$Certificado no es un certificado que se pueda leer (.cer o .crt)" } }
+        if (-not (Test-CertEsAutoridad -Cert $cert)) {
+            return [PSCustomObject]@{ Estado = 'no-se-pudo'; Detalle = "$($cert.Subject) es el certificado de un sitio, no el de una CA: hace falta el RAIZ de la empresa" }
+        }
+        $detalle = "el que se indico ($($cert.Subject))"
+    }
+    elseif ($guardada -and (Get-JdkTrustedAliases -JdkPath $Jdk) -notcontains $alias) {
+        $cert = $guardada
+        $detalle = "la guardada ($($cert.Subject))"
+    }
+    else {
+        # Los sitios de los que baja Gradle, y no otros: la empresa puede
+        # dejar pasar sin abrir algunos dominios y otros no.
+        $h = Find-CorpCa -Hosts @('services.gradle.org', 'dl.google.com', 'repo.maven.apache.org', 'jcenter.bintray.com') -JdkPath $Jdk
+        if (-not $h.Interceptado) { return [PSCustomObject]@{ Estado = 'sin-interceptacion'; Detalle = $h.Motivo } }
+        if (-not $h.Cert) { return [PSCustomObject]@{ Estado = 'no-se-pudo'; Detalle = $h.Motivo } }
+        $cert = $h.Cert
+        $detalle = "$($cert.Subject): $($h.Motivo)"
+    }
+
+    New-Item -ItemType Directory -Path (Split-Path -Parent $CorpCaFile) -Force | Out-Null
+    [IO.File]::WriteAllBytes($CorpCaFile, $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+    Write-CorpCaPem | Out-Null
+    $r = Import-JdkCertificate -JdkPath $Jdk -CertPath $CorpCaFile -Alias $alias
+    if (-not $r.Ok) { return [PSCustomObject]@{ Estado = 'no-se-pudo'; Detalle = (@($r.Salida) | Select-Object -Last 1) } }
+    Sync-JdkCertificates | Out-Null
+    return [PSCustomObject]@{ Estado = 'puesta'; Detalle = $detalle }
 }
 
 function Get-AndroidBuiltApk {
@@ -774,4 +996,239 @@ function Set-AndroidLastProject {
     param([Parameter(Mandatory=$true)][string]$Ruta, [string]$Archivo = $AndroidUltimoProyecto)
     New-Item -ItemType Directory -Path (Split-Path -Parent $Archivo) -Force | Out-Null
     [IO.File]::WriteAllText($Archivo, $Ruta)
+}
+
+function Get-ProcessUnder {
+    <#
+        Los procesos que se ejecutan desde dentro de alguna de -Carpetas: Id,
+        Nombre y Ruta. Por la ruta y no por el nombre: un adb.exe de Android
+        Studio no es asunto del kit. Solo se ven los del usuario; los de otros
+        no dicen su ruta sin admin.
+    #>
+    param([Parameter(Mandatory=$true)][string[]]$Carpetas)
+    $bases = @($Carpetas | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') + '\' })
+    return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $ruta = $_.ExecutablePath
+        $ruta -and @($bases | Where-Object { $ruta.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+    } | ForEach-Object { [PSCustomObject]@{ Id = [int]$_.ProcessId; Nombre = $_.Name; Ruta = $_.ExecutablePath } })
+}
+
+function Stop-ProcessUnder {
+    <#
+        Cierra lo que se ejecuta desde -Carpetas, para poder borrarlas: Windows
+        no deja borrar un .exe en marcha. Paso en el equipo del trabajo al
+        quitar Android: el telefono estaba cerrado, pero adb se queda de
+        servidor en segundo plano, y el borrado se paro en adb.exe a medias.
+
+        A la fuerza y sin preguntar: quien llama ya confirmo que se borra todo
+        eso. Devuelve los nombres de lo que se cerro.
+    #>
+    param([Parameter(Mandatory=$true)][string[]]$Carpetas)
+    $procesos = @(Get-ProcessUnder -Carpetas $Carpetas)
+    foreach ($p in $procesos) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+    # Stop-Process vuelve antes de que el proceso suelte sus archivos.
+    if ($procesos.Count) { Wait-Process -Id @($procesos | ForEach-Object { $_.Id }) -Timeout 10 -ErrorAction SilentlyContinue }
+    return @($procesos | ForEach-Object { $_.Nombre } | Sort-Object -Unique)
+}
+
+# --------------------------------------------------------------------------
+# El registro de la app y la depuracion desde VS Code
+# --------------------------------------------------------------------------
+
+function Get-AndroidEmulators {
+    <#
+        Los emuladores abiertos: Serie (emulator-5554) y Avd, la carpeta del
+        telefono que usa cada uno (emu avd path), o $null si no lo dice. Con
+        varios abiertos, es lo que distingue cual es cual: el primero de la
+        lista no tiene por que ser el que se busca.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Adb)
+    $l = (Invoke-NativeCommand -FilePath $Adb -Arguments @('devices') -Quiet).Output
+    foreach ($s in @([regex]::Matches([string]$l, '(?m)^(emulator-\d+)\s+device') | ForEach-Object { $_.Groups[1].Value })) {
+        $r = Invoke-NativeCommand -FilePath $Adb -Arguments @('-s', $s, 'emu', 'avd', 'path') -Quiet
+        $ruta = @(($r.Output -split "`r?`n") | Where-Object { $_.Trim() -and $_.Trim() -ne 'OK' })[0]
+        [PSCustomObject]@{ Serie = $s; Avd = $(if ($ruta) { $ruta.Trim().TrimEnd('\') } else { $null }) }
+    }
+}
+
+function ConvertFrom-LogcatLine {
+    <#
+        Una linea de "adb logcat -v threadtime" por partes: Hora, Pid, Nivel
+        (V, D, I, W, E, F), Etiqueta y Mensaje. $null si no es una linea de
+        registro (las "--------- beginning of main", por ejemplo).
+    #>
+    param([AllowEmptyString()][string]$Linea)
+    $m = [regex]::Match($Linea, '^\d\d-\d\d\s+(\d\d:\d\d:\d\d)\.\d+\s+(\d+)\s+\d+\s+([VDIWEFA])\s+(.*?)\s*: (.*)$')
+    if (-not $m.Success) { return $null }
+    return [PSCustomObject]@{ Hora = $m.Groups[1].Value; Pid = [int]$m.Groups[2].Value; Nivel = $m.Groups[3].Value; Etiqueta = $m.Groups[4].Value; Mensaje = $m.Groups[5].Value }
+}
+
+function Get-LogcatAppProcess {
+    <#
+        Si un mensaje del sistema dice que la app arranca o muere en un
+        proceso: Evento (arranca | muere) y Pid, o $null. Con eso el registro
+        sigue a la app aunque se cierre y se vuelva a abrir, que cambia de
+        proceso (logcat --pid solo sirve para uno). Cuentan tambien sus
+        subprocesos (paquete:algo).
+
+        Android 8:  "Start proc 3263:com.app/u0a80 for activity ..."
+        Android 13: "Start proc 3263:com.app/u0a80 for pre-top-activity ..."
+        Muere:      "Process com.app (pid 3263) has died" (se cae)
+                    "Killing 3263:com.app/u0a80 (adj 0): stop com.app" (la
+                    cierran: Forzar detencion, o el sistema por memoria)
+    #>
+    param([AllowEmptyString()][string]$Mensaje, [Parameter(Mandatory=$true)][string]$Paquete)
+    $p = [regex]::Escape($Paquete)
+    $m = [regex]::Match($Mensaje, "Start proc (\d+):$p(?::[\w.]+)?/")
+    if ($m.Success) { return [PSCustomObject]@{ Evento = 'arranca'; Pid = [int]$m.Groups[1].Value } }
+    $m = [regex]::Match($Mensaje, "Process $p(?::[\w.]+)? \(pid (\d+)\) has died")
+    if (-not $m.Success) { $m = [regex]::Match($Mensaje, "Killing (\d+):$p(?::[\w.]+)?/") }
+    if ($m.Success) { return [PSCustomObject]@{ Evento = 'muere'; Pid = [int]$m.Groups[1].Value } }
+    return $null
+}
+
+$AndroidDepurarNombre = 'Android: depurar la app (kit)'
+
+function Write-AndroidVsCodeWorkspace {
+    <#
+        Lo que hace falta para abrir el proyecto en VS Code entendido y listo
+        para depurar, sin escribir nada dentro del proyecto. En -Destino
+        (Android\vscode, que se va con -Quitar):
+
+          <carpeta>-<hash>\          un proyecto "sombra" de Eclipse: .project
+                                     y .classpath que enlazan -Fuentes y
+                                     declaran -Jars
+          <carpeta>.code-workspace   lo que se abre en VS Code: la carpeta del
+                                     proyecto, la sombra, los ajustes y la
+                                     configuracion para depurar
+
+        Por que asi. La extension de Java de VS Code importa los proyectos por
+        Gradle y no entiende el plugin de Android: sin clases de Android, sin
+        autocompletar y con rojo en lo que compila bien. Pasarle la lista con
+        java.project.referencedLibraries no sirve: con build.gradle en la
+        carpeta no crea su proyecto "invisible", y trata cada archivo como
+        suelto (probado: "non-project file"). Un proyecto de Eclipse si lo
+        importa, aunque este fuera de la carpeta, y reconoce los archivos del
+        proyecto por el enlace. Comprobado con la extension de Java 1.58 y el
+        proyecto de 2019: 0 errores, autocompleta Toast, R.id (sus 227 ids) y
+        la libreria de soporte, y encuentra AppCompatActivity.
+
+        El .code-workspace se rehace cada vez: no editarlo a mano. Si ya hay
+        uno con ese nombre de otro proyecto, este lleva el hash en el nombre.
+
+        Devuelve Archivo, Sombra, Fuentes y Jars (cuantos).
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Proyecto,
+        [string]$Modulo = 'app',
+        [Parameter(Mandatory=$true)][string]$Jdk,
+        [int]$Puerto = 5005,
+        [string[]]$Fuentes = @(),
+        [string[]]$Jars = @(),
+        [string]$Java,
+        [string]$Destino = (Join-Path $AndroidRoot 'vscode')
+    )
+
+    $Proyecto = $Proyecto.TrimEnd('\')
+    $nombre = Split-Path -Leaf $Proyecto
+    $sha = [Security.Cryptography.SHA1]::Create()
+    try { $hash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Proyecto.ToLowerInvariant()))) -replace '-', '').Substring(0, 6).ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    $sombra = Join-Path $Destino "$nombre-$hash"
+    $archivo = Join-Path $Destino "$nombre.code-workspace"
+    if (Test-Path -LiteralPath $archivo) {
+        $de = $null
+        try { $de = [string]@((Get-Content -LiteralPath $archivo -Raw | ConvertFrom-Json).folders)[0].path } catch { }
+        if (-not $de -or ($de -replace '/', '\').TrimEnd('\') -ne $Proyecto) { $archivo = Join-Path $Destino "$nombre-$hash.code-workspace" }
+    }
+    $proyectoEclipse = "$nombre (kit)"
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $xml = { param($s) [Security.SecurityElement]::Escape(($s -replace '\\', '/')) }
+
+    # Cada carpeta de codigo, enlazada con un nombre que diga cual es.
+    $enlaces = @(); $src = @(); $usados = @{}
+    foreach ($f in $Fuentes) {
+        $rel = if ($f.StartsWith($Proyecto + '\', [StringComparison]::OrdinalIgnoreCase)) { $f.Substring($Proyecto.Length + 1) } else { Split-Path -Leaf $f }
+        $n = $rel -replace '[\\/:\s]+', '_'; $base = $n; $i = 2
+        while ($usados.ContainsKey($n)) { $n = "${base}_$i"; $i++ }
+        $usados[$n] = $true
+        $enlaces += "    <link><name>$(& $xml $n)</name><type>2</type><location>$(& $xml $f)</location></link>"
+        $src += "  <classpathentry kind=`"src`" path=`"$(& $xml $n)`"/>"
+    }
+    $libs = @($Jars | ForEach-Object { "  <classpathentry kind=`"lib`" path=`"$(& $xml $_)`"/>" })
+
+    # La version de Java del codigo, como la dice Gradle: 1.8, 11, 17...
+    $nivel = '1.8'
+    if ($Java -match '^1\.(\d)$') { $nivel = "1.$($Matches[1])" }
+    elseif ($Java -match '^(\d+)$') { $nivel = if ([int]$Matches[1] -le 8) { "1.$($Matches[1])" } else { $Matches[1] } }
+
+    New-Item -ItemType Directory -Path (Join-Path $sombra '.settings') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $sombra '.project'), (@(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<projectDescription>'
+        "  <name>$(& $xml $proyectoEclipse)</name>"
+        "  <comment>Lo genera CriisDevKit (Start-AndroidApp -Depurar) para que VS Code entienda $(& $xml $Proyecto). Se rehace cada vez.</comment>"
+        '  <projects></projects>'
+        '  <buildSpec><buildCommand><name>org.eclipse.jdt.core.javabuilder</name><arguments></arguments></buildCommand></buildSpec>'
+        '  <natures><nature>org.eclipse.jdt.core.javanature</nature></natures>'
+        '  <linkedResources>'
+    ) + $enlaces + @('  </linkedResources>', '</projectDescription>', '') -join "`r`n"), $utf8)
+    [IO.File]::WriteAllText((Join-Path $sombra '.classpath'), (@(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<classpath>'
+    ) + $src + @('  <classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>') + $libs +
+        @('  <classpathentry kind="output" path="bin"/>', '</classpath>', '') -join "`r`n"), $utf8)
+    [IO.File]::WriteAllText((Join-Path $sombra '.settings\org.eclipse.jdt.core.prefs'), (@(
+        'eclipse.preferences.version=1'
+        "org.eclipse.jdt.core.compiler.codegen.targetPlatform=$nivel"
+        "org.eclipse.jdt.core.compiler.compliance=$nivel"
+        "org.eclipse.jdt.core.compiler.source=$nivel"
+        ''
+    ) -join "`r`n"), $utf8)
+
+    $fuentesDepurar = if ($Modulo) { "`${workspaceFolder:$nombre}/$($Modulo -replace '\\', '/')/src/main/java" } else { "`${workspaceFolder:$nombre}/src/main/java" }
+    $ws = [ordered]@{
+        folders  = @(
+            [ordered]@{ path = ($Proyecto -replace '\\', '/'); name = $nombre },
+            [ordered]@{ path = ($sombra -replace '\\', '/'); name = 'clases para VS Code (kit)' }
+        )
+        settings = [ordered]@{
+            # Sin importar por Gradle: es lo que no entiende el plugin de
+            # Android. "Gradle for Java" sigue funcionando para sus tareas.
+            'java.import.gradle.enabled'      = $false
+            'java.import.maven.enabled'       = $false
+            'java.gradle.buildServer.enabled' = 'off'
+            'java.import.gradle.java.home'    = ($Jdk -replace '\\', '/')
+        }
+        launch   = [ordered]@{
+            version        = '0.2.0'
+            configurations = @([ordered]@{
+                type = 'java'; name = $AndroidDepurarNombre; request = 'attach'
+                hostName = 'localhost'; port = $Puerto; projectName = $proyectoEclipse
+                sourcePaths = @($fuentesDepurar)
+            })
+        }
+    }
+    New-Item -ItemType Directory -Path $Destino -Force | Out-Null
+    [IO.File]::WriteAllText($archivo, ($ws | ConvertTo-Json -Depth 8), $utf8)
+    return [PSCustomObject]@{ Archivo = $archivo; Sombra = $sombra; Fuentes = @($Fuentes).Count; Jars = @($Jars).Count }
+}
+
+function Open-AndroidVsCodeWorkspace {
+    <#
+        Abre el espacio de trabajo en el VS Code del equipo, si lo hay. Si ya
+        estaba abierto, VS Code solo trae esa ventana al frente. Devuelve
+        $true si lo abrio.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Archivo)
+
+    $candidatos = @(
+        (Get-Command 'code.cmd' -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $_.Source }),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Microsoft VS Code\bin\code.cmd'),
+        'C:\Program Files\Microsoft VS Code\bin\code.cmd'
+    )
+    $cli = @($candidatos | Where-Object { $_ -and (Test-Path -LiteralPath $_) })[0]
+    if (-not $cli) { return $false }
+    Start-Process -FilePath $cli -ArgumentList "`"$Archivo`"" -WindowStyle Hidden | Out-Null
+    return $true
 }

@@ -47,7 +47,8 @@ Las siguientes veces la carpeta ya sale por defecto: **Intro**, y en menos de un
 minuto la version nueva esta abierta en el telefono, que se queda abierto entre una
 y otra. El ciclo de trabajo es ese: cambiar el codigo, opcion 60, Intro.
 
-La opcion **61** abre solo el telefono, sin compilar nada.
+La opcion **61** abre solo el telefono, sin compilar nada. La **62** y la **63**, mas
+abajo: ver lo que escribe la app, y depurarla en VS Code.
 
 Desde una consola es lo mismo:
 
@@ -61,6 +62,107 @@ Desde una consola es lo mismo:
 El telefono es Android 8 (API 26) salvo que la app pida uno mas alto (su `minSdk`):
 entonces, ese.
 
+## Ver lo que escribe la app (62)
+
+```powershell
+.\bin\start\Start-AndroidLog.bat                         La app del ultimo proyecto
+.\bin\start\Start-AndroidLog.bat -Paquete com.empresa.app
+```
+
+El registro de Android (logcat) mezcla lo de todas las apps y el sistema, cientos de
+lineas por segundo. Esto ensena solo lo de tu app: sus `Log.d`, `Log.e`... y sus
+errores, `FATAL EXCEPTION` incluido, en color segun la gravedad. Empieza por lo ultimo
+que escribio, por si lo que buscas acaba de pasar, y despues sigue en directo.
+
+La sigue aunque se cierre y se vuelva a abrir, que cambia de proceso: se entera por
+los avisos del propio sistema y lo dice (`--- la app se cerro`, `--- la app arranca`).
+Con varios telefonos abiertos mira el del kit que tenga la app. Ctrl+C para salir.
+
+## Depurar en VS Code (63)
+
+```powershell
+.\bin\start\Start-AndroidApp.bat -Depurar
+```
+
+Compila e instala como la 60, pero abre la app **parada**, esperando al depurador,
+para poder parar incluso en lo primero que hace. Y prepara VS Code para que
+**entienda el proyecto**: autocompleta las clases de Android y de las librerias, no
+marca en rojo lo que compila bien, y depura con F5. Lo abre solo:
+
+1. Espera a que abajo diga "Java: Ready". La primera vez tarda algo mas: indexa las
+   librerias.
+2. Abre tus archivos desde la carpeta del proyecto (la otra, "clases para VS Code
+   (kit)", es del kit).
+3. Pon un punto de interrupcion: clic a la izquierda del numero de linea.
+4. **F5**, con "Android: depurar la app (kit)".
+
+Hace falta la extension "Extension Pack for Java" (trae la de Java y la del
+depurador).
+
+### Que prepara, y por que asi
+
+La extension de Java de VS Code importa los proyectos por Gradle, y no entiende el
+plugin de Android: sin las clases de Android, sin autocompletar y con rojo en lo que
+compila bien. Lo que si sabe leer es un proyecto de Eclipse con su lista de clases, y
+eso es lo que deja la 63, todo en `Android\vscode`, **nada dentro del proyecto**:
+
+| | |
+|---|---|
+| `<proyecto>.code-workspace` | lo que se abre en VS Code: la carpeta del proyecto, la del kit, los ajustes y la configuracion para depurar |
+| `<proyecto>-<hash>\` | un proyecto "sombra": `.project` y `.classpath` de Eclipse que enlazan las carpetas de codigo y declaran `android.jar` y las librerias |
+
+La lista se la pregunta al propio Gradle con un script de inicio (`-I`) que anade una
+tarea solo para esa ejecucion: las carpetas de codigo, las que genera la compilacion
+(R, BuildConfig, las de ButterKnife y demas procesadores de anotaciones) y los jar de
+las librerias, ya sacados de sus `.aar`. Con el proyecto de 2019: 4 carpetas y 46 jar,
+en unos segundos.
+
+Lo que se probo antes de llegar aqui, para no repetirlo:
+
+- **Darle a VS Code el JDK del proyecto** (`java.import.gradle.java.home`): Gradle
+  carga (`CONFIGURE SUCCESSFUL`), pero la extension de Java sigue sin entender el
+  plugin de Android.
+- **Pasarle la lista con `java.project.referencedLibraries`**: solo vale para
+  carpetas sin `build.gradle`; con el, la extension trata cada archivo como suelto
+  ("non-project file", solo errores de sintaxis).
+- **El proyecto sombra**: comprobado primero hablando con el servidor de la extension
+  de Java 1.58 sin VS Code, y despues en VS Code. 0 errores; autocompleta `Toast`,
+  `R.id` (los 227 ids de la app) y la libreria de soporte; encuentra
+  `AppCompatActivity`.
+
+Lo que no da: el disenador de layouts ni la ayuda en los XML de Android, que siguen
+siendo de Android Studio. Si anades un recurso, la 60 lo compila y VS Code lo ve; si
+anades una **libreria**, vuelve a pasar por la 63, que es cuando se rehace la lista.
+Con Kotlin no ayuda: la extension de Java no lee Kotlin.
+
+### La depuracion
+
+Android habla el mismo protocolo de depuracion que Java (JDWP), y el kit deja un
+puente desde `localhost:5005` hasta la app (`adb forward`, que solo escucha en el
+propio equipo: sin avisos del firewall).
+
+Comprobado con un proyecto real de 2019 en Android 8, con `jdb` y con el depurador de
+VS Code: se para en la linea, ensena la pila de llamadas, avanza paso a paso y lee las
+variables. Dos detalles que salieron al probarlo y el kit ya resuelve:
+
+- **La app se queda marcada para esperar al depurador**, y las siguientes veces que se
+  abriera, a mano o con la 60, se quedaria en "Waiting For Debugger". El kit borra la
+  marca en cuanto la app esta esperando, y otra vez antes de cada apertura normal.
+- **Si el ultimo dialogo abierto era de Android** (el de los permisos de la primera
+  vez), pedir que se abra la app solo lo traia al frente, sin arrancarla. Se abre con
+  la pila limpia.
+
+Android espera al depurador solo un momento despues de que se conecta (segundo y
+medio): los puntos de interrupcion tienen que estar puestos antes de pulsar F5. VS Code
+los manda todos al conectarse.
+
+### Las trazas del plugin de Android de antes de 2021
+
+Ese plugin no conoce el campo `base-extension` de los `package.xml` del SDK de ahora y
+suelta una traza de cien lineas por cada paquete que lo lleva: en la compilacion (el
+kit las oculta) y en VS Code. El kit ya no lo escribe cuando vale `true` (lo que se
+supone cuando falta) y lo quita de los que escribio antes: con el AGP 3.4.2, de cuatro
+trazas y 360 lineas a ninguna. El emulador no lee esos archivos.
 ## Sin avisos del firewall
 
 Antes, cada compilacion hacia saltar el aviso de Windows para `java.exe`, y el
@@ -80,6 +182,43 @@ registro.
 
 Sin daemon, cada compilacion arranca Java de nuevo (unos segundos mas), pero a cambio
 la memoria se libera al terminar, que en un equipo justo es justo lo que hace falta.
+
+## La red de la empresa abre el HTTPS
+
+En muchas empresas el proxy abre las conexiones HTTPS y las vuelve a firmar con un
+certificado propio. Windows lo conoce (IT lo instala), y por eso las descargas del kit
+funcionan. Pero cada JDK trae su propio almacen de certificados, sin el de la empresa,
+y Gradle corre sobre Java: el wrapper no puede ni bajar Gradle.
+
+```
+javax.net.ssl.SSLHandshakeException: PKIX path building failed
+```
+
+`Start-AndroidApp` lo arregla solo cuando pasa: busca la raiz de la empresa mirando
+quien firma los sitios de los que baja Gradle (services.gradle.org, dl.google.com...),
+y si Java no la conoce, la guarda y la mete en el JDK del proyecto (con `keytool`, sin
+admin), y vuelve a compilar. Los JDK que se instalen despues ya la llevan. En una red
+que no abre el HTTPS no hace nada.
+
+Si no la encuentra, el certificado raiz lo da IT (un `.cer`):
+
+```powershell
+.\bin\start\Start-AndroidApp.bat -Path C:\ruta\del\proyecto -Certificado C:\ruta\empresa.cer
+```
+
+Paso en el primer equipo del trabajo, y de paso salio que con el **JDK 8** nunca habria
+funcionado: su almacen esta en `jre\lib\security\cacerts`, no en `lib\security\cacerts`
+como en los de ahora, y el kit solo miraba lo segundo. Comprobado aqui sobre un JDK 8
+de verdad: detecta la raiz, la guarda y la pone (misma huella). Lo que no se puede
+probar aqui es una red que abra el HTTPS: eso esta en los [pendientes](pendientes.md).
+
+La segunda vez en ese equipo puso el certificado **del sitio** (`CN=gradle.org`,
+firmado por el proxy) en vez del de la CA, y la segunda compilacion fallo igual: la
+cadena se armaba sin los intermedios que manda el servidor. Ya no; y el kit nunca
+pone un certificado que no sea de una CA. Uno mal puesto se sustituye solo la
+siguiente vez. Si aun asi sigue fallando, lo dice y pide el `.cer` de IT. Los
+detalles, en [red corporativa](red-corporativa.md#como-decide-si-tu-red-intercepta).
+Comprobado ya alli: puso la raiz del proxy y compilo a la segunda.
 
 ## Lo que instala la primera vez
 
@@ -188,7 +327,10 @@ Lo de arriba es lo recomendado. Para quien prefiera hacer cada paso:
 `-Tipo google_apis` (imagen con los servicios de Google, para Maps, Firebase o el
 inicio de sesion de Google; pesa bastante mas), `-WhatIf` (que bajaria y cuanto
 pesa) y **`-Quitar`** (retira el SDK, los telefonos, `ANDROID_HOME` y sus rutas del
-PATH).
+PATH). Antes de borrar cierra lo que se ejecute desde esas carpetas, buscado por la
+ruta del `.exe`: adb se queda de servidor aunque se cierre el telefono, y en el equipo
+del trabajo el borrado se paraba en `adb.exe` a medias. Un `adb.exe` de Android Studio
+no se toca. Si algo no se deja borrar, sigue con lo demas y dice que.
 
 Para compilar a mano, doble clic en `..\Android\android-shell.bat` (o en
 `android-java8-shell.bat`, la que crea `Setup-Project` para un proyecto de los de

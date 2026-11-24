@@ -45,10 +45,12 @@ $tal = [ordered]@{
     'scripts\kit\Menu-Android.ps1'            = 'tools\paquete-android\Menu-Android.ps1'
     'scripts\start\Start-AndroidApp.ps1'      = 'scripts\start\Start-AndroidApp.ps1'
     'scripts\start\Start-AndroidEmulator.ps1' = 'scripts\start\Start-AndroidEmulator.ps1'
+    'scripts\start\Start-AndroidLog.ps1'      = 'scripts\start\Start-AndroidLog.ps1'
     'scripts\setup\Setup-AndroidEnv.ps1'      = 'scripts\setup\Setup-AndroidEnv.ps1'
     'scripts\setup\Setup-JavaEnv.ps1'         = 'scripts\setup\Setup-JavaEnv.ps1'
     'bin\start\Start-AndroidApp.bat'          = 'bin\start\Start-AndroidApp.bat'
     'bin\start\Start-AndroidEmulator.bat'     = 'bin\start\Start-AndroidEmulator.bat'
+    'bin\start\Start-AndroidLog.bat'          = 'bin\start\Start-AndroidLog.bat'
 }
 
 # Lo que dicen los scripts del kit completo y en el paquete es otra cosa: un

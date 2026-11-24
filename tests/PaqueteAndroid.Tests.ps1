@@ -26,7 +26,8 @@ Describe "El paquete de Android" {
 
     It "lleva el menu, el LEEME, los comandos de Android y su libreria" {
         foreach ($f in 'Android.bat', 'LEEME.md', 'scripts\kit\Menu-Android.ps1', 'scripts\start\Start-AndroidApp.ps1',
-                       'scripts\start\Start-AndroidEmulator.ps1', 'scripts\setup\Setup-AndroidEnv.ps1', 'scripts\setup\Setup-JavaEnv.ps1',
+                       'scripts\start\Start-AndroidEmulator.ps1', 'scripts\start\Start-AndroidLog.ps1',
+                       'scripts\setup\Setup-AndroidEnv.ps1', 'scripts\setup\Setup-JavaEnv.ps1',
                        'lib\Common.ps1', 'lib\Android.ps1', 'lib\Project.ps1') {
             "$f=$(Test-Path -LiteralPath (Join-Path $p $f))" | Should Be "$f=True"
         }

@@ -8,7 +8,7 @@
 # propio kit ($KitVersion en lib\Common.ps1) y se pasa la suite entera: una
 # version publicada la instala Update-Kit sin que nadie la mire.
 #
-# Para publicar la 2.4.0:   git tag v2.4.0   y   git push origin v2.4.0
+# Para publicar la 2.5.0:   git tag v2.5.0   y   git push origin v2.5.0
 
 name: Publicar
 

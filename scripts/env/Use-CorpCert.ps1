@@ -8,7 +8,8 @@
     lo acepta porque IT metio esa CA en el almacen del sistema, y por eso el
     navegador y PowerShell funcionan.
 
-    Java NO usa ese almacen. Tiene el suyo -lib\security\cacerts- y ahi no esta.
+    Java NO usa ese almacen. Tiene el suyo -lib\security\cacerts, o
+    jre\lib\security\cacerts en el JDK 8- y ahi no esta.
     Por eso el kit descarga el JDK sin problema y luego el primer 'mvn install'
     falla con PKIX path building failed, que no menciona ni el proxy ni la
     empresa. Maven, Gradle y cualquier herramienta Java van por ese mismo sitio,
@@ -150,6 +151,11 @@ if ($Cert) {
         Write-Log "  Pide a IT el certificado RAIZ en formato .cer o .crt." "WARN"
         exit 1
     }
+    if (-not (Test-CertEsAutoridad -Cert $x)) {
+        Write-Log "Ese es el certificado de un sitio ($($x.Subject)), no el de una CA." "ERROR"
+        Write-Log "  Java solo se fiaria de ese sitio. Pide a IT el certificado RAIZ de la empresa." "WARN"
+        exit 1
+    }
     $certPath = (Resolve-Path -LiteralPath $Cert).Path
     Write-Log "Certificado indicado a mano:" "SUCCESS"
 }
@@ -171,6 +177,14 @@ else {
     }
 
     Write-Log "Interceptacion TLS detectada: $($hallazgo.Motivo)" "WARN"
+    if (-not $hallazgo.Cert) {
+        Write-Host ""
+        Write-Host "Solo se ve el certificado de cada sitio, no la CA de la empresa que los firma," -ForegroundColor Yellow
+        Write-Host "y ponerlo no serviria. Pide a IT el certificado raiz e indicalo a mano:" -ForegroundColor Yellow
+        Write-Host "  .\bin\env\Use-CorpCert.bat -Cert C:\ruta\ca-empresa.cer" -ForegroundColor White
+        Write-Host ""
+        exit 1
+    }
     $x = $hallazgo.Cert
 
     # Se exporta a un archivo porque keytool importa de archivo, no de memoria.

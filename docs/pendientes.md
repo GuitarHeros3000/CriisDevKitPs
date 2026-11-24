@@ -119,24 +119,36 @@ detras del proxy de la empresa:
 Probado aqui de punta a punta: el SDK y el emulador sin admin, una app en Java
 compilada con Gradle y AGP desde `android-shell.bat`, y arrancada en Android 14 y en
 Android 8 (ver [Android](android.md)). La casilla del hipervisor ya esta comprobada
-alli: da `1` en el equipo del trabajo y en el de un companero. Lo que falta:
+alli: da `1` en el equipo del trabajo y en el de un companero.
 
-- **Las descargas del SDK** desde `dl.google.com`, por el proxy de la empresa. Van por
-  el mismo motor que el resto del kit, asi que deberian pasar igual.
-- **Lo que baja Gradle**: el plugin de Android y sus dependencias del Maven de Google,
-  y las build-tools si el proyecto pide otras. El proxy le llega (comprobado), pero
-  no esta visto que la descarga de build-tools de AGP sepa usar un proxy **con
-  usuario y clave**. Si falla ahi, `-BuildTools <la que pida>` lo resuelve por el kit.
-- **El emulador con los recursos de ese equipo**, y con su antivirus: lo que tarda
-  en arrancar, si el telefono de 1,5 GB es llevadero mientras compila Gradle, y si
-  conviene el de Android 8, que es mas ligero.
+**Comprobado alli** con el paquete, opcion 1, de una carpeta limpia: instala el JDK 8 y
+el SDK (el emulador, 435 MB en 26 s por el proxy), pone solo la raiz del proxy en el
+JDK, Gradle baja su version y las librerias del proyecto, compila a la segunda (4 min
+44 s la primera vez), arranca el telefono de Android 8 (121 s sin snapshot) y abre la
+app. El driver de graficos de ese equipo no llega al Vulkan que pide el emulador y
+dibuja por software: funciona. Con la 2.5.0, comprobado tambien alli y aqui: VS Code
+con la opcion 4 (entiende el proyecto y depura con F5) y quitar todo con la 5. Lo que
+falta:
+
+- **Las build-tools con un proxy con usuario y clave.** Alli el proxy no pide clave,
+  asi que sigue sin verse si la descarga de build-tools de AGP sabria usarlo. Si
+  falla ahi, `-BuildTools <la que pida>` lo resuelve por el kit.
+- **El emulador con los recursos de ese equipo** las siguientes veces: cuanto tarda
+  con el snapshot, y si es llevadero mientras compila Gradle.
+- **El aviso "Detected ADB" del emulador** ("Could not automatically detect an ADB
+  binary"), que sale alli cada vez que arranca, tambien tras reinstalar. El emulador
+  comprueba adb ejecutando `adb version` (busca "Android Debug Bridge version" en la
+  respuesta); si no le contesta a tiempo, avisa. No afecta al kit, que usa su propio
+  adb (instalo y abrio la app igual); solo a funciones del emulador como arrastrar
+  una APK a la ventana. Medido: `adb version` tarda unos 340 ms alli y 30 ms aqui,
+  diez veces mas, como cuando el antivirus revisa cada arranque. Mientras arranca el
+  emulador, con el equipo cargado, tardara mas. Probar alli a fijar la ruta de adb en
+  los ajustes del emulador (Extended Controls, Settings, quitar "Use detected ADB
+  location").
 - **Que no salga ningun aviso del firewall.** Aqui ya no sale: el daemon de Gradle y
   el mDNS de adb eran lo que abria puertos hacia fuera, y el kit va ahora sin los
   dos (ver [Android](android.md#sin-avisos-del-firewall)). Alli puede haber otra
   directiva; si sale alguno, anotar de que programa es.
-- **El proyecto de 2019** (AGP 3.4.2, Gradle 5.1.1): aqui compila con el JDK 8
-  bajando de `jcenter()` y del Maven de Google. Alli, ademas, tiene en su lista un
-  repositorio Maven interno; lo que no encuentre en los dos primeros lo buscara ahi.
 
 ```powershell
 .\bin\start\Start-AndroidApp.bat -Path C:\ruta\del\proyecto

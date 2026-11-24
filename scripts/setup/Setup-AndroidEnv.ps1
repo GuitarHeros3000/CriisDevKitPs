@@ -110,22 +110,35 @@ if ($Quitar) {
     if ($avds.Count) { Write-Host "  los telefonos virtuales: $($avds -join ', ')  ($AndroidAvdHome)" }
     if ($jdks.Count) { Write-Host "  los JDK del kit: $($jdks -join ', ')  ($javaRoot)" }
     Write-Host "  ANDROID_HOME de usuario, si apunta aqui, y sus rutas del PATH"
+    Write-Host "  (lo que siga abierto desde esas carpetas, como el telefono o adb, se cierra)"
     Write-Host ""
     if (-not $Force) {
         if ((Read-Host "Confirmas? (escribe SI)") -ne 'SI') { Write-Host "Cancelado." -ForegroundColor Yellow; exit 0 }
     }
+    $borrar = @($AndroidRoot, $AndroidAvdHome)
+    if ($ConJava) { $borrar += $javaRoot }
+
+    $cerrados = @(Stop-ProcessUnder -Carpetas $borrar)
+    if ($cerrados.Count) { Write-Log "Cerrado lo que seguia en marcha: $($cerrados -join ', ')" "SUCCESS" }
+
     Remove-UserPathEntry -UnderFolder $AndroidRoot | Out-Null
     if ((Get-AndroidUserHome) -like "$AndroidRoot*") {
         [Environment]::SetEnvironmentVariable('ANDROID_HOME', $null, 'User')
         Write-Log "ANDROID_HOME de usuario retirado" "SUCCESS"
     }
-    $borrar = @($AndroidRoot, $AndroidAvdHome)
-    if ($ConJava) {
-        Remove-UserPathEntry -UnderFolder $javaRoot | Out-Null
-        $borrar += $javaRoot
-    }
+    if ($ConJava) { Remove-UserPathEntry -UnderFolder $javaRoot | Out-Null }
+
+    # Una carpeta que no se deja borrar no para las demas: antes se quedaba a
+    # medias, con el PATH ya quitado y el resto en su sitio.
+    $quedan = @()
     foreach ($d in $borrar) {
-        if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force; Write-Log "Borrado: $d" "SUCCESS" }
+        if (-not (Test-Path -LiteralPath $d)) { continue }
+        try { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction Stop; Write-Log "Borrado: $d" "SUCCESS" }
+        catch { $quedan += $d; Write-Log "No se pudo borrar entero: $d ($($_.Exception.Message))" "ERROR" }
+    }
+    if ($quedan.Count) {
+        Write-Log "Algo usa esos archivos: cierra lo que los tenga abiertos (una consola en esa carpeta, VS Code...) y repite." "WARN"
+        exit 1
     }
     exit 0
 }

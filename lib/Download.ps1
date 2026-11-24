@@ -768,9 +768,17 @@ function Invoke-NativeCommand {
                     ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray; $_ }
             }
 
+            # Lo que escribio el programa, y nada mas. Con Out-String las lineas de
+            # stderr salian con la decoracion de PowerShell ("En linea...",
+            # "CategoryInfo...") y partidas al ancho de la consola: el mensaje
+            # que le llegaba al usuario era ruido, y buscar un texto en el
+            # (el "Can't find service" de adb) podia fallar por un salto en medio.
+            $texto = @($captured | ForEach-Object {
+                if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" }
+            })
             return [PSCustomObject]@{
                 ExitCode = $LASTEXITCODE
-                Output   = ($captured | Out-String)
+                Output   = ($texto -join "`r`n") + "`r`n"
             }
         }
         catch {

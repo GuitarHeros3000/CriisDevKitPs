@@ -3,7 +3,7 @@
 .SYNOPSIS
     Menu.ps1 - Menu de consola del kit.
 .DESCRIPTION
-    El kit tiene 37 comandos y nadie se los sabe de memoria. Esto los reune en
+    El kit tiene 38 comandos y nadie se los sabe de memoria. Esto los reune en
     una pantalla que ademas dice QUE HAY INSTALADO, que es la pregunta con la
     que uno llega.
 
@@ -110,6 +110,8 @@ function Get-Opciones {
     # 61 es solo el telefono. Setup-AndroidEnv sigue para quien lo quiera a mano.
     $ops += [PSCustomObject]@{ Num = 60; Grupo = 'ANDROID';   Texto = 'Compilar y probar una app'; Bat = 'Start-AndroidApp.bat'; Clave = $null; Pide = 'android-app' }
     $ops += [PSCustomObject]@{ Num = 61; Grupo = 'ANDROID';   Texto = 'Abrir el telefono';         Bat = 'Start-AndroidEmulator.bat'; Clave = $null; Pide = $null }
+    $ops += [PSCustomObject]@{ Num = 62; Grupo = 'ANDROID';   Texto = 'Ver el registro de la app'; Bat = 'Start-AndroidLog.bat'; Clave = $null; Pide = $null }
+    $ops += [PSCustomObject]@{ Num = 63; Grupo = 'ANDROID';   Texto = 'Depurar la app en VS Code'; Bat = 'Start-AndroidApp.bat'; Clave = $null; Pide = 'android-depurar' }
 
     return $ops
 }
@@ -282,7 +284,7 @@ function Invoke-Opcion {
                 $argumentos = @('-Version', $vc.Version)
             }
         }
-        'android-app'  {
+        { $_ -in 'android-app', 'android-depurar' } {
             # La del proyecto de la ultima vez, por defecto: el ciclo de trabajo
             # es volver a esta opcion y darle a Intro.
             . (Join-Path $DevKitRoot 'lib\Android.ps1')
@@ -292,6 +294,7 @@ function Invoke-Opcion {
             $r = Read-Texto -Prompt "   Carpeta del proyecto" -PorDefecto (Get-AndroidLastProject)
             if (-not $r) { return }
             $argumentos = @('-Path', $r.Trim('"'))
+            if ($Op.Pide -eq 'android-depurar') { $argumentos += '-Depurar' }
         }
         'desinstalar'  {
             Write-Host ""

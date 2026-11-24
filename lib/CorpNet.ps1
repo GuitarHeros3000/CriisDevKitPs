@@ -253,31 +253,45 @@ function Get-TlsChainRoot {
         [int]$Port = 443
     )
 
-    $cliente = $null
+    $cliente = $null; $ssl = $null
     try {
         $cliente = New-Object System.Net.Sockets.TcpClient
         $tarea = $cliente.ConnectAsync($HostName, $Port)
         if (-not $tarea.Wait(5000)) { return $null }
 
         # El callback acepta cualquier cadena a proposito: aqui no se valida
-        # nada, solo se quiere VER quien firma.
-        $ssl = New-Object System.Net.Security.SslStream($cliente.GetStream(), $false,
-                    { param($a, $b, $c, $d) $true })
+        # nada, solo se quiere VER quien firma. Y se queda con los certificados
+        # que mando el servidor: antes la cadena se rehacia solo desde el del
+        # sitio, y el intermedio de un proxy corporativo no esta en ningun
+        # almacen de Windows, solo en el handshake. Sin el, la cadena se quedaba
+        # en el certificado del sitio, y eso es lo que se ponia como "la CA de la
+        # empresa": paso en el primer equipo del trabajo (CN=gradle.org, firmado
+        # por el proxy). Se copian dentro porque al volver SslStream la libera.
+        $vistos = New-Object System.Collections.ArrayList
+        $callback = {
+            param($a, $b, $c, $d)
+            try {
+                if ($c) {
+                    foreach ($e in $c.ChainElements) { [void]$vistos.Add((New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (, $e.Certificate.RawData))) }
+                    foreach ($e in $c.ChainPolicy.ExtraStore) { [void]$vistos.Add((New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (, $e.RawData))) }
+                }
+            }
+            catch { }
+            $true
+        }.GetNewClosure()
+        $ssl = New-Object System.Net.Security.SslStream($cliente.GetStream(), $false, $callback)
         $ssl.AuthenticateAsClient($HostName)
 
         $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)
-        $cadena = New-Object System.Security.Cryptography.X509Certificates.X509Chain
-        $cadena.ChainPolicy.RevocationMode = 'NoCheck'
-        $cadena.ChainPolicy.VerificationFlags = 'AllFlags'
-        $null = $cadena.Build($cert)
-
-        if ($cadena.ChainElements.Count -eq 0) { return $null }
-        $raiz = $cadena.ChainElements[$cadena.ChainElements.Count - 1].Certificate
+        $cadena = @(Get-CertChain -Cert $cert -Extra $vistos.ToArray())
+        $raiz = $cadena[-1]
 
         return [PSCustomObject]@{
-            Subject    = $raiz.Subject
-            Thumbprint = $raiz.Thumbprint
-            Cert       = $raiz
+            Subject     = $raiz.Subject
+            Thumbprint  = $raiz.Thumbprint
+            Cert        = $raiz
+            EsAutoridad = (Test-CertEsAutoridad -Cert $raiz)
+            Cadena      = $cadena
         }
     }
     catch { return $null }
@@ -287,35 +301,100 @@ function Get-TlsChainRoot {
     }
 }
 
-function Get-CertSha256 {
+function Get-CertChain {
     <#
-        La huella SHA-256 de un certificado en el formato con dos puntos que usa
-        keytool, para poder compararlas directamente.
+        La cadena de -Cert hacia arriba, empezando por el: con los almacenes de
+        Windows y con -Extra, los que mando el servidor en el handshake. Si
+        falta un eslabon, se corta ahi, y el ultimo es el que se pudo encontrar;
+        puede ser el propio -Cert.
+    #>
+    param([Parameter(Mandatory=$true)]$Cert, [object[]]$Extra = @())
+
+    $cadena = New-Object System.Security.Cryptography.X509Certificates.X509Chain
+    $cadena.ChainPolicy.RevocationMode = 'NoCheck'
+    $cadena.ChainPolicy.VerificationFlags = 'AllFlags'
+    foreach ($e in @($Extra | Where-Object { $_ })) { [void]$cadena.ChainPolicy.ExtraStore.Add($e) }
+    $null = $cadena.Build($Cert)
+
+    if ($cadena.ChainElements.Count -eq 0) { return $Cert }
+    return @($cadena.ChainElements | ForEach-Object { $_.Certificate })
+}
+
+function Test-CertEsAutoridad {
+    <#
+        Si un certificado es de una CA: lo dice su extension Basic Constraints,
+        y las raices antiguas que no la llevan son autofirmadas. El de un sitio
+        no lo es, y no sirve como "la CA de la empresa": Java solo confiaria en
+        ese certificado exacto, y el proxy hace uno distinto por cada sitio.
     #>
     param([Parameter(Mandatory=$true)]$Cert)
 
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try { return [BitConverter]::ToString($sha.ComputeHash($Cert.RawData)).Replace('-', ':') }
-    finally { $sha.Dispose() }
+    $basicas = @($Cert.Extensions | Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension] })
+    if ($basicas.Count -gt 0) { return [bool]$basicas[0].CertificateAuthority }
+    return ($Cert.Subject -eq $Cert.Issuer)
 }
 
-function Get-JdkTrustedFingerprints {
+function Get-CertKeyId {
     <#
-        Las huellas SHA-256 de todas las CA en las que confia un JDK de fabrica.
+        La clave publica de un certificado, en base64. Es lo que una raiz
+        comparte con sus versiones de firma cruzada, que tienen otra huella.
+    #>
+    param([Parameter(Mandatory=$true)]$Cert)
+    return [Convert]::ToBase64String($Cert.PublicKey.EncodedKeyValue.RawData)
+}
+
+function Get-JdkCacertsPath {
+    <#
+        Donde guarda un JDK las CA en las que confia. En los de ahora es
+        lib\security\cacerts; en el 8, jre\lib\security\cacerts. Solo se miraba
+        lo primero, y con un JDK 8 (el de los proyectos de Android de antes de
+        2020) nunca se podia poner la CA de la empresa: "no hay cacerts".
+    #>
+    param([Parameter(Mandatory=$true)][string]$JdkPath)
+    $moderno = Join-Path $JdkPath 'lib\security\cacerts'
+    if (Test-Path -LiteralPath $moderno) { return $moderno }
+    $jdk8 = Join-Path $JdkPath 'jre\lib\security\cacerts'
+    if (Test-Path -LiteralPath $jdk8) { return $jdk8 }
+    return $moderno
+}
+
+function Get-JdkTrustedKeys {
+    <#
+        Las claves publicas (Get-CertKeyId) de las CA en las que confia un JDK.
         Un JDK trae unas 118: las publicas y reconocidas.
+
+        Por clave y no por huella: Java acepta como ancla cualquier certificado
+        de la cadena cuya clave tenga, aunque el servidor mande otra version de
+        el. Comparando huellas, la cadena que arma Windows para
+        services.gradle.org acaba en GlobalSign Root CA, que el JDK 8 ya no
+        trae, y una red normal se daba por interceptada; Java valida por GTS
+        Root R4, el eslabon de antes, con la misma clave que la que el tiene.
     #>
     param([Parameter(Mandatory=$true)][string]$JdkPath)
 
     $keytool = Join-Path $JdkPath "bin\keytool.exe"
-    $store   = Join-Path $JdkPath "lib\security\cacerts"
+    $store   = Get-JdkCacertsPath -JdkPath $JdkPath
     if (-not (Test-Path $keytool) -or -not (Test-Path $store)) { return @() }
 
-    $salida = & cmd /c "`"$keytool`" -list -keystore `"$store`" -storepass changeit 2>&1"
+    $salida = & cmd /c "`"$keytool`" -list -rfc -keystore `"$store`" -storepass changeit 2>&1"
     if ($LASTEXITCODE -ne 0) { return @() }
+    return @(Get-PemCertificates -Texto ($salida -join "`n") | ForEach-Object { Get-CertKeyId -Cert $_ })
+}
 
-    return @($salida |
-        Where-Object { $_ -match 'SHA-?256[^:]*:\s*([0-9A-Fa-f:]{95})' } |
-        ForEach-Object { $Matches[1].ToUpperInvariant() })
+function Get-PemCertificates {
+    <#
+        Los certificados de un texto con bloques PEM, como el de keytool -rfc,
+        sin importar lo que haya alrededor (que keytool escribe en el idioma
+        del sistema). Un bloque roto se salta.
+    #>
+    param([AllowEmptyString()][string]$Texto)
+
+    $bloques = [regex]::Matches($Texto, '-----BEGIN CERTIFICATE-----([A-Za-z0-9+/=\s]+?)-----END CERTIFICATE-----')
+    return @($bloques | ForEach-Object {
+        # FromBase64String ya se salta los saltos de linea del PEM.
+        try { New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (, [Convert]::FromBase64String($_.Groups[1].Value)) }
+        catch { }
+    })
 }
 
 function Find-CorpCa {
@@ -336,31 +415,60 @@ function Find-CorpCa {
 
         Necesita un JDK del kit para tener contra que comparar.
     #>
-    param([string[]]$Hosts = @('api.adoptium.net', 'registry.npmjs.org', 'pypi.org'))
+    param(
+        [string[]]$Hosts = @('api.adoptium.net', 'registry.npmjs.org', 'pypi.org'),
+        # El JDK contra el que comparar; sin el, el mas nuevo del kit.
+        [string]$JdkPath
+    )
 
-    $lineas = @(Get-KitJdkLines)
-    if ($lineas.Count -eq 0) {
-        return [PSCustomObject]@{ Interceptado = $false; Motivo = 'no hay ningun JDK con el que comparar'; Cert = $null }
+    if (-not $JdkPath) {
+        $lineas = @(Get-KitJdkLines)
+        if ($lineas.Count -eq 0) {
+            return [PSCustomObject]@{ Interceptado = $false; Motivo = 'no hay ningun JDK con el que comparar'; Cert = $null }
+        }
+        $JdkPath = Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$($lineas[-1])"
     }
-    $conocidas = @(Get-JdkTrustedFingerprints -JdkPath (Join-Path (Join-Path $WorkspaceRoot "Java") "jdk-$($lineas[-1])"))
+    $conocidas = @(Get-JdkTrustedKeys -JdkPath $JdkPath)
     if ($conocidas.Count -eq 0) {
         return [PSCustomObject]@{ Interceptado = $false; Motivo = 'no se pudo leer el almacen del JDK'; Cert = $null }
     }
 
-    $vistos = 0
+    $vistos = 0; $soloSitio = $null
     foreach ($h in $Hosts) {
         $r = Get-TlsChainRoot -HostName $h
         if (-not $r) { continue }
         $vistos++
 
-        if ($conocidas -notcontains (Get-CertSha256 -Cert $r.Cert)) {
-            return [PSCustomObject]@{
-                Interceptado = $true
-                Motivo       = "$h llega firmado por una raiz que Java no conoce"
-                Cert         = $r.Cert
-                Subject      = $r.Subject
-                Thumbprint   = $r.Thumbprint
-            }
+        # Basta con que Java conozca la clave de uno de los que firman: lo usa
+        # de ancla. El del sitio no cuenta: de ancla solo valdria ese mismo
+        # certificado, y un proxy puede usar la misma clave en todos los que
+        # fabrica; con la de uno puesta por error, se daba por arreglado.
+        $firmantes = if ($r.Cadena) { @($r.Cadena | Select-Object -Skip 1) } else { @($r.Cert) }
+        if (@($firmantes | Where-Object { $conocidas -contains (Get-CertKeyId -Cert $_) }).Count -gt 0) { continue }
+
+        # Java no lo conoce, pero si no es de una CA no se puede poner: la
+        # cadena se corto en el del sitio. Se sigue con los otros hosts por si
+        # alguno la ensena entera.
+        if (-not $r.EsAutoridad) {
+            if (-not $soloSitio) { $soloSitio = "$h ($($r.Subject))" }
+            continue
+        }
+        return [PSCustomObject]@{
+            Interceptado = $true
+            Motivo       = "$h llega firmado por una raiz que Java no conoce"
+            Cert         = $r.Cert
+            Subject      = $r.Subject
+            Thumbprint   = $r.Thumbprint
+        }
+    }
+
+    # Interceptado si, pero sin una CA que poner: Cert va vacio, y quien llama
+    # tiene que pedir el raiz a IT en vez de importar nada.
+    if ($soloSitio) {
+        return [PSCustomObject]@{
+            Interceptado = $true
+            Motivo       = "$soloSitio llega con un certificado que Java no conoce, pero no se ve la CA que lo firma"
+            Cert         = $null
         }
     }
 
@@ -383,7 +491,7 @@ function Get-JdkTrustedAliases {
     param([Parameter(Mandatory=$true)][string]$JdkPath)
 
     $keytool = Join-Path $JdkPath "bin\keytool.exe"
-    $store   = Join-Path $JdkPath "lib\security\cacerts"
+    $store   = Get-JdkCacertsPath -JdkPath $JdkPath
     if (-not (Test-Path $keytool) -or -not (Test-Path $store)) { return @() }
 
     $salida = & cmd /c "`"$keytool`" -list -keystore `"$store`" -storepass changeit 2>&1"
@@ -413,7 +521,7 @@ function Import-JdkCertificate {
     )
 
     $keytool = Join-Path $JdkPath "bin\keytool.exe"
-    $store   = Join-Path $JdkPath "lib\security\cacerts"
+    $store   = Get-JdkCacertsPath -JdkPath $JdkPath
 
     if (-not (Test-Path $keytool)) {
         return [PSCustomObject]@{ Ok = $false; Salida = @("no hay keytool en $JdkPath") }
@@ -437,7 +545,7 @@ function Remove-JdkCertificate {
     )
 
     $keytool = Join-Path $JdkPath "bin\keytool.exe"
-    $store   = Join-Path $JdkPath "lib\security\cacerts"
+    $store   = Get-JdkCacertsPath -JdkPath $JdkPath
     if (-not (Test-Path $keytool) -or -not (Test-Path $store)) { return $false }
 
     & cmd /c "`"$keytool`" -delete -alias $Alias -keystore `"$store`" -storepass changeit 2>&1" | Out-Null

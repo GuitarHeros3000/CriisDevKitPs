@@ -107,8 +107,8 @@ pruebas usan una carpeta llamada `Marks & Spencer 100% ^O'Brien`.
 
 ```powershell
 # 1. Subir $KitVersion en lib\Common.ps1 (y el README, que la prueba lo vigila)
-git tag v2.4.0
-git push origin v2.4.0
+git tag v2.5.0
+git push origin v2.5.0
 ```
 
 La etiqueta dispara `.github\workflows\publicar.yml`, que:
