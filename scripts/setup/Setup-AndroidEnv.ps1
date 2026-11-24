@@ -44,6 +44,12 @@
     Dice que instalaria, y cuanto pesa, sin tocar nada.
 .PARAMETER Quitar
     Quita el SDK, los telefonos virtuales, ANDROID_HOME y sus rutas del PATH.
+.PARAMETER SinResumen
+    Sin el resumen final. Para cuando lo llama Start-AndroidApp, que sigue.
+.PARAMETER ConJava
+    Con -Quitar, tambien los JDK del kit (la carpeta Java) y sus rutas del
+    PATH. Para quien instalo Java solo para Android, como con el paquete de
+    Android: sin esto, quitar Android dejaba el JDK 8 puesto.
 .EXAMPLE
     .\Setup-AndroidEnv.ps1
 .EXAMPLE
@@ -72,7 +78,11 @@ param(
 
     [switch]$WhatIf,
 
-    [switch]$Quitar
+    [switch]$Quitar,
+
+    [switch]$ConJava,
+
+    [switch]$SinResumen
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,21 +103,42 @@ Write-Log ""
 
 if ($Quitar) {
     $avds = @(Get-AndroidAvds)
+    $javaRoot = Join-Path $WorkspaceRoot 'Java'
+    $jdks = if ($ConJava) { @(Get-ChildItem -LiteralPath $javaRoot -Directory -Filter 'jdk-*' -ErrorAction SilentlyContinue | ForEach-Object Name) } else { @() }
     Write-Host "Se va a quitar:" -ForegroundColor Yellow
     Write-Host "  $AndroidRoot"
     if ($avds.Count) { Write-Host "  los telefonos virtuales: $($avds -join ', ')  ($AndroidAvdHome)" }
+    if ($jdks.Count) { Write-Host "  los JDK del kit: $($jdks -join ', ')  ($javaRoot)" }
     Write-Host "  ANDROID_HOME de usuario, si apunta aqui, y sus rutas del PATH"
+    Write-Host "  (lo que siga abierto desde esas carpetas, como el telefono o adb, se cierra)"
     Write-Host ""
     if (-not $Force) {
         if ((Read-Host "Confirmas? (escribe SI)") -ne 'SI') { Write-Host "Cancelado." -ForegroundColor Yellow; exit 0 }
     }
+    $borrar = @($AndroidRoot, $AndroidAvdHome)
+    if ($ConJava) { $borrar += $javaRoot }
+
+    $cerrados = @(Stop-ProcessUnder -Carpetas $borrar)
+    if ($cerrados.Count) { Write-Log "Cerrado lo que seguia en marcha: $($cerrados -join ', ')" "SUCCESS" }
+
     Remove-UserPathEntry -UnderFolder $AndroidRoot | Out-Null
     if ((Get-AndroidUserHome) -like "$AndroidRoot*") {
         [Environment]::SetEnvironmentVariable('ANDROID_HOME', $null, 'User')
         Write-Log "ANDROID_HOME de usuario retirado" "SUCCESS"
     }
-    foreach ($d in @($AndroidRoot, $AndroidAvdHome)) {
-        if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force; Write-Log "Borrado: $d" "SUCCESS" }
+    if ($ConJava) { Remove-UserPathEntry -UnderFolder $javaRoot | Out-Null }
+
+    # Una carpeta que no se deja borrar no para las demas: antes se quedaba a
+    # medias, con el PATH ya quitado y el resto en su sitio.
+    $quedan = @()
+    foreach ($d in $borrar) {
+        if (-not (Test-Path -LiteralPath $d)) { continue }
+        try { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction Stop; Write-Log "Borrado: $d" "SUCCESS" }
+        catch { $quedan += $d; Write-Log "No se pudo borrar entero: $d ($($_.Exception.Message))" "ERROR" }
+    }
+    if ($quedan.Count) {
+        Write-Log "Algo usa esos archivos: cierra lo que los tenga abiertos (una consola en esa carpeta, VS Code...) y repite." "WARN"
+        exit 1
     }
     exit 0
 }
@@ -301,6 +332,13 @@ else {
     Write-Log "ANDROID_HOME ya apunta a otro SDK ($($env2.Habia)); se deja. Para cambiarlo: -Force" "WARN"
 }
 Add-UserPathEntry -Path @((Join-Path $AndroidSdk 'platform-tools'), (Join-Path $AndroidSdk 'emulator'))
+
+# Start-AndroidApp sigue (compila y abre la app): un "ANDROID LISTO" con
+# instrucciones a medio camino hacia creer que habia terminado.
+if ($SinResumen) {
+    if ($fallos.Count -gt 0) { Write-Log "Fallo al instalar: $($fallos -join ', ')" "ERROR"; exit 1 }
+    exit 0
+}
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan

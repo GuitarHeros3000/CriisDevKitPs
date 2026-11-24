@@ -24,12 +24,12 @@ lo encontraba nadie -y se desfasaba sin que se notara.
 
 ## Por donde entrar: `Menu.bat`
 
-El kit tiene 37 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
+El kit tiene 38 comandos y nadie se los sabe de memoria. `Menu.bat` los reune en una
 pantalla que ademas responde la pregunta con la que uno llega: **que hay instalado**.
 
 ```
   ============================================================
-   CriisDevKit v2.3.0   -   entornos de desarrollo sin admin
+   CriisDevKit v2.5.0   -   entornos de desarrollo sin admin
   ============================================================
 
    Instalado: python 3.12
@@ -77,6 +77,8 @@ pantalla que ademas responde la pregunta con la que uno llega: **que hay instala
    ANDROID
     60  Compilar y probar una app
     61  Abrir el telefono
+    62  Ver el registro de la app
+    63  Depurar la app en VS Code
 
     q  Salir
 ```
@@ -97,7 +99,7 @@ del trabajo, no la ventana**.
 CriisDevKitPs/
 ├── Empezar.bat               Empieza por aqui en un equipo nuevo
 ├── Menu.bat                  Todo lo que sabe hacer el kit
-├── bin/                      Los 37 comandos, agrupados igual que scripts/
+├── bin/                      Los 38 comandos, agrupados igual que scripts/
 │   ├── setup/                Setup-*.bat   instalar un runtime (y el SDK de Android)
 │   ├── start/                Start-*.bat   abrir su shell (y el emulador, y una app de Android)
 │   ├── env/                  Export, Import, Restore, Setup-Project, Uninstall,
@@ -137,6 +139,7 @@ CriisDevKitPs/
 │                             Install-NoAdmin, Install-VCRuntime, Run-Tests,
 │                             Update-Kit
 ├── docs/                     La documentacion por temas (ver el indice arriba)
+├── tools/                    Para quien mantiene el kit: el paquete de Android para repartir
 └── tests/                       Suite de Pester
 ```
 

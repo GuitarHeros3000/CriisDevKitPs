@@ -96,6 +96,11 @@ function Invoke-PasoCa {
     Write-Host "  Sin la CA, Maven fallara con PKIX path building failed, pip con" -ForegroundColor Yellow
     Write-Host "  SSLCertVerificationError y git con 'SSL certificate problem'," -ForegroundColor Yellow
     Write-Host "  aunque el navegador vaya bien." -ForegroundColor Yellow
+    if (-not $hallazgo.Cert) {
+        Write-Host "  No se ve la CA, solo el certificado de cada sitio. Pide a IT el raiz y:" -ForegroundColor Yellow
+        Write-Host "    .\bin\env\Use-CorpCert.bat -Cert C:\ruta\ca-empresa.cer" -ForegroundColor White
+        return $true
+    }
     if (Confirmar "Se la pongo a las herramientas del kit?") {
         & (Resolve-KitCommand -Nombre "Use-CorpCert.bat") -Force
     }

@@ -98,6 +98,23 @@ Comprobado en las dos direcciones: GlobalSign **si** esta entre las 118 del JDK 
 se confunde con una corporativa- y una CA de prueba fabricada al efecto **no**, o sea
 que se detectaria.
 
+Dos correcciones que salieron despues, las dos en equipos de verdad:
+
+- **La cadena se arma con lo que manda el servidor.** Se rehacia solo desde el
+  certificado del sitio, y el intermedio del proxy no esta en ningun almacen de
+  Windows: viaja en el handshake. Sin el, la cadena se quedaba en el del sitio, y eso
+  es lo que se ponia como "la CA de la empresa" (en el primer equipo del trabajo,
+  `CN=gradle.org` firmado por el proxy). Ahora se usan los certificados del
+  handshake, y **nunca se importa uno que no sea de una CA**: si solo se ve el del
+  sitio, el kit lo dice y pide el raiz a IT.
+- **Se compara la clave de cada firmante, no la huella de la cima.** Windows y Java
+  no tienen por que llegar a la misma raiz. Para `services.gradle.org`, Windows sube
+  hasta GlobalSign Root CA, que el JDK 8 ya no trae, y una red normal se daba por
+  interceptada; Java valida por GTS Root R4, el eslabon de antes. Java acepta de
+  ancla cualquier certificado de la cadena cuya clave tenga, asi que eso es lo que se
+  mira. El del sitio no cuenta: un proxy puede usar la misma clave en todos los que
+  fabrica.
+
 ## Firma Authenticode: de quien viene el archivo
 
 Un checksum dice que el archivo **llego entero**. No dice de **quien viene**: sale

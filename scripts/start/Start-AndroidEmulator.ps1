@@ -22,6 +22,13 @@
     Borra los datos del telefono virtual: queda como recien creado.
 .PARAMETER Espera
     Segundos maximos esperando a que arranque. Por defecto 300.
+.PARAMETER Depurar
+    Con -Apk: la abre parada, esperando a que se conecte un depurador, y deja
+    un puente desde localhost:-Puerto hasta ella (adb forward, que solo
+    escucha en este equipo: sin avisos del firewall). Lo usa Start-AndroidApp
+    -Depurar, que ademas prepara VS Code.
+.PARAMETER Puerto
+    El puerto del puente para el depurador. Por defecto 5005.
 .EXAMPLE
     .\Start-AndroidEmulator.ps1
 .EXAMPLE
@@ -41,7 +48,11 @@ param(
 
     [switch]$Borrar,
 
-    [int]$Espera = 300
+    [int]$Espera = 300,
+
+    [switch]$Depurar,
+
+    [int]$Puerto = 5005
 )
 
 $ErrorActionPreference = "Stop"
@@ -86,8 +97,14 @@ if (-not $Avd -or $avds -notcontains $Avd) {
 }
 
 function Get-EmuladorEnMarcha {
-    $l = (Invoke-NativeCommand -FilePath $adb -Arguments @('devices') -Quiet).Output
-    return @([regex]::Matches($l, '(?m)^(emulator-\d+)\s+device') | ForEach-Object { $_.Groups[1].Value })[0]
+    <#
+        El emulador abierto que es ESTE telefono, o $null. Antes valia el
+        primero que hubiera: con el de Android 8 abierto y pidiendo el de 14,
+        instalaba en el de 8. Cada emulador dice que carpeta de telefono esta
+        usando (emu avd path), y esa es la que se compara.
+    #>
+    $quiero = (Join-Path $AndroidAvdHome "$Avd.avd").TrimEnd('\')
+    return @(Get-AndroidEmulators -Adb $adb | Where-Object { $_.Avd -eq $quiero })[0].Serie
 }
 
 $serie = Get-EmuladorEnMarcha
@@ -97,7 +114,7 @@ if ($serie -and ($EnFrio -or $Borrar)) {
 }
 
 if ($serie) {
-    Write-Log "Ya estaba abierto: $serie" "SUCCESS"
+    Write-Log "Ya estaba abierto: $Avd ($serie)" "SUCCESS"
 }
 else {
     $args_ = @('-avd', $Avd, '-no-boot-anim', '-no-audio', '-netdelay', 'none', '-netspeed', 'full')
@@ -132,13 +149,65 @@ if ($Apk) {
     Write-Log "Instalando $(Split-Path -Leaf $Apk)..."
     $r = Invoke-NativeCommand -FilePath $adb -Arguments @('-s', $serie, 'install', '-r', '-t', $Apk) -Quiet
     if ($r.ExitCode -ne 0 -or $r.Output -notmatch 'Success') {
+        # El telefono esta abierto pero su Android se ha caido por dentro
+        # (paso con uno encendido horas, con otro al lado): no hay servicio que
+        # instale nada hasta que se reinicie.
+        if ($r.Output -match "Can't find service") {
+            Write-Log "El Android del telefono no responde por dentro: cierralo (la X de su ventana) y vuelve a intentarlo." "ERROR"
+            Write-Log "  Si sigue igual, arrancalo de cero:  -EnFrio" "WARN"
+            exit 1
+        }
         Write-Log "No se pudo instalar: $($r.Output.Trim())" "ERROR"
         exit 1
     }
     Write-Log "Instalada" "SUCCESS"
 
     $info = Get-AndroidApkInfo -Apk $Apk -Sdk $AndroidSdk
+
+    if ($Depurar) {
+        if (-not $info -or -not $info.Actividad) {
+            Write-Log "No se sabe con que pantalla arranca la app: no se puede abrir esperando al depurador." "ERROR"
+            exit 1
+        }
+        # -D: arranca parada hasta que se conecta un depurador, para que se
+        # pueda parar incluso en lo primero que hace. -S: cierra antes la que
+        # hubiera abierta. --activity-clear-task: empieza con la pila limpia;
+        # sin el, si arriba quedo un dialogo de Android (el de los permisos,
+        # que sale la primera vez), Android lo traia al frente y la app no
+        # llegaba a arrancar ("Activity not started, its current task has
+        # been brought to the front").
+        $r = Invoke-NativeCommand -FilePath $adb -Arguments @('-s', $serie, 'shell', 'am', 'start', '-D', '-S', '--activity-clear-task', '-n', "$($info.Paquete)/$($info.Actividad)") -Quiet
+        if ($r.ExitCode -ne 0 -or $r.Output -match '(?m)^Error|Activity not started') { Write-Log "No se pudo abrir para depurar: $($r.Output.Trim())" "ERROR"; exit 1 }
+        $proceso = $null
+        $limite = (Get-Date).AddSeconds(20)
+        while (-not $proceso -and (Get-Date) -lt $limite) {
+            Start-Sleep -Milliseconds 500
+            $o = (Invoke-NativeCommand -FilePath $adb -Arguments @('-s', $serie, 'shell', 'pidof', $info.Paquete) -Quiet).Output
+            if ($o -match '(\d+)') { $proceso = $Matches[1] }
+        }
+        if (-not $proceso) { Write-Log "La app no llego a arrancar para depurarla." "ERROR"; exit 1 }
+        # "am start -D" deja la app marcada para esperar al depurador, y la
+        # marca se queda: las siguientes veces que se abriera (a mano o con
+        # la opcion normal) se quedaria en "Waiting For Debugger". Se borra en
+        # cuanto esta ya esperando, que es cuando esta vez ya no le afecta.
+        $limite = (Get-Date).AddSeconds(15)
+        do {
+            Start-Sleep -Milliseconds 400
+            $foco = (Invoke-NativeCommand -FilePath $adb -Arguments @('-s', $serie, 'shell', 'dumpsys', 'window', 'windows') -Quiet).Output
+        } while ($foco -notmatch 'mCurrentFocus=[^\r\n]*Waiting For Debugger' -and (Get-Date) -lt $limite)
+        Invoke-NativeCommand -FilePath $adb -Arguments @('-s', $serie, 'shell', 'am', 'clear-debug-app') -Quiet | Out-Null
+        # El puente de la vez anterior apuntaria a un proceso que ya no existe.
+        Invoke-NativeCommand -FilePath $adb -Arguments @('-s', $serie, 'forward', '--remove', "tcp:$Puerto") -Quiet | Out-Null
+        $r = Invoke-NativeCommand -FilePath $adb -Arguments @('-s', $serie, 'forward', "tcp:$Puerto", "jdwp:$proceso") -Quiet
+        if ($r.ExitCode -ne 0) { Write-Log "No se pudo hacer el puente al puerto ${Puerto}: $($r.Output.Trim())" "ERROR"; exit 1 }
+        Write-Log "Abierta y esperando al depurador en localhost:${Puerto}: $($info.Paquete) (proceso $proceso)" "SUCCESS"
+        exit 0
+    }
+
     if ($info -and $info.Paquete) {
+        # Por si una depuracion de antes la dejo marcada para esperar al
+        # depurador: abierta normal, no tiene que esperar a nadie.
+        Invoke-NativeCommand -FilePath $adb -Arguments @('-s', $serie, 'shell', 'am', 'clear-debug-app') -Quiet | Out-Null
         # monkey con la categoria LAUNCHER abre la actividad principal sin
         # tener que saber como se llama.
         $r = Invoke-NativeCommand -FilePath $adb -Arguments @('-s', $serie, 'shell', 'monkey', '-p', $info.Paquete, '-c', 'android.intent.category.LAUNCHER', '1') -Quiet

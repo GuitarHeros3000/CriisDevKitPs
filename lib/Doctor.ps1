@@ -1977,6 +1977,8 @@ function Test-KitIntegrity {
         "bin\start\Start-AndroidEmulator.bat",
         "scripts\start\Start-AndroidApp.ps1",
         "bin\start\Start-AndroidApp.bat",
+        "scripts\start\Start-AndroidLog.ps1",
+        "bin\start\Start-AndroidLog.bat",
         "bin\kit\Doctor-Env.bat",
         "bin\env\Uninstall-Env.bat",
         "bin\kit\Run-Tests.bat",

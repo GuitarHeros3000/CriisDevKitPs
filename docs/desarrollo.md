@@ -37,6 +37,7 @@ porque la sintaxis de asercion cambio (`Should Be` paso a `Should -Be`).
 | `Installers.Tests.ps1` | Leer un `.exe` (32, 64 bits y arm64), abrir un bundle Burn con la firma original en medio, sacar los archivos de un MSI sin msiexec, y sacar un zip sin salirse de la carpeta ni dejarla a medias |
 | `KitUpdate.Tests.ps1` | Poner una version nueva del kit sin tocar lo del usuario, dejar pendientes los `.bat` en marcha, volver atras, y que el zip que publica el CI sea el que busca `Update-Kit` |
 | `Project.Tests.ps1` | Que pide un proyecto: la linea de Python de un `requires-python`, las dependencias de `pyproject.toml` (con corchetes dentro), el JDK de un `pom.xml` y un `.venv` roto |
+| `PaqueteAndroid.Tests.ps1` | Que el zip de Android para repartir (`tools\Build-PaqueteAndroid.ps1`) se genere, arranque y lleve solo lo de Android: ni Doctor, ni Update-Kit, ni las demas librerias enteras, ni el menu del kit |
 | `Proxy.Tests.ps1` | Enmascarado de la clave, reglas de espejo y la URL del proxy |
 | `Referencias.Tests.ps1` | Que ningun archivo mencione un comando que no esta donde dice |
 | `Runtimes.Tests.ps1` | Resolver la version de Git y de los JDK, y el shell por cada JDK |
@@ -106,8 +107,8 @@ pruebas usan una carpeta llamada `Marks & Spencer 100% ^O'Brien`.
 
 ```powershell
 # 1. Subir $KitVersion en lib\Common.ps1 (y el README, que la prueba lo vigila)
-git tag v2.3.0
-git push origin v2.3.0
+git tag v2.5.0
+git push origin v2.5.0
 ```
 
 La etiqueta dispara `.github\workflows\publicar.yml`, que:
