@@ -26,11 +26,16 @@
     Donde dejarlo. Por defecto, dist\ del kit.
 .PARAMETER SinZip
     Deja solo la carpeta, sin comprimir.
+.PARAMETER ConComentarios
+    Deja los comentarios en los .ps1. Por defecto se quitan: el paquete es para
+    repartir, y el codigo del repositorio los conserva. Quitar los comentarios
+    no esconde lo que hace el codigo -tiene que ir entero para funcionar-, solo
+    las explicaciones; util para dar una copia menos verbosa.
 .EXAMPLE
     .\tools\Build-PaqueteAndroid.ps1
 #>
 
-param([string]$Destino, [switch]$SinZip)
+param([string]$Destino, [switch]$SinZip, [switch]$ConComentarios)
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -162,9 +167,54 @@ do {
 if (Test-Path -LiteralPath $carpeta) { Remove-Item -LiteralPath $carpeta -Recurse -Force }
 New-Item -ItemType Directory -Path (Join-Path $carpeta 'lib') -Force | Out-Null
 
+function Remove-PsComments {
+    <#
+        Quita los comentarios de un .ps1 con el tokenizador de PowerShell, no a
+        golpe de regex: un '#' dentro de una cadena o de un here-string NO es un
+        comentario, y asi no se toca (p. ej. el script de Gradle que lleva
+        Android.ps1 en un here-string, con sus comentarios en Groovy). Deja los
+        #Requires, que son directivas y no comentarios.
+
+        Esto no esconde lo que hace el codigo -va entero, o no arrancaria-, solo
+        retira las explicaciones. El del repositorio las conserva.
+    #>
+    param([string]$Texto)
+
+    $tokens = $null; $e = $null
+    [void][System.Management.Automation.Language.Parser]::ParseInput($Texto, [ref]$tokens, [ref]$e)
+    $sb = New-Object System.Text.StringBuilder $Texto
+
+    # De atras hacia delante, para que al borrar no se muevan los offsets de los
+    # que faltan.
+    $coment = @($tokens |
+        Where-Object { $_.Kind -eq [System.Management.Automation.Language.TokenKind]::Comment -and $_.Text -notmatch '(?i)^#requires\b' } |
+        Sort-Object { $_.Extent.StartOffset } -Descending)
+    foreach ($c in $coment) {
+        $ini = $c.Extent.StartOffset
+        $fin = $c.Extent.EndOffset
+        $a = $ini
+        while ($a -gt 0 -and ($sb[$a - 1] -eq ([char]32) -or $sb[$a - 1] -eq ([char]9))) { $a-- }
+        if ($a -eq 0 -or $sb[$a - 1] -eq ([char]10)) {
+            # En su propia linea: se lleva tambien la sangria y el salto, para
+            # no dejar una linea en blanco por cada comentario.
+            $b = $fin
+            if ($b -lt $sb.Length -and $sb[$b] -eq ([char]13)) { $b++ }
+            if ($b -lt $sb.Length -and $sb[$b] -eq ([char]10)) { $b++ }
+            [void]$sb.Remove($a, $b - $a)
+        }
+        else {
+            # Al final de una linea de codigo: fuera los espacios de delante y el
+            # comentario; el salto se queda.
+            [void]$sb.Remove($a, $fin - $a)
+        }
+    }
+    return $sb.ToString()
+}
+
 function Write-Texto {
     param([string]$Rel, [string]$Texto)
     foreach ($k in $cambios.Keys) { $Texto = $Texto.Replace($k, $cambios[$k]) }
+    if ($Rel -like '*.ps1' -and -not $ConComentarios) { $Texto = Remove-PsComments -Texto $Texto }
     $ruta = Join-Path $carpeta $Rel
     New-Item -ItemType Directory -Path (Split-Path -Parent $ruta) -Force | Out-Null
     # Los .bat en CRLF siempre: cmd se lia con LF. El resto, como venga.
@@ -251,6 +301,7 @@ $lineas = (Get-ChildItem -LiteralPath $carpeta -Recurse -File -Include '*.ps1', 
 Write-Host ("  Libreria : {0} funciones de {1}, en {2} archivos (de {3})" -f $nFunc, $funciones.Count, ($enviadas.Count + 3), ($libs.Count + 1))
 Write-Host ("  Codigo   : {0:N0} lineas" -f $lineas)
 Write-Host "  Comprobado: se lee, no le falta ninguna funcion, no nombra nada que no lleve, y arranca." -ForegroundColor Green
+Write-Host $(if ($ConComentarios) { "  Comentarios: se quedan (-ConComentarios)." } else { "  Comentarios: quitados; el repositorio los conserva." }) -ForegroundColor DarkGray
 
 if ($SinZip) { Write-Host "  Carpeta  : $carpeta"; exit 0 }
 $zip = Join-Path $Destino "CriisDevKit Android $version.zip"
